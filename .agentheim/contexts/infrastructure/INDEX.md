@@ -28,7 +28,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 - [infrastructure-009-event-bus](todo/infrastructure-009-event-bus.md) — `type: decision`. Tokio broadcast + Tauri events.
 - [infrastructure-010-logging](todo/infrastructure-010-logging.md) — `type: decision`. `tracing` to local rotating files, no telemetry.
 - [infrastructure-011-packaging](todo/infrastructure-011-packaging.md) — `type: decision`. Tauri MSI bundler, unsigned initially.
-- [infrastructure-012-walking-skeleton](todo/infrastructure-012-walking-skeleton.md) — `type: spike`, depends on 001–011. guppi's first prototype.
+- [infrastructure-012-walking-skeleton](todo/infrastructure-012-walking-skeleton.md) — `type: spike`, depends on 001–011. GUPPI's first prototype.
 <!-- todo-list:end -->
 
 **Todo count:** 12

@@ -10,7 +10,7 @@ depends_on: [infrastructure-004-persistence]
 
 ## Context
 
-guppi needs to know which folders are AgentHeim projects. Options: scan disk for `.agentheim/`, maintain an explicit registry, or hybrid.
+GUPPI needs to know which folders are Agentheim projects. Options: scan disk for `.agentheim/`, maintain an explicit registry, or hybrid.
 
 ## Architect's recommendation
 
@@ -28,7 +28,7 @@ guppi needs to know which folders are AgentHeim projects. Options: scan disk for
 **Status:** Proposed
 **Scope:** global
 
-**Context.** guppi needs to know which folders are AgentHeim projects. Options: (a) scan disk for `.agentheim/` directories (slow, intrusive, may surface things the user doesn't want), (b) maintain a registry of paths the user added explicitly, (c) hybrid — explicit primary, on-demand scan as a convenience.
+**Context.** GUPPI needs to know which folders are Agentheim projects. Options: (a) scan disk for `.agentheim/` directories (slow, intrusive, may surface things the user doesn't want), (b) maintain a registry of paths the user added explicitly, (c) hybrid — explicit primary, on-demand scan as a convenience.
 
 **Decision.** **Explicit registry primary**, persisted in the `projects` table from ADR-004. UI provides:
 

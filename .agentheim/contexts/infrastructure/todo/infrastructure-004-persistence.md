@@ -6,11 +6,11 @@ scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 ---
 
-# Decision: Persistence for guppi's own state
+# Decision: Persistence for GUPPI's own state
 
 ## Context
 
-guppi owns state separate from any project: known projects (paths + nicknames + last-seen), tile positions per project, cluster groupings, last camera (pan + zoom), UI preferences. None of this belongs inside any project's `.agentheim/` — it's Marco's *view of the world*, not project content.
+GUPPI owns state separate from any project: known projects (paths + nicknames + last-seen), tile positions per project, cluster groupings, last camera (pan + zoom), UI preferences. None of this belongs inside any project's `.agentheim/` — it's Marco's *view of the world*, not project content.
 
 ## Architect's recommendation
 
@@ -31,7 +31,7 @@ guppi owns state separate from any project: known projects (paths + nicknames + 
 **Status:** Proposed
 **Scope:** global
 
-**Context.** guppi owns state separate from any project: known projects (paths + nicknames + last-seen), tile positions per project, cluster groupings, last camera (pan + zoom), UI preferences. None of this belongs inside any project's `.agentheim/` — it's *Marco's view of the world*, not project content. Choice: flat JSON file vs SQLite vs a key-value store (sled, redb).
+**Context.** GUPPI owns state separate from any project: known projects (paths + nicknames + last-seen), tile positions per project, cluster groupings, last camera (pan + zoom), UI preferences. None of this belongs inside any project's `.agentheim/` — it's *Marco's view of the world*, not project content. Choice: flat JSON file vs SQLite vs a key-value store (sled, redb).
 
 **Options considered.**
 1. **JSON file** — Trivial, human-editable, fine until concurrent writes or schema migration is painful.

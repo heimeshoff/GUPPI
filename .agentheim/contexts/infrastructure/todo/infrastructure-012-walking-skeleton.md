@@ -19,7 +19,7 @@ depends_on:
 
 # Spike: walking skeleton
 
-The thinnest end-to-end slice through the chosen stack. **Architecture-thick, feature-thin.** This is guppi's first prototype — the moment code first appears.
+The thinnest end-to-end slice through the chosen stack. **Architecture-thick, feature-thin.** This is GUPPI's first prototype — the moment code first appears.
 
 ## Goal
 
@@ -27,7 +27,7 @@ Prove the spine of the stack end-to-end, with one hard-coded project rendered on
 
 ## Scope (in)
 
-1. The chosen desktop runtime boots a native window on Windows 11 titled "guppi".
+1. The chosen desktop runtime boots a native window on Windows 11 titled "GUPPI".
 2. The chosen frontend framework mounts a canvas (rendering library per ADR-003) filling the window.
 3. Canvas supports pan (drag) and zoom (mouse wheel / pinch). Camera state in a frontend store.
 4. Core has a hardcoded project path (Marco picks one, e.g. `C:\src\heimeshoff\agentic\guppi`). On startup it:
@@ -70,4 +70,4 @@ Prove the spine of the stack end-to-end, with one hard-coded project rendered on
 ## Risks NOT retired by this spike
 
 - **PTY** (ADR-006) — needs its own one-day spike before any feature depends on it.
-- **Voice** (ADR-007) — needs the Whisperheim bridge to exist before guppi can integrate.
+- **Voice** (ADR-007) — needs the Whisperheim bridge to exist before GUPPI can integrate.

@@ -10,7 +10,7 @@ depends_on: []
 
 ## Context
 
-guppi is a native desktop app for a single user on a single machine. Primary platform: Windows 11. Cross-platform desirable but not strictly required day one.
+GUPPI is a native desktop app for a single user on a single machine. Primary platform: Windows 11. Cross-platform desirable but not strictly required day one.
 
 Requirements:
 - Render an infinite canvas with many tiles smoothly (PixiJS / WebGL works inside WebViews).
@@ -41,7 +41,7 @@ Requirements:
 **Status:** Proposed
 **Scope:** global
 
-**Context.** guppi is a native desktop app for a single user on a single machine, primary platform Windows 11, want Mac/Linux to remain possible. The app must (a) render an infinite canvas with hundreds of tiles smoothly, (b) spawn and manage long-lived `claude` PTY sessions across OSes, (c) watch many filesystem subtrees in parallel, (d) eventually host an emulated terminal panel inside the UI, (e) ship as a single installer. Two languages is acceptable; a heavy 200MB runtime is not preferred but not disqualifying.
+**Context.** GUPPI is a native desktop app for a single user on a single machine, primary platform Windows 11, want Mac/Linux to remain possible. The app must (a) render an infinite canvas with hundreds of tiles smoothly, (b) spawn and manage long-lived `claude` PTY sessions across OSes, (c) watch many filesystem subtrees in parallel, (d) eventually host an emulated terminal panel inside the UI, (e) ship as a single installer. Two languages is acceptable; a heavy 200MB runtime is not preferred but not disqualifying.
 
 **Decision.** Use **Tauri 2** with a Rust core and a web-tech frontend. The Rust side owns: PTY, filesystem watching, sqlite, voice IPC client, project discovery. The frontend owns: canvas rendering, tile UI, command palette, terminal panel UI. Communication via Tauri's `invoke` (commands) and `emit` (events).
 

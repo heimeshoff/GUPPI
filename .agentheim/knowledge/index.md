@@ -1,15 +1,15 @@
 # Knowledge index
 
-Top-level catalog for the guppi project. Tracks bounded contexts and global ADRs.
+Top-level catalog for the GUPPI project. Tracks bounded contexts and global ADRs.
 
 ## Bounded contexts
 
 <!-- bc-list:start -->
 - [canvas](../contexts/canvas/INDEX.md) — Miro-like surface, the primary view. **Core.**
-- [project-registry](../contexts/project-registry/INDEX.md) — discovers/lists/creates AgentHeim projects on disk. **Supporting.**
+- [project-registry](../contexts/project-registry/INDEX.md) — discovers/lists/creates Agentheim projects on disk. **Supporting.**
 - [claude-runner](../contexts/claude-runner/INDEX.md) — spawns `claude` inside each target project's folder; owns PTY/stdio. **Core.**
 - [agent-awareness](../contexts/agent-awareness/INDEX.md) — "what's running / waiting / blocked"; drives status badges and question-at-BC overlays. **Core.**
-- [voice](../contexts/voice/INDEX.md) — Whisperheim (STT) + Utterheim (TTS) bridge; wake-word "Guppy". **Core.**
+- [voice](../contexts/voice/INDEX.md) — Whisperheim (STT) + Utterheim (TTS) bridge; wake-word "Bob". **Core.**
 - [design-system](../contexts/design-system/INDEX.md) — visual tokens, components, patterns; gates every frontend task. **Supporting.**
 - [infrastructure](../contexts/infrastructure/INDEX.md) — globally-true tech foundation (runtime, persistence, IPC, etc.). **Generic.**
 <!-- bc-list:end -->

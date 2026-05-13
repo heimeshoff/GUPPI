@@ -10,7 +10,7 @@ depends_on: [infrastructure-001-desktop-runtime]
 
 ## Context
 
-guppi must watch `.agentheim/contexts/*/{backlog,todo,doing,done}/` across many registered projects to derive task counts and state. Watchers must be cheap, debounced, survive folder deletions.
+GUPPI must watch `.agentheim/contexts/*/{backlog,todo,doing,done}/` across many registered projects to derive task counts and state. Watchers must be cheap, debounced, survive folder deletions.
 
 ## Architect's recommendation
 
@@ -28,7 +28,7 @@ guppi must watch `.agentheim/contexts/*/{backlog,todo,doing,done}/` across many 
 **Status:** Proposed
 **Scope:** global
 
-**Context.** guppi must watch `.agentheim/contexts/*/{backlog,todo,doing,done}/` across many projects to derive task counts and state. Watchers must be cheap, debounced, and survive folder deletions (project moved/deleted).
+**Context.** GUPPI must watch `.agentheim/contexts/*/{backlog,todo,doing,done}/` across many projects to derive task counts and state. Watchers must be cheap, debounced, and survive folder deletions (project moved/deleted).
 
 **Options considered.**
 1. **`notify` crate (Rust)** — Cross-platform, uses ReadDirectoryChangesW on Windows, FSEvents on macOS, inotify on Linux. The de facto standard.
@@ -44,6 +44,6 @@ A central `WatcherSupervisor` (single Tokio task) owns the map of `project_id ->
 **Consequences.**
 - (+) One mature library, cross-platform, low overhead.
 - (+) Debounced events mean UI doesn't flicker on bursty file changes.
-- (–) ReadDirectoryChangesW on Windows can miss events under extreme load; for guppi's workload (Marco moving task files manually or via Claude hooks) this is not a real risk.
+- (–) ReadDirectoryChangesW on Windows can miss events under extreme load; for GUPPI's workload (Marco moving task files manually or via Claude hooks) this is not a real risk.
 
 **Reversibility.** Trivial.

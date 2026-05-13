@@ -10,11 +10,11 @@ depends_on: [infrastructure-001-desktop-runtime]
 
 ## Context
 
-guppi must spawn `claude` *inside each target project's folder*. PTY (so `claude`'s TUI works), controlled `cwd`, env inheritance, lifecycle management (kill on guppi exit, detect crashes, capture stdout/stderr). Must work cleanly on Windows 11. **This is the riskiest piece of the architecture.**
+GUPPI must spawn `claude` *inside each target project's folder*. PTY (so `claude`'s TUI works), controlled `cwd`, env inheritance, lifecycle management (kill on GUPPI exit, detect crashes, capture stdout/stderr). Must work cleanly on Windows 11. **This is the riskiest piece of the architecture.**
 
 ## Architect's recommendation
 
-**`portable-pty`** (Rust) — wraps ConPTY on Windows, openpty on Unix. Each spawned session is a Tokio actor owning the PTY + child + read/write/resize channels. **Wrap each child in a Job Object on Windows** so guppi crashing leaves no orphans.
+**`portable-pty`** (Rust) — wraps ConPTY on Windows, openpty on Unix. Each spawned session is a Tokio actor owning the PTY + child + read/write/resize channels. **Wrap each child in a Job Object on Windows** so GUPPI crashing leaves no orphans.
 
 ## Acceptance criteria
 
@@ -33,7 +33,7 @@ guppi must spawn `claude` *inside each target project's folder*. PTY (so `claude
 **Status:** Proposed
 **Scope:** global
 
-**Context.** guppi must spawn `claude` *inside each target project's folder*. This means a PTY (so `claude`'s TUI works), a controlled `cwd`, environment inheritance, and process lifecycle management (kill on guppi exit, detect crashes, capture stdout/stderr). Must work on Windows 11. This is the riskiest piece of the architecture.
+**Context.** GUPPI must spawn `claude` *inside each target project's folder*. This means a PTY (so `claude`'s TUI works), a controlled `cwd`, environment inheritance, and process lifecycle management (kill on GUPPI exit, detect crashes, capture stdout/stderr). Must work on Windows 11. This is the riskiest piece of the architecture.
 
 **Options considered.**
 1. **`portable-pty` (Rust)** — Used by WezTerm in production. Wraps ConPTY on Windows, openpty on Unix. Mature, actively maintained.
@@ -44,7 +44,7 @@ guppi must spawn `claude` *inside each target project's folder*. PTY (so `claude
 **Decision.** Use **`portable-pty`** in the Rust core. Each spawned session is an actor (Tokio task) that owns:
 
 - The `PtyPair` (master + slave handles).
-- A child process handle with `cwd = project.path`, `command = claude`, with arguments and env inherited from guppi's environment.
+- A child process handle with `cwd = project.path`, `command = claude`, with arguments and env inherited from GUPPI's environment.
 - A read loop pulling from the master, parsing ANSI as needed (defer parsing until terminal-panel feature lands), and emitting `SessionOutput { project_id, bytes }` events.
 - A write channel for input.
 - A resize channel for terminal-size changes.
@@ -52,7 +52,7 @@ guppi must spawn `claude` *inside each target project's folder*. PTY (so `claude
 
 **Cross-platform note (Windows specifically).** ConPTY (Windows 10 1809+) is the real PTY on Windows and `portable-pty` uses it. Known sharp edges:
 
-- Process-tree kill on Windows isn't built in; use `taskkill /F /T /PID` or the `windows` crate's `TerminateJobObject` with a Job Object wrapping the child. **Wrap each child in a Job Object** so guppi crashing leaves no orphans.
+- Process-tree kill on Windows isn't built in; use `taskkill /F /T /PID` or the `windows` crate's `TerminateJobObject` with a Job Object wrapping the child. **Wrap each child in a Job Object** so GUPPI crashing leaves no orphans.
 - ConPTY emits UTF-8 with some quirks; the terminal panel will eventually need a real VT parser (`vte` crate) — defer.
 - ANSI cursor sequences and bracketed paste mostly work. Test early.
 - WSL — if `claude` runs in WSL, that's a different beast; assume native Windows `claude.exe` for v1.

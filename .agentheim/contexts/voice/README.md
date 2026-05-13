@@ -4,7 +4,7 @@
 
 The bridge to Marco's voice channel, both directions.
 
-**Inbound:** wake-word "Guppy" detection, Whisperheim integration for STT (Silero VAD + Parakeet), fuzzy command parsing to map an utterance to an action (e.g. "Guppy, refine task 104 in image-gallery" → a structured command intent the rest of guppi can execute).
+**Inbound:** wake-word "Bob" detection, Whisperheim integration for STT (Silero VAD + Parakeet), fuzzy command parsing to map an utterance to an action (e.g. "Bob, refine task 104 in image-gallery" → a structured command intent the rest of GUPPI can execute).
 
 **Outbound:** Utterheim integration for TTS narration — notifications, "agent is asking you something", confirmations.
 
@@ -12,7 +12,7 @@ The vision treats voice as a first-class input modality and a differentiator. Th
 
 ## Classification
 
-**Core.** Ambient voice control is one of guppi's headline value propositions. Whisperheim and Utterheim are external services, but the wake-word loop, intent mapping, and the "voice is the primary input" stance are guppi-specific behavior.
+**Core.** Ambient voice control is one of GUPPI's headline value propositions. Whisperheim and Utterheim are external services, but the wake-word loop, intent mapping, and the "voice is the primary input" stance are GUPPI-specific behavior.
 
 ## Out of v1 scope
 
@@ -20,11 +20,11 @@ v1 is canvas-only. This BC's code does not ship in v1 — but its boundary is fi
 
 ## Ubiquitous language (seed)
 
-- **Wake word** — "Guppy". The trigger that begins a voice command.
+- **Wake word** — "Bob". The trigger that begins a voice command.
 - **Utterance** — a captured span of speech from the user.
 - **Transcript** — the text produced by Whisperheim from an utterance.
 - **Transcriber** — Whisperheim; the STT pipeline (Silero VAD + Parakeet).
-- **Narrator** — Utterheim; the TTS channel guppi speaks through.
+- **Narrator** — Utterheim; the TTS channel GUPPI speaks through.
 - **Command intent** — a structured representation of what the user asked for: verb + target + arguments (e.g. `focus(project=image-gallery)`).
 - **Fuzzy match** — the tolerant mapping from a transcript to a command intent, accommodating speech variation.
 - **Voice focus command** — a special class of intent that drives `canvas` focus ("zoom to image-gallery").
@@ -32,7 +32,7 @@ v1 is canvas-only. This BC's code does not ship in v1 — but its boundary is fi
 
 ## Anticorruption layer (both directions)
 
-Whisperheim and Utterheim have their own vocabularies and lifecycles. This BC wraps both behind an ACL so the rest of guppi only ever sees guppi terms (`utterance`, `command intent`, `narration`). If either service is swapped, the change is contained here.
+Whisperheim and Utterheim have their own vocabularies and lifecycles. This BC wraps both behind an ACL so the rest of GUPPI only ever sees GUPPI terms (`utterance`, `command intent`, `narration`). If either service is swapped, the change is contained here.
 
 ## Upstream / downstream
 

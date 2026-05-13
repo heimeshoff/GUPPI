@@ -6,14 +6,14 @@ Aggregates a single, unified "what's running, what's idle, what's blocked-on-que
 
 Two signal sources, two fidelities:
 
-1. **Rich signals from `claude-runner`** for guppi-owned sessions: orchestrator stream events, prompt-waiting detection, lifecycle events. Subscribes to runner events.
-2. **Best-effort filesystem signals** for bare-terminal sessions guppi didn't spawn: presence of tasks in `doing/`, hook output files, mtime patterns. Conforms to the AgentHeim-on-disk shape.
+1. **Rich signals from `claude-runner`** for GUPPI-owned sessions: orchestrator stream events, prompt-waiting detection, lifecycle events. Subscribes to runner events.
+2. **Best-effort filesystem signals** for bare-terminal sessions GUPPI didn't spawn: presence of tasks in `doing/`, hook output files, mtime patterns. Conforms to the Agentheim-on-disk shape.
 
 The value-add is the *unified state model* that survives this source split: downstream consumers (the canvas) see one shape, not two.
 
 ## Classification
 
-**Core.** "Live indicators of what's running and what needs attention" is one of guppi's two headline differentiators (the other being the canvas surface itself). The unified-state model — and especially the question-at-BC-location feature — is guppi-specific intelligence, not off-the-shelf plumbing.
+**Core.** "Live indicators of what's running and what needs attention" is one of GUPPI's two headline differentiators (the other being the canvas surface itself). The unified-state model — and especially the question-at-BC-location feature — is GUPPI-specific intelligence, not off-the-shelf plumbing.
 
 ## Ubiquitous language (seed)
 
@@ -31,7 +31,7 @@ The value-add is the *unified state model* that survives this source split: down
 
 - **Downstream of:**
   - `claude-runner` (customer-supplier; subscribes to session events).
-  - The filesystem / `project-registry` (conformist to the AgentHeim-on-disk shape; reads `doing/` contents, hook outputs, mtimes).
+  - The filesystem / `project-registry` (conformist to the Agentheim-on-disk shape; reads `doing/` contents, hook outputs, mtimes).
 - **Upstream of:** `canvas` (supplies status badges and question-at-location overlays).
 
 ## Open questions

@@ -8,7 +8,7 @@ depends_on: [infrastructure-012-walking-skeleton]
 
 # Feature: styleguide
 
-The design system for guppi's frontend. Built on top of the walking skeleton (so it's validated against a running app, not in a vacuum).
+The design system for GUPPI's frontend. Built on top of the walking skeleton (so it's validated against a running app, not in a vacuum).
 
 ## Goal
 
