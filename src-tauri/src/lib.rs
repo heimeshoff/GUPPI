@@ -19,13 +19,15 @@ mod db;
 mod events;
 mod logging;
 mod project;
+mod pty;
 mod watcher;
 
 use db::Db;
 use events::{DomainEvent, EventBus};
 use project::ProjectSnapshot;
+use pty::ClaudeSession;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 use watcher::AgentheimWatcher;
 
@@ -44,6 +46,15 @@ struct AppState {
     db: Arc<Db>,
     project_id: i64,
     project_path: PathBuf,
+    /// ADR-009 event bus, shared so spike commands can hand it to a
+    /// `ClaudeSession` actor's read loop.
+    bus: EventBus,
+    /// The PTY spike's single session slot (`infrastructure-013-pty-spike`).
+    /// Multi-session orchestration / a real registry is later feature work
+    /// (ADR-006 scope-out); the spike needs exactly one live session it can
+    /// spawn, drive, and kill from IPC to exercise the ADR-006 stack
+    /// end-to-end on real Windows hardware.
+    claude_session: Mutex<Option<ClaudeSession>>,
 }
 
 /// IPC command — ADR-005's `get_project`. Reads the hard-coded project off
@@ -96,6 +107,76 @@ fn save_camera(state: tauri::State<'_, AppState>, camera: String) -> Result<(), 
 #[tauri::command]
 fn load_camera(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
     state.db.app_state("camera").map_err(|e| e.to_string())
+}
+
+// --- PTY spike IPC (infrastructure-013-pty-spike, ADR-006) ---------------
+//
+// These commands let the empirical PTY spike be driven hands-on from a live
+// `pnpm tauri dev` session — the part of the ADR-006 DoD (long-running
+// stability across idle/active periods; orphan check after a force-crash)
+// that cannot be exercised by `cargo test` alone. The automated mechanics
+// are proven by `pty.rs`'s tests; these commands expose the same actor so
+// Marco can confirm the hands-on criteria against the real `claude.exe`.
+
+/// Spawn `claude.exe` in the hard-coded project's folder, wrapped in a Windows
+/// Job Object, with its read loop streaming `SessionOutput` onto the bus.
+/// Replaces any existing spike session.
+#[tauri::command]
+fn pty_spawn_claude(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+    let session_id = 1;
+    let session = ClaudeSession::spawn(
+        session_id,
+        "claude.exe",
+        &[],
+        &state.project_path,
+        state.bus.clone(),
+    )
+    .map_err(|e| {
+        tracing::error!(error = %e, "pty_spawn_claude failed");
+        e.to_string()
+    })?;
+    // Dropping the previous session (if any) runs its ADR-006 cleanup path.
+    *state.claude_session.lock().unwrap() = Some(session);
+    Ok(session_id)
+}
+
+/// Write input bytes to the live spike session.
+#[tauri::command]
+fn pty_write(state: tauri::State<'_, AppState>, input: String) -> Result<(), String> {
+    let mut guard = state.claude_session.lock().unwrap();
+    let session = guard.as_mut().ok_or("no live claude session")?;
+    session.write(input.as_bytes()).map_err(|e| e.to_string())
+}
+
+/// Resize the live spike session's terminal.
+#[tauri::command]
+fn pty_resize(
+    state: tauri::State<'_, AppState>,
+    rows: u16,
+    cols: u16,
+) -> Result<(), String> {
+    let guard = state.claude_session.lock().unwrap();
+    let session = guard.as_ref().ok_or("no live claude session")?;
+    session.resize(rows, cols).map_err(|e| e.to_string())
+}
+
+/// Kill the live spike session (the explicit "end session" path). Dropping it
+/// also closes the Job Object handle.
+#[tauri::command]
+fn pty_kill(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    // Taking the session out of the slot drops it -> ADR-006 cleanup runs.
+    let session = state.claude_session.lock().unwrap().take();
+    match session {
+        Some(_) => Ok(()),
+        None => Err("no live claude session".into()),
+    }
+}
+
+/// Whether the spike session's child is still alive.
+#[tauri::command]
+fn pty_is_alive(state: tauri::State<'_, AppState>) -> bool {
+    let mut guard = state.claude_session.lock().unwrap();
+    guard.as_mut().map(|s| s.is_alive()).unwrap_or(false)
 }
 
 /// IPC command — ADR-010's frontend log forwarding. `console.*` in the WebView
@@ -171,6 +252,8 @@ pub fn run() {
                 db: db.clone(),
                 project_id,
                 project_path: project_path.clone(),
+                bus: bus.clone(),
+                claude_session: Mutex::new(None),
             });
 
             // --- ADR-009: the one frontend-bridge task -----------------
@@ -220,6 +303,11 @@ pub fn run() {
             save_camera,
             load_camera,
             log_from_frontend,
+            pty_spawn_claude,
+            pty_write,
+            pty_resize,
+            pty_kill,
+            pty_is_alive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running GUPPI");

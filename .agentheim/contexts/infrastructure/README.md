@@ -46,8 +46,9 @@ The walking skeleton (`infrastructure-012`) is GUPPI's first code. Layout:
 - **`src-tauri/`** — the Rust **Core**. Modules: `db` (ADR-004 SQLite state),
   `project` (`get_project` → `ProjectSnapshot`), `watcher` (ADR-008 debounced
   `.agentheim/` observer), `events` (ADR-009 `EventBus` + typed `DomainEvent`),
-  `logging` (ADR-010 `tracing` to rotating files), `lib.rs` (Tauri wiring,
-  IPC commands, the single ADR-009 frontend-bridge task).
+  `pty` (ADR-006 / ADR-012 `ClaudeSession` actor — `portable-pty` + Windows Job
+  Object), `logging` (ADR-010 `tracing` to rotating files), `lib.rs` (Tauri
+  wiring, IPC commands, the single ADR-009 frontend-bridge task).
 - **`src/`** — the SvelteKit **Frontend** (ADR-002). `lib/ipc.ts` is the thin
   IPC abstraction over Tauri `invoke`/`listen` (ADR-001); `lib/camera.svelte.ts`
   is the camera rune store (ADR-003); `lib/Canvas.svelte` is the PixiJS v8
@@ -71,9 +72,27 @@ Run command: `pnpm tauri dev`. Release + MSI: `pnpm tauri build`.
   fine-grained `TaskMoved` / `BCAppeared` / `BCDisappeared` taxonomy from
   ADR-008/009 is deferred to `infrastructure-014`.
 
+## Ubiquitous language (PTY spike additions)
+
+- **ClaudeSession** — the ADR-006 actor for one managed `claude.exe` process:
+  owns a `portable-pty` `PtyPair`, a child spawned with `cwd`-per-spawn and
+  inherited environment, a raw-bytes read loop, `write`/`resize`, and a
+  drop-path teardown (ADR-012). On Windows the child is held inside a Job
+  Object so it cannot orphan. The rest of GUPPI talks to it only through its
+  methods and the `SessionOutput` events — never to `portable-pty` directly.
+- **SessionOutput** — the `DomainEvent` a `ClaudeSession`'s read loop publishes
+  onto the `EventBus`: `{ session_id, bytes }`, raw PTY-master bytes with no
+  VT/ANSI parsing (deferred to the terminal-panel feature per ADR-006).
+
 ## Open questions
 
-- All eleven foundation decisions are settled (ADR-001 … ADR-011) and now
-  validated by the walking skeleton compiling and running.
-- The PTY empirical spike (`infrastructure-013`) is still pending — ADR-006's
-  decision is committed but not yet proven on hardware.
+- All eleven foundation decisions are settled (ADR-001 … ADR-011) and validated
+  by the walking skeleton compiling and running.
+- The PTY empirical spike (`infrastructure-013`) is **DONE / PASSED** — the
+  ADR-006 stack (`portable-pty` + Job Object + cwd-per-spawn `ClaudeSession`
+  actor) is implemented in the `pty` module and proven by `cargo test` on
+  Windows 11. The decision is no longer "committed but unproven". The remaining
+  hands-on items — `claude.exe`'s real TUI rendering, a minutes-long session,
+  and the force-crash orphan check — are exercisable via the `pty_*` IPC
+  commands and await Marco's live confirmation (same situation as the walking
+  skeleton's GUI checks).

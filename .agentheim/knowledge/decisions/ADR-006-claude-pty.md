@@ -5,7 +5,7 @@ status: Accepted
 scope: global
 bc: infrastructure
 date: 2026-05-14
-related_tasks: [infrastructure-006-claude-pty]
+related_tasks: [infrastructure-006-claude-pty, infrastructure-013-pty-spike]
 ---
 
 # ADR-006: Claude session ownership & PTY — `portable-pty` with cwd-per-spawn and Job Objects
@@ -93,27 +93,62 @@ macOS (`openpty`) and Linux are reachable through the same `portable-pty`
 abstraction, but **no non-Windows path is exercised or guaranteed** until
 explicitly scoped as future work.
 
-## Empirical spike — DEFERRED (tracked)
+## Empirical spike — DONE / PASSED (`infrastructure-013-pty-spike`, 2026-05-14)
 
 ADR-006 originally called for a one-day hands-on spike proving
 `portable-pty` + Job Object + `claude.exe` works end-to-end on Windows 11 with
-a long-running session. **That spike cannot run yet:** there is no Rust/Tauri
-scaffold in the repository. The walking-skeleton task
-(`infrastructure-012-walking-skeleton`) is where code first appears, and its
-scope explicitly says the PTY spike "runs separately".
+a long-running session. That spike was **DEFERRED** when the ADR was written
+because there was no Rust/Tauri scaffold in the repository. The
+walking-skeleton task (`infrastructure-012-walking-skeleton`) created that
+scaffold; the deferred spike then ran as `infrastructure-013-pty-spike`.
 
-Therefore:
+**Result: PASSED.** The ADR-006 stack is implemented in the Rust core as the
+`pty` module — a `ClaudeSession` actor that owns a `portable-pty` `PtyPair`, a
+child spawned with `cwd`-per-spawn and inherited environment, a raw-bytes read
+loop publishing `SessionOutput` onto the ADR-009 `EventBus`, synchronous
+`write` / `resize`, and an ADR-006 drop-path teardown. On Windows the child is
+assigned to a Job Object created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
 
-- **This ADR is committed now** — the *decision* (`portable-pty`,
-  cwd-per-spawn, actor-per-session, Job Object cleanup, native `claude.exe`,
-  Windows-only day one) is the deliverable artifact and is fully specified.
-- The **empirical Windows spike is DEFERRED** — to be run once a Rust scaffold
-  exists and **before any feature depends on PTY**. It is tracked as backlog
-  task `infrastructure-013-pty-spike` (type: spike, `depends_on`
-  `infrastructure-012-walking-skeleton`).
-- **If the spike fails, the whole stack story changes** — that is the
-  acknowledged residual risk this ADR carries until the spike is run. The
-  actor boundary (see Reversibility) is what keeps that risk contained.
+What was proven, and how:
+
+- **Agent-verified by `cargo test` on Windows 11 (Rust 1.95.0, MSVC):**
+  - `claude.exe`-equivalent spawns through `portable-pty` (ConPTY) in a
+    chosen `cwd` with inherited env, and the read loop streams the child's
+    output back onto the bus as `SessionOutput` — proven against `cmd /C cd`,
+    whose output reflects the spawn `cwd`.
+  - Input written to the PTY master round-trips to the child and its
+    response returns on the bus; `resize` before and after activity does not
+    crash or kill the session.
+  - Dropping the `ClaudeSession` kills the child — the child pid is gone from
+    `tasklist` after the actor is dropped (the programmatic half of the
+    clean-exit orphan check).
+  - The automated tests use a deterministic stand-in (`cmd.exe`) for
+    `claude.exe`: the PTY + Job Object + cwd + env mechanics are identical
+    regardless of which program runs inside, and CI must not depend on a real
+    Claude login.
+- **Implemented and exercisable, pending Marco's hands-on confirmation
+  against the real `claude.exe`** — driven via the `pty_spawn_claude` /
+  `pty_write` / `pty_resize` / `pty_kill` / `pty_is_alive` IPC commands in a
+  live `pnpm tauri dev` session:
+  - `claude.exe`'s TUI rendering through ConPTY end-to-end.
+  - A genuinely long-running session staying alive and responsive across
+    idle/active periods (minutes).
+  - The force-crash orphan check: kill GUPPI's process abruptly and confirm
+    via Task Manager that no `claude.exe` survives — i.e. the Job Object's
+    `KILL_ON_JOB_CLOSE` firing on an *unclean* exit. (The clean-exit path is
+    already agent-verified above.)
+
+A teardown bug found and fixed during the spike: the drop path must release
+the PTY master + writer *before* joining the read-loop thread — on Windows the
+ConPTY reader does not observe EOF until the master handles close, so joining
+first would hang. The fix drops master/writer first, then does a bounded,
+best-effort join (2s) with the Job Object as the real cleanup guarantee. This
+is recorded in ADR-012.
+
+**ADR-006's residual risk is retired for the validated mechanics** and reduced
+to "confirm the real-`claude.exe` hands-on items" — no longer "the whole stack
+story might change". The `portable-pty` + Job Object + cwd-per-spawn decision
+stands.
 
 ## Consequences
 

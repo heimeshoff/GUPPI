@@ -35,6 +35,12 @@ pub enum DomainEvent {
     // Reconciling the fine-grained taxonomy with the watcher's correlation
     // logic is tracked as a follow-up (see infrastructure backlog).
     AgentheimChanged { project_id: i64 },
+
+    // Claude session ownership / PTY (ADR-006). A `ClaudeSession` actor's read
+    // loop publishes raw PTY-master bytes as `SessionOutput` — no VT parsing
+    // yet, deferred to the terminal-panel feature per ADR-006. `bytes` is not
+    // UTF-8-guaranteed; it is whatever ConPTY emitted.
+    SessionOutput { session_id: i64, bytes: Vec<u8> },
 }
 
 /// The in-core pub/sub bus. Cloneable: every clone shares the same channel.

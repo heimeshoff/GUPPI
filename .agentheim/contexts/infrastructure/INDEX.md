@@ -11,7 +11,6 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
-- [infrastructure-013-pty-spike](backlog/infrastructure-013-pty-spike.md) — `type: spike`, depends on walking skeleton. Empirical proof that `portable-pty` + Job Object + `claude.exe` works on Windows. Deferred from ADR-006.
 - [infrastructure-014-fine-grained-fs-events](backlog/infrastructure-014-fine-grained-fs-events.md) — `type: feature`, depends on 012. Replace the skeleton's coarse `AgentheimChanged` with ADR-008/009's `TaskMoved`/`BCAppeared`/`BCDisappeared` taxonomy.
 - [infrastructure-015-log-retention-sweep](backlog/infrastructure-015-log-retention-sweep.md) — `type: feature`, depends on 012. Add the ADR-010 7-day retention sweep of rotated log files (rotation is wired; pruning is not).
 <!-- backlog-list:end -->
@@ -33,6 +32,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-013-pty-spike](done/infrastructure-013-pty-spike.md) — `type: spike`. ADR-006 PTY spike PASSED — `ClaudeSession` actor (`portable-pty` + Windows Job Object + cwd-per-spawn) in the `pty` module, mechanics proven by `cargo test` (18/18); real-`claude.exe` hands-on items exercisable via `pty_*` IPC. → ADR-006, ADR-012.
 - [infrastructure-012-walking-skeleton](done/infrastructure-012-walking-skeleton.md) — `type: spike`. GUPPI's first code — Tauri 2 + Svelte 5 + PixiJS walking skeleton; all eleven foundation ADRs validated by execution (14 Rust tests, `pnpm check`, MSI build).
 - [infrastructure-011-packaging](done/infrastructure-011-packaging.md) — `type: decision`. Tauri bundler, unsigned MSI, per-user install, GitHub Release updater feed. → ADR-011.
 - [infrastructure-010-logging](done/infrastructure-010-logging.md) — `type: decision`. `tracing` to rotating local logs, 7-day retention, no telemetry. → ADR-010.
