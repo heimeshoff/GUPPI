@@ -3,6 +3,7 @@ id: design-system-001-styleguide
 type: feature
 status: done
 completed: 2026-05-14
+commit: b7db68e
 scope: global
 depends_on: [infrastructure-012-walking-skeleton]
 ---

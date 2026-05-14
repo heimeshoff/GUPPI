@@ -11,7 +11,7 @@ Newest entries on top.
 **Task:** design-system-001-styleguide - Feature: styleguide
 **Summary:** GUPPI styleguide — colour/typography/spacing/shape/motion tokens (TS object + mirrored CSS variables), colourblind-friendly four-state status palette, documented component states for tile/BC node/edge/status badge/voice indicator; walking-skeleton canvas upgraded from greybox to the styleguide baseline. `pnpm check` + `pnpm build` green.
 **Verification:** PASS (iteration 1)
-**Commit:** <pending>
+**Commit:** b7db68e
 **Files changed:** ~9
 **ADRs written:** none
 **Open-question defaults chosen by worker (Marco can override):** dark-mode default / light optional, rounded-rectangle tiles, restrained motion budget.
