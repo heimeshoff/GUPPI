@@ -12,7 +12,9 @@ This BC also owns the rendered-markdown detail pane (originally considered a sep
 
 ## Frontend gate
 
-This BC has a frontend. Every frontend task in this BC must `depends_on` the styleguide task in `contexts/design-system/`. No UI work here is promoted to `doing/` before the styleguide is signed off.
+This BC has a frontend. Every frontend task in this BC must `depends_on` the styleguide task `design-system-001-styleguide` in `contexts/design-system/`, and must be implemented against the styleguide itself: [`contexts/design-system/STYLEGUIDE.md`](../design-system/STYLEGUIDE.md) — the visual vocabulary (tokens, component states, motion budget) that keeps the canvas coherent. No UI work here is promoted to `doing/` before the styleguide is signed off.
+
+The styleguide was signed off in person by Marco on 2026-05-14, so the gate is open — but the `depends_on` link and the "build against `STYLEGUIDE.md`" rule still apply to every frontend task.
 
 ## Ubiquitous language (seed)
 

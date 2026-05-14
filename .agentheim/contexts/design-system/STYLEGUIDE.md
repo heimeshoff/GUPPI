@@ -4,9 +4,10 @@ The visual vocabulary for GUPPI's canvas. Every frontend feature task in every
 bounded context implements against this document — it is the contract that
 keeps the UI coherent.
 
-**Status:** code-complete baseline, pending Marco's in-person sign-off and his
-design-skill refinement pass. The open questions below have *defensible
-defaults* chosen so frontend work is unblocked; Marco can override any of them.
+**Status:** signed off by Marco in person on 2026-05-14 — the frontend gate is
+open. A design-skill refinement pass is still expected; the open questions
+below have *defensible defaults* (all approved as-is at sign-off) and Marco can
+still override any of them.
 
 - **Tokens (source of truth):** `src/lib/design/tokens.ts` (PixiJS-ready
   numeric values + scales) and `src/lib/design/tokens.css` (CSS custom

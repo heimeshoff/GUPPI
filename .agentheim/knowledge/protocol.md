@@ -5,6 +5,42 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 22:00 -- Batch started: [canvas-001-targeted-canvas-updates]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-001-targeted-canvas-updates - Targeted canvas updates from fine-grained FS events
+**Parallel:** no (1 worker)
+
+---
+
+## 2026-05-14 21:10 -- Model / Promoted: canvas-001-targeted-canvas-updates - Targeted canvas updates from fine-grained FS events
+
+**Type:** Model / Promote
+**BC:** canvas
+**From → To:** backlog → todo
+**Note:** Frontend gate cleared — both deps satisfied (`infrastructure-014` done; `design-system-001-styleguide` done *and* signed off, same session). This is the first frontend feature task to clear the styleguide gate.
+
+---
+
+## 2026-05-14 21:08 -- Styleguide signed off
+
+**Type:** Milestone / Human gate
+**BC:** design-system
+**Summary:** Marco reviewed the styleguide baseline live via `pnpm tauri dev` and signed off in person — the acceptance-criterion gate on `design-system-001-styleguide`. Approved the visual vocabulary and all three deferred open-question defaults as-is (dark-only / no light mode, rounded-rectangle tiles, restrained motion budget). `design-system-001`'s sign-off criterion is now checked; `STYLEGUIDE.md` status updated. **The frontend gate is now open** — frontend feature tasks in any BC can be promoted and worked. Still open: frontend-bearing BC READMEs must reference `STYLEGUIDE.md` (tracked follow-up), and Marco's separate design-skill refinement pass.
+
+---
+
+## 2026-05-14 20:55 -- Model / Refined: canvas-001-targeted-canvas-updates - Targeted canvas updates from fine-grained FS events
+
+**Type:** Model / Refine
+**BC:** canvas
+**Status after:** backlog
+**Summary:** Grounded the task against the actual code (`events.rs`, `watcher.rs`, `lib.rs`, `Canvas.svelte`, `types.ts`, `project.rs`). Surfaced that `AgentheimChanged` has a second, undocumented-in-task job — the ADR-009 lag-resync signal in `lib.rs`'s `Lagged` arm — which the fine-grained events cannot replace. Decision (Marco): don't delete it, rename `AgentheimChanged` → `ResyncRequired`, drop only its normal-path/skeleton role; record as an in-place ADR-009 amendment (no new ADR). Decision (Marco): silent count update, no animated tick. Resolved three robustness gaps directly in the task: event-vs-BC ordering (`correlate()` emits `TaskAdded` before `BCAppeared`; frontend lazily creates BC nodes), count clamping at 0, and `project_id` filtering. Full acceptance-criteria section rewritten. Left in `backlog/` — `infrastructure-014` dep is cleared, but the `design-system-001` styleguide sign-off gate is still open; promotable on Marco's sign-off.
+**Split into:** none
+**ADRs written:** none (ADR-009 to be amended in place by the worker)
+
+---
+
 ## 2026-05-14 18:00 -- Work session ended
 
 **Type:** Work / Session end

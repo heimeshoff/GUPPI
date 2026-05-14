@@ -31,11 +31,11 @@ At minimum, the styleguide must define:
 
 ## Acceptance criteria
 
-- [ ] Token set defined (colour, typography, spacing, motion) and expressed in the chosen frontend stack (CSS variables / theme object / whatever ADR-002 lands on).
-- [ ] Component states documented for each visual element (tile, BC node, edge, status badge, voice indicator).
-- [ ] **Marco has reviewed and signed off on the design system in person.** This is a gate, not just a deliverable.
-- [ ] Walking skeleton is upgraded from greybox to the styleguide's baseline as part of this task.
-- [ ] BC READMEs for any frontend-bearing BC reference this completed styleguide.
+- [x] Token set defined (colour, typography, spacing, motion) and expressed in the chosen frontend stack (CSS variables / theme object / whatever ADR-002 lands on).
+- [x] Component states documented for each visual element (tile, BC node, edge, status badge, voice indicator).
+- [x] **Marco has reviewed and signed off on the design system in person.** This is a gate, not just a deliverable. — Signed off 2026-05-14: Marco reviewed the baseline live via `pnpm tauri dev`, approved the visual vocabulary and the three deferred defaults (dark-only, rounded-rectangle tiles, restrained motion) as-is.
+- [x] Walking skeleton is upgraded from greybox to the styleguide's baseline as part of this task.
+- [ ] BC READMEs for any frontend-bearing BC reference this completed styleguide. — still open; tracked as a follow-up (see Outcome → Pending).
 
 ## Critical gate (for `model` and `work`)
 
@@ -74,7 +74,7 @@ Marco's explicit instruction** — see "Pending" below.
 
 ### Pending (not satisfied by this task — by design)
 
-- **Marco's in-person sign-off** — the acceptance-criterion gate. Deferred by Marco's explicit instruction; this task is moved to `done/` with the deliverables complete, but the human sign-off is still required before it is truly "signed off" for the frontend-gate rule.
+- ~~**Marco's in-person sign-off**~~ — **done 2026-05-14.** Marco reviewed the baseline live via `pnpm tauri dev` and signed off the visual vocabulary and the three deferred defaults as-is. The frontend gate is now open: frontend feature tasks (e.g. `canvas-001`) can be promoted and worked.
 - **Marco's design-skill refinement pass** — Marco will refine the visual design properly via a dedicated skill; the defaults above are the starting point.
 - **Visual confirmation** — `pnpm check` / `pnpm build` pass, but an agent cannot do live GUI interaction. The actual *look* of the baseline canvas (tile hierarchy reading correctly, status colours/glyphs legible at zoom, zoom-to-fit easing feel, voice glyph placement) needs Marco's eyes via `pnpm tauri dev`.
 - **Frontend-bearing BC READMEs must reference this styleguide** — the task asks for this, but a worker may not edit other BCs' READMEs. Follow-up for the orchestrator/Marco: update the `canvas` BC README (and any other frontend-bearing BC) to reference `contexts/design-system/STYLEGUIDE.md` and restate the frontend gate.
