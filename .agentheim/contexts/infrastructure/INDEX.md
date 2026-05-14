@@ -12,6 +12,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 
 <!-- backlog-list:start -->
 - [infrastructure-015-log-retention-sweep](backlog/infrastructure-015-log-retention-sweep.md) — `type: feature`, depends on 012. Add the ADR-010 7-day retention sweep of rotated log files (rotation is wired; pruning is not).
+- [infrastructure-016-readme-resync-required-rename](backlog/infrastructure-016-readme-resync-required-rename.md) — `type: chore`, depends on `canvas-001`. Update the infrastructure README's event taxonomy: `AgentheimChanged` is retired → document `ResyncRequired` (lag-only) + the fine-grained events as the normal path. Surfaced by `canvas-001` (cross-BC scope).
 <!-- backlog-list:end -->
 
 ## Todo

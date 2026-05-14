@@ -5,6 +5,31 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 22:12 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 1, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 1 (5fa7080 canvas-001)
+**Note:** canvas-001 passed verification first try. `todo/` and `doing/` now empty in every context. canvas-001 surfaced one new backlog item — `infrastructure-016-readme-resync-required-rename` (cross-BC: the worker couldn't edit the infrastructure README) — sitting in `infrastructure/backlog/`, not promoted. `infrastructure-015-log-retention-sweep` also still in backlog. No concept candidates.
+
+---
+
+## 2026-05-14 22:10 -- Task verified and completed: canvas-001-targeted-canvas-updates - Targeted canvas updates from fine-grained FS events
+
+**Type:** Work / Task completion
+**Task:** canvas-001-targeted-canvas-updates - Targeted canvas updates from fine-grained FS events
+**Summary:** The canvas patches its client-side `ProjectSnapshot` in place from the fine-grained FS domain events instead of re-fetching; the coarse `AgentheimChanged` is retired — renamed `ResyncRequired`, kept only as the lag-only resync signal emitted by `lib.rs`'s `Lagged` arm.
+**Verification:** PASS (iteration 1)
+**Commit:** 5fa7080
+**Files changed:** 10 (incl. new `src/lib/snapshot-patch.ts`)
+**Tests added:** 0 new (no frontend test infra; Rust tests renamed/updated — `cargo test --lib` 26/26, `pnpm check` 0 errors)
+**ADRs written:** ADR-009 amended in place (no new ADR)
+
+---
+
 ## 2026-05-14 22:00 -- Batch started: [canvas-001-targeted-canvas-updates]
 
 **Type:** Work / Batch start

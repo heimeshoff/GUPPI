@@ -23,13 +23,13 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Doing
 
 <!-- doing-list:start -->
-- [canvas-001-targeted-canvas-updates](doing/canvas-001-targeted-canvas-updates.md) — `type: feature`, depends on `infrastructure-014` (done) + `design-system-001` (done, signed off). Patch client model from fine-grained `guppi://event` variants instead of full re-fetch; `AgentheimChanged` → `ResyncRequired` (lag-only). Refined + promoted 2026-05-14.
+*(None.)*
 <!-- doing-list:end -->
 
 ## Done
 
 <!-- done-list:start -->
-*(None yet.)*
+- [canvas-001-targeted-canvas-updates](done/canvas-001-targeted-canvas-updates.md) — `type: feature`. Canvas patches its `ProjectSnapshot` in place from the fine-grained FS events (`task_moved`/`added`/`removed`, `bc_appeared`/`disappeared`) instead of re-fetching; coarse `AgentheimChanged` retired → renamed `ResyncRequired` (lag-only resync signal). ADR-009 amended in place. Commit `5fa7080`.
 <!-- done-list:end -->
 
 ## Research

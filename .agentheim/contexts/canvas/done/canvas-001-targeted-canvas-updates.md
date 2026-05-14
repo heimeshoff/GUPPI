@@ -3,6 +3,7 @@ id: canvas-001-targeted-canvas-updates
 type: feature
 status: done
 completed: 2026-05-14
+commit: 5fa7080
 scope: bc
 depends_on:
   - infrastructure-014-fine-grained-fs-events
