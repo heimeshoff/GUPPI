@@ -68,14 +68,19 @@ Run command: `pnpm tauri dev`. Release + MSI: `pnpm tauri build`.
   and forwards frontend-relevant `DomainEvent`s to the WebView under the one
   Tauri event name `guppi://event`. The *only* place Tauri's `emit` is called
   for domain events (ADR-009).
-- **AgentheimChanged** — the skeleton's deliberately coarse domain event: any
-  change under a project's `.agentheim/` triggers a frontend re-fetch. As of
-  `infrastructure-014` the fine-grained taxonomy below is *also* emitted for
-  every batch; `AgentheimChanged` is kept firing alongside it as a deliberate
-  compatibility seam (the skeleton frontend still consumes it) and is retired
-  by `canvas-001`.
-- **Fine-grained FS domain events** (`infrastructure-014`, ADR-008/ADR-009) —
-  the watcher correlates each debounced batch of raw filesystem events into:
+- **ResyncRequired** (`{ project_id }`, ADR-009) — the lag-only resync signal.
+  It was formerly the coarse `AgentheimChanged` event, which `canvas-001`
+  retired: the watcher no longer publishes any "any `.agentheim/` change →
+  re-fetch" event on the normal path. `ResyncRequired` keeps only the
+  lag-resync role — it is emitted **solely** by `lib.rs`'s `Lagged` arm (never
+  by the watcher) when the broadcast receiver falls behind capacity, and it is
+  the **single** event that triggers a full `get_project` re-fetch in the
+  frontend. On the normal path the fine-grained FS domain events below are the
+  only events emitted, and the frontend patches its `ProjectSnapshot` in place
+  from them with no re-fetch.
+- **Fine-grained FS domain events** (`infrastructure-014` / `canvas-001`,
+  ADR-008/ADR-009) — the normal-path events. The watcher correlates each
+  debounced batch of raw filesystem events into:
   `TaskMoved { project_id, bc, from, to, task_id }` (a paired create + delete
   of the *same* `task_id` in one 250ms window — the task file moved between
   states), `TaskAdded { project_id, bc, state, task_id }` (an unpaired create —

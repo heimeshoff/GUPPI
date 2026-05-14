@@ -1,7 +1,8 @@
 ---
 id: infrastructure-016-readme-resync-required-rename
 type: chore
-status: backlog
+status: done
+completed: 2026-05-14
 scope: bc
 depends_on:
   - canvas-001-targeted-canvas-updates
@@ -46,3 +47,16 @@ the fine-grained `TaskMoved` / `TaskAdded` / `TaskRemoved` / `BCAppeared` /
 Surfaced by `canvas-001-targeted-canvas-updates` during implementation on
 2026-05-14. Pure documentation — no code change. The code and ADR-009 were
 already updated by `canvas-001`.
+
+## Outcome
+
+Replaced the stale `AgentheimChanged` bullet in the infrastructure README's
+event-taxonomy section with a `ResyncRequired` bullet describing its
+post-`canvas-001` role: the lag-only resync signal emitted solely by `lib.rs`'s
+`Lagged` arm, the single event that triggers a full `get_project` re-fetch. The
+fine-grained FS domain events bullet is now labelled the normal-path events
+(`infrastructure-014` / `canvas-001`). README now matches ADR-009's current
+`DomainEvent` taxonomy.
+
+Key file: `.agentheim/contexts/infrastructure/README.md` (Ubiquitous language —
+skeleton additions section).
