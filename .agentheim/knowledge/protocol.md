@@ -5,13 +5,23 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:48 -- Work session paused: toolchain blocker
+
+**Type:** Work / Session pause
+**Reason:** infrastructure-012-walking-skeleton (the only remaining ready task) is a Tauri 2 app and requires a Rust toolchain. `cargo`/`rustc`/`rustup` are not installed on this machine; Node/pnpm/npm are present. Task moved back to todo/ — not dispatched.
+**Completed this session:** infrastructure-001 through 011 (all 11 foundation decision ADRs).
+**Blocked:** infrastructure-012-walking-skeleton (needs Rust toolchain), design-system-001-styleguide (depends on 012), infrastructure-013-pty-spike (depends on 012).
+**Next:** install Rust (`rustup`) + MSVC build tools, then re-run `work`.
+
+---
+
 ## 2026-05-14 14:46 -- Task completed (verification skipped): infrastructure-011-packaging - Packaging and install
 
 **Type:** Work / Task completion
 **Task:** infrastructure-011-packaging - Packaging and install
 **Summary:** Tauri's bundler targets an unsigned MSI on Windows (deferred-unsigned signing posture), per-user install at `%LOCALAPPDATA%\Programs\guppi\`, updates via the Tauri updater plugin against a GitHub Release feed.
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** 3bbc01b
 **Files changed:** 1
 
 ---

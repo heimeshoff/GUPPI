@@ -6,6 +6,7 @@ scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 completed: 2026-05-14
 related_adrs: [ADR-011-packaging]
+commit: 3bbc01b
 ---
 
 # Decision: Packaging and install
