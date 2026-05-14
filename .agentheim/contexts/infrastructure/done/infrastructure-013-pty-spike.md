@@ -3,6 +3,7 @@ id: infrastructure-013-pty-spike
 type: spike
 status: done
 completed: 2026-05-14
+commit: a12c46a
 scope: global
 depends_on: [infrastructure-012-walking-skeleton]
 related_adrs: [ADR-006-claude-pty, ADR-012-pty-session-teardown-ordering]

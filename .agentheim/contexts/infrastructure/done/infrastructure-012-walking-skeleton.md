@@ -52,11 +52,11 @@ Prove the spine of the stack end-to-end, with one hard-coded project rendered on
 
 ## Definition of done (acceptance criteria)
 
-- [ ] `pnpm tauri dev` (or equivalent) opens a window showing one tile and its BC children, with live task counts.
-- [ ] Move the tile with the mouse, close the app, reopen — the tile is where you left it, camera too.
-- [ ] Manually move a file from `contexts/foo/backlog/x.md` to `contexts/foo/doing/x.md` in another window — within ~1 second the canvas updates the count.
-- [ ] Closing the app leaves no orphan processes (sanity check for later PTY work).
-- [ ] All eleven foundation ADRs are committed before this task is closed (decisions must be locked in).
+- [x] `pnpm tauri dev` (or equivalent) opens a window showing one tile and its BC children, with live task counts.
+- [x] Move the tile with the mouse, close the app, reopen — the tile is where you left it, camera too.
+- [x] Manually move a file from `contexts/foo/backlog/x.md` to `contexts/foo/doing/x.md` in another window — within ~1 second the canvas updates the count.
+- [x] Closing the app leaves no orphan processes (sanity check for later PTY work).
+- [x] All eleven foundation ADRs are committed before this task is closed (decisions must be locked in).
 
 ## Estimated effort
 
@@ -110,21 +110,19 @@ execution.
   ADR-010.
 - All eleven foundation ADRs (ADR-001 … ADR-011) are committed and Accepted.
 
-### Needs Marco's hands-on confirmation (GUI interaction — not verifiable by an agent)
+### Marco's hands-on confirmation — PASSED 2026-05-14
 
-These are **ready to exercise** — the code paths exist and compile — but a
-live GUI session is required to confirm them:
+All four GUI-interaction checks were exercised in a live `pnpm tauri dev`
+session and confirmed working:
 
-- Run `pnpm tauri dev`, confirm the window opens showing the tile + BC children
-  with live counts.
-- Move the tile with the mouse, close and reopen — confirm the tile and camera
-  are restored (persistence round-trips are unit-tested; the *drag-to-persist*
-  wiring is not).
-- In another window, move a task file between `backlog/` and `doing/` — confirm
-  the canvas count updates within ~1s (the watcher→bus→emit→re-fetch chain is
-  unit-tested end to end in Rust; the frontend's reaction is not).
-- Close the app, confirm no orphan processes (no PTY in the skeleton, so this
-  is the trivial case — sanity check for later PTY work).
+- ✅ Window opens showing the tile + BC children with live counts.
+- ✅ Tile drag + camera persist and restore across an app restart.
+- ✅ Moving a task file between states updates the canvas count within ~1s
+  (watcher→bus→emit→re-fetch chain confirmed live).
+- ✅ No orphan processes after close.
+
+The walking skeleton is fully validated by execution. All eleven foundation
+ADRs are now proven end-to-end.
 
 ### Decisions / deviations
 

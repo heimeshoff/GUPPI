@@ -5,6 +5,40 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 16:55 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 1, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 1 (a12c46a PTY spike)
+**Note:** infrastructure-013 PTY spike passed first try. `todo/` and `doing/` now empty in every context. Remaining infrastructure backlog: infrastructure-014-fine-grained-fs-events, infrastructure-015-log-retention-sweep — both still in `backlog/`, not promoted. Open hands-on follow-up: ADR-006's real-`claude.exe` items (TUI rendering, minutes-long session, force-crash orphan check) are exercisable via the new `pty_*` IPC commands and await Marco's live confirmation — same pattern as the walking skeleton's GUI checks.
+
+---
+
+## 2026-05-14 16:50 -- Task verified and completed: infrastructure-013-pty-spike - Spike: PTY end-to-end on Windows
+
+**Type:** Work / Task completion
+**Task:** infrastructure-013-pty-spike - Spike: PTY end-to-end on Windows
+**Summary:** ADR-006 PTY stack implemented as a `ClaudeSession` actor (`portable-pty` + Windows Job Object + cwd-per-spawn, raw-bytes read loop onto the EventBus); risky mechanics proven by 18/18 `cargo test` on Windows 11. Real-`claude.exe` hands-on items exercisable via new `pty_*` IPC commands.
+**Verification:** PASS (iteration 1)
+**Commit:** a12c46a
+**Files changed:** 12
+**Tests added:** 4 (PTY: cwd-correct spawn + output streaming, input/resize round-trip, child-gone-after-drop)
+**ADRs written:** ADR-012-pty-session-teardown-ordering.md (new); ADR-006 updated with the PASSED spike result
+
+---
+
+## 2026-05-14 16:16 -- Batch started: [infrastructure-013-pty-spike]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-013-pty-spike - Spike: PTY end-to-end on Windows
+**Parallel:** no (1 worker)
+**Note:** Walking skeleton (012) confirmed by Marco's hands-on GUI testing — all four manual acceptance steps pass; 012 task file updated. Promoted 013 from backlog → todo → doing. This is the deferred ADR-006 empirical spike — the riskiest piece of the architecture, must pass before any v1.x feature depends on PTY.
+
+---
+
 ## 2026-05-14 15:45 -- Work session ended
 
 **Type:** Work / Session end
