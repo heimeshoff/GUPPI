@@ -39,7 +39,41 @@ Every other BC consumes something here:
 - `voice` — voice-bridge contracts (Whisperheim STT, Utterheim TTS).
 - `design-system` — frontend framework (the styleguide must be expressible in whatever frontend stack is chosen).
 
+## Codebase
+
+The walking skeleton (`infrastructure-012`) is GUPPI's first code. Layout:
+
+- **`src-tauri/`** — the Rust **Core**. Modules: `db` (ADR-004 SQLite state),
+  `project` (`get_project` → `ProjectSnapshot`), `watcher` (ADR-008 debounced
+  `.agentheim/` observer), `events` (ADR-009 `EventBus` + typed `DomainEvent`),
+  `logging` (ADR-010 `tracing` to rotating files), `lib.rs` (Tauri wiring,
+  IPC commands, the single ADR-009 frontend-bridge task).
+- **`src/`** — the SvelteKit **Frontend** (ADR-002). `lib/ipc.ts` is the thin
+  IPC abstraction over Tauri `invoke`/`listen` (ADR-001); `lib/camera.svelte.ts`
+  is the camera rune store (ADR-003); `lib/Canvas.svelte` is the PixiJS v8
+  canvas.
+
+Run command: `pnpm tauri dev`. Release + MSI: `pnpm tauri build`.
+
+## Ubiquitous language (skeleton additions)
+
+- **ProjectSnapshot** — the Core's read-model of one Agentheim project for the
+  canvas: `{ name, path, bcs: [{ name, task_counts }] }`. Produced by the
+  `get_project` IPC command.
+- **TaskCounts** — per-bounded-context tallies keyed by Agentheim task state
+  (`backlog`, `todo`, `doing`, `done`), derived by counting `.md` files.
+- **Frontend bridge** — the single Core task that subscribes to the `EventBus`
+  and forwards frontend-relevant `DomainEvent`s to the WebView under the one
+  Tauri event name `guppi://event`. The *only* place Tauri's `emit` is called
+  for domain events (ADR-009).
+- **AgentheimChanged** — the skeleton's deliberately coarse domain event: any
+  change under a project's `.agentheim/` triggers a frontend re-fetch. The
+  fine-grained `TaskMoved` / `BCAppeared` / `BCDisappeared` taxonomy from
+  ADR-008/009 is deferred to `infrastructure-014`.
+
 ## Open questions
 
-- All foundation decisions are in `todo/` as `type: decision` tasks. See INDEX.md.
-- The walking-skeleton task in this BC's `todo/` is the project's first prototype — feature-thin, architecture-thick.
+- All eleven foundation decisions are settled (ADR-001 … ADR-011) and now
+  validated by the walking skeleton compiling and running.
+- The PTY empirical spike (`infrastructure-013`) is still pending — ADR-006's
+  decision is committed but not yet proven on hardware.

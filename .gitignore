@@ -1,3 +1,13 @@
+### Rust / Tauri core
+src-tauri/target/
+src-tauri/gen/
+
+### Node / SvelteKit frontend
+node_modules/
+build/
+.svelte-kit/
+*.tsbuildinfo
+
 ### Windows
 # Windows thumbnail cache files
 Thumbs.db

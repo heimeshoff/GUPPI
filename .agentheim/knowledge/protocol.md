@@ -5,6 +5,29 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 15:25 -- Task verified and completed: infrastructure-012-walking-skeleton - Spike: walking skeleton
+
+**Type:** Work / Task completion
+**Task:** infrastructure-012-walking-skeleton - Spike: walking skeleton
+**Summary:** GUPPI's first code — a Tauri 2 + Svelte 5 + PixiJS app whose Rust core reads one hard-coded Agentheim project into a ProjectSnapshot, persists tile/camera state in SQLite, and pushes filesystem-change events through a Tokio broadcast EventBus to the canvas. All eleven foundation ADRs validated by execution.
+**Verification:** PASS (iteration 1)
+**Commit:** <pending>
+**Files changed:** 38 (incl. lockfiles); 14 Rust tests passing, `pnpm check` clean
+**ADRs written:** none
+**New backlog items:** infrastructure-014-fine-grained-fs-events, infrastructure-015-log-retention-sweep
+**Note:** Spike DoD has manual GUI acceptance steps (drag tile + reopen, manual file-move → count update) that need Marco's hands-on confirmation — code-complete and compiling, not agent-verifiable.
+
+---
+
+## 2026-05-14 15:00 -- Batch started: [infrastructure-012-walking-skeleton]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-012-walking-skeleton - Spike: walking skeleton
+**Parallel:** no (1 worker)
+**Note:** Toolchain blocker from the 2026-05-14 14:48 pause is resolved — Rust 1.95.0 (stable-x86_64-pc-windows-msvc) and MSVC VC build tools are both installed. `~/.cargo/bin` is not on the shell PATH; worker instructed to prepend it.
+
+---
+
 ## 2026-05-14 14:48 -- Work session paused: toolchain blocker
 
 **Type:** Work / Session pause
