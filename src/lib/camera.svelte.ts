@@ -53,6 +53,37 @@ export class Camera {
 		this.pan_y = state.pan_y;
 		this.zoom = clamp(state.zoom, MIN_ZOOM, MAX_ZOOM);
 	}
+
+	/**
+	 * Camera affordance (design-system styleguide): frame a world-space
+	 * bounding box so it sits centred in the given viewport with a margin.
+	 * Used by zoom-to-fit. Sets state directly — callers that want the
+	 * styleguide's eased transition should `tweenTo` toward `fitTo`'s result.
+	 */
+	fitTo(
+		box: { x: number; y: number; w: number; h: number },
+		viewport: { w: number; h: number },
+		marginPx = 64
+	): CameraState {
+		const usableW = Math.max(1, viewport.w - marginPx * 2);
+		const usableH = Math.max(1, viewport.h - marginPx * 2);
+		const zoom = clamp(Math.min(usableW / box.w, usableH / box.h), MIN_ZOOM, MAX_ZOOM);
+		// Centre the box: screen-centre = world-centre * zoom + pan.
+		const pan_x = viewport.w / 2 - (box.x + box.w / 2) * zoom;
+		const pan_y = viewport.h / 2 - (box.y + box.h / 2) * zoom;
+		return { pan_x, pan_y, zoom };
+	}
+
+	/**
+	 * Linear interpolation toward a target camera state by factor `t` in
+	 * [0,1]. The styleguide's eased transitions (zoom-to-fit, focus-on-tile)
+	 * call this each animation frame with an eased `t`.
+	 */
+	lerpTo(target: CameraState, t: number) {
+		this.pan_x += (target.pan_x - this.pan_x) * t;
+		this.pan_y += (target.pan_y - this.pan_y) * t;
+		this.zoom += (target.zoom - this.zoom) * t;
+	}
 }
 
 function clamp(value: number, lo: number, hi: number): number {

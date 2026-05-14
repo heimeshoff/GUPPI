@@ -1,0 +1,82 @@
+/*
+ * GUPPI design tokens as CSS custom properties — the HTML overlay layer
+ * (markdown viewer, command palette, terminal-panel chrome — ADR-003) reads
+ * these. The canonical source is `tokens.ts`; these values MUST mirror it.
+ * Dark mode is the default and only theme shipped now (open question
+ * resolved — see the styleguide doc). Light mode, when added, becomes a
+ * second `:root[data-theme='light']` block here plus a light branch in
+ * `tokens.ts`.
+ *
+ * Scoped to :root so it applies to the whole WebView document.
+ */
+
+:root {
+	color-scheme: dark;
+
+	/* --- Colour: surfaces --------------------------------------------- */
+	--guppi-canvas-bg: #16161c;
+	--guppi-canvas-bg-raised: #1e1e26;
+
+	/* --- Colour: project tile ----------------------------------------- */
+	--guppi-tile-fill: #262636;
+	--guppi-tile-border: #8a8ad0;
+	--guppi-tile-text: #f2f2f7;
+	--guppi-tile-text-muted: #b9b9c8;
+
+	/* --- Colour: bounded-context node --------------------------------- */
+	--guppi-bc-fill: #20242b;
+	--guppi-bc-border: #3c8b8e;
+	--guppi-bc-text: #e6e6ec;
+	--guppi-bc-text-muted: #9a9aa6;
+
+	/* --- Colour: edges + affordances ---------------------------------- */
+	--guppi-edge: #4a4a58;
+	--guppi-edge-highlight: #8a8ad0;
+	--guppi-focus-ring: #c8c8ff;
+
+	/* --- Colour: status palette (colourblind-friendly) ---------------- */
+	--guppi-status-idle: #6f7585;
+	--guppi-status-running: #2f9fe0;
+	--guppi-status-blocked: #e6a020;
+	--guppi-status-missing: #d05a8a;
+	--guppi-status-text: #10131a;
+
+	/* --- Colour: voice-state indicator -------------------------------- */
+	--guppi-voice-idle: #5a5a68;
+	--guppi-voice-listening: #2f9fe0;
+	--guppi-voice-muted: #d05a8a;
+
+	/* --- Typography --------------------------------------------------- */
+	--guppi-font-family: 'Inter', 'Segoe UI', system-ui, -apple-system,
+		'Helvetica Neue', Arial, sans-serif;
+	--guppi-font-family-mono: 'Cascadia Code', 'Consolas', 'SF Mono', 'Menlo',
+		monospace;
+	--guppi-size-title: 16px;
+	--guppi-size-body: 12px;
+	--guppi-size-caption: 10px;
+	--guppi-weight-regular: 400;
+	--guppi-weight-medium: 500;
+	--guppi-weight-bold: 700;
+
+	/* --- Spacing (4px base) ------------------------------------------- */
+	--guppi-space-xs: 4px;
+	--guppi-space-sm: 8px;
+	--guppi-space-md: 12px;
+	--guppi-space-lg: 16px;
+	--guppi-space-xl: 24px;
+	--guppi-space-xxl: 32px;
+
+	/* --- Shape -------------------------------------------------------- */
+	--guppi-radius-tile: 12px;
+	--guppi-radius-bc: 10px;
+	--guppi-radius-badge: 6px;
+	--guppi-border-width: 2px;
+	--guppi-border-width-focus: 3px;
+
+	/* --- Motion ------------------------------------------------------- */
+	--guppi-duration-camera: 320ms;
+	--guppi-duration-affordance: 120ms;
+	--guppi-duration-pulse: 1600ms;
+	--guppi-ease-standard: cubic-bezier(0.22, 0.61, 0.36, 1);
+	--guppi-ease-pulse: cubic-bezier(0.45, 0, 0.55, 1);
+}

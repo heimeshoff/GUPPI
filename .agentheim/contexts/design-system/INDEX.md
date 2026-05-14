@@ -17,21 +17,21 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-- [design-system-001-styleguide](todo/design-system-001-styleguide.md) — `type: feature`, depends on `infrastructure-012-walking-skeleton`. Gate for all frontend tasks.
+*(None.)*
 <!-- todo-list:end -->
 
-**Todo count:** 1
+**Todo count:** 0
 
 ## Doing
 
 <!-- doing-list:start -->
-*(None yet.)*
+*(None.)*
 <!-- doing-list:end -->
 
 ## Done
 
 <!-- done-list:start -->
-*(None yet.)*
+- [design-system-001-styleguide](done/design-system-001-styleguide.md) — `type: feature`. GUPPI styleguide — colour/typography/spacing/shape/motion tokens (TS + CSS vars), colourblind-friendly status palette, documented component states; walking-skeleton canvas upgraded greybox → baseline. Open-question defaults chosen; Marco's in-person sign-off + design-skill refinement deferred.
 <!-- done-list:end -->
 
 ## Research

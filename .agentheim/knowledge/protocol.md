@@ -5,13 +5,36 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 15:42 -- Task verified and completed: design-system-001-styleguide - Feature: styleguide
+
+**Type:** Work / Task completion
+**Task:** design-system-001-styleguide - Feature: styleguide
+**Summary:** GUPPI styleguide — colour/typography/spacing/shape/motion tokens (TS object + mirrored CSS variables), colourblind-friendly four-state status palette, documented component states for tile/BC node/edge/status badge/voice indicator; walking-skeleton canvas upgraded from greybox to the styleguide baseline. `pnpm check` + `pnpm build` green.
+**Verification:** PASS (iteration 1)
+**Commit:** <pending>
+**Files changed:** ~9
+**ADRs written:** none
+**Open-question defaults chosen by worker (Marco can override):** dark-mode default / light optional, rounded-rectangle tiles, restrained motion budget.
+**Deferred (NOT satisfied by the worker):** Marco's in-person sign-off gate, and his planned design-skill refinement pass. Follow-up: frontend-bearing BC READMEs (e.g. canvas) still need a reference to `contexts/design-system/STYLEGUIDE.md` + a restatement of the frontend gate — a worker may not edit other BCs' READMEs.
+
+---
+
+## 2026-05-14 15:30 -- Batch started: [design-system-001-styleguide]
+
+**Type:** Work / Batch start
+**Tasks:** design-system-001-styleguide - Feature: styleguide
+**Parallel:** no (1 worker)
+**Note:** Unblocked by infrastructure-012. Task has 3 open questions for Marco (light mode, tile shape, motion budget) and an in-person sign-off gate. Marco authorized the worker to pick sensible defaults this run — he will refine via a design skill afterward, and the in-person sign-off remains a separate gate (not satisfiable by the worker).
+
+---
+
 ## 2026-05-14 15:25 -- Task verified and completed: infrastructure-012-walking-skeleton - Spike: walking skeleton
 
 **Type:** Work / Task completion
 **Task:** infrastructure-012-walking-skeleton - Spike: walking skeleton
 **Summary:** GUPPI's first code — a Tauri 2 + Svelte 5 + PixiJS app whose Rust core reads one hard-coded Agentheim project into a ProjectSnapshot, persists tile/camera state in SQLite, and pushes filesystem-change events through a Tokio broadcast EventBus to the canvas. All eleven foundation ADRs validated by execution.
 **Verification:** PASS (iteration 1)
-**Commit:** <pending>
+**Commit:** 1f37659
 **Files changed:** 38 (incl. lockfiles); 14 Rust tests passing, `pnpm check` clean
 **ADRs written:** none
 **New backlog items:** infrastructure-014-fine-grained-fs-events, infrastructure-015-log-retention-sweep

@@ -1,7 +1,9 @@
 <script lang="ts">
-	// The walking skeleton's single screen: a full-window canvas (ADR-002 +
-	// ADR-003). No routing, no chrome — the styleguide is not signed off yet.
+	// GUPPI's single screen: a full-window canvas (ADR-002 + ADR-003), rendered
+	// at the design-system styleguide baseline (design-system-001-styleguide).
+	// The global document chrome reads the design tokens.
 	import Canvas from '$lib/Canvas.svelte';
+	import '$lib/design/tokens.css';
 </script>
 
 <main>
@@ -13,7 +15,9 @@
 		margin: 0;
 		padding: 0;
 		height: 100%;
-		background: #1e1e1e;
+		background: var(--guppi-canvas-bg);
+		color: var(--guppi-bc-text);
+		font-family: var(--guppi-font-family);
 		overflow: hidden;
 	}
 	main {

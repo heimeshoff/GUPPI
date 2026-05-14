@@ -3,6 +3,7 @@ id: infrastructure-012-walking-skeleton
 type: spike
 status: done
 completed: 2026-05-14
+commit: 1f37659
 scope: global
 depends_on:
   - infrastructure-001-desktop-runtime

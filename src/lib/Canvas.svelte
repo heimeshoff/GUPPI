@@ -1,8 +1,22 @@
 <script lang="ts">
-	// The infinite canvas — PixiJS v8 / WebGL (ADR-003). Greybox visuals only;
-	// the styleguide is not signed off (skeleton scope: "plain rectangles and
-	// lines are fine"). Renders one project tile at world origin with its BC
-	// nodes radiating from it, edges connecting them, and live task counts.
+	// The infinite canvas — PixiJS v8 / WebGL (ADR-003), rendered at the
+	// design-system styleguide baseline (design-system-001-styleguide).
+	//
+	// This is the first consumer of the design tokens. Every colour, size,
+	// font, and duration comes from `./design/tokens` — nothing here is a
+	// magic number. Downstream frontend feature tasks follow the same rule.
+	//
+	// What the styleguide baseline establishes here:
+	//   - Tile visual hierarchy: project tile (larger, warm border) vs BC node
+	//     (smaller, cool border).
+	//   - Status palette: each BC node carries a colourblind-friendly status
+	//     badge (idle / running / blocked / missing) — colour + glyph.
+	//   - Typography scale: one family, three sizes.
+	//   - Edge style: project → BC connectors at the `edge` token colour.
+	//   - Camera affordance: zoom-to-fit (press "f"), eased per the motion budget.
+	//   - Voice-state affordance: a single ambient corner glyph (idle for now —
+	//     real mic wiring is voice BC future work; this is the visual contract).
+	//   - Focus/hover affordance: a focus ring on the hovered/dragged tile.
 	//
 	// Camera state (ADR-003) lives in the `Camera` rune store; this component
 	// drives pan (drag) and zoom (wheel) into it and re-projects the scene on
@@ -20,22 +34,54 @@
 		saveTilePosition,
 		logToCore
 	} from './ipc';
-	import type { ProjectSnapshot, Point } from './types';
-
-	const TILE_W = 220;
-	const TILE_H = 120;
-	const BC_W = 180;
-	const BC_H = 90;
-	const BC_RADIUS = 360; // world-space distance of BC nodes from the project tile
+	import type { ProjectSnapshot, Point, BcSnapshot, CameraState } from './types';
+	import {
+		color,
+		typography,
+		shape,
+		motion,
+		statusColor,
+		statusGlyph,
+		type TaskState
+	} from './design/tokens';
 
 	let host: HTMLDivElement;
 	const camera = new Camera();
 
-	// The persisted world-space position of the project tile. The skeleton
-	// requirement is that it starts at origin (0,0) and any drag is persisted.
+	// The persisted world-space position of the project tile. Starts at origin
+	// (0,0); any drag is persisted (ADR-004).
 	let tilePos = $state<Point>({ x: 0, y: 0 });
 	let snapshot = $state<ProjectSnapshot | null>(null);
 	let status = $state('starting…');
+
+	// Voice-state affordance — a single ambient indicator. The voice BC will
+	// drive this later; for the styleguide baseline it sits at "idle" so the
+	// visual contract (corner glyph, token colour) is established and testable.
+	type VoiceState = 'idle' | 'listening' | 'muted';
+	let voiceState = $state<VoiceState>('idle');
+
+	// Which node the pointer is over — drives the focus-ring affordance.
+	let hoveredKey = $state<string | null>(null);
+
+	/**
+	 * Derive a BC node's status from its task counts. This is the styleguide's
+	 * status vocabulary applied to real data:
+	 *   - missing : the BC has no task files at all (expected but absent)
+	 *   - blocked : at least one task is parked in `backlog` and nothing is in
+	 *               `doing` — the canvas reads this as "waiting on a decision"
+	 *   - running : something is in `doing`
+	 *   - idle    : has tasks, none in flight, nothing stuck
+	 * The mapping is intentionally simple for the baseline; the canvas BC can
+	 * refine it once real per-task status exists.
+	 */
+	export function deriveBcStatus(bc: BcSnapshot): TaskState {
+		const c = bc.task_counts;
+		const total = c.backlog + c.todo + c.doing + c.done;
+		if (total === 0) return 'missing';
+		if (c.doing > 0) return 'running';
+		if (c.backlog > 0 && c.todo === 0) return 'blocked';
+		return 'idle';
+	}
 
 	onMount(() => {
 		let app: Application | null = null;
@@ -46,11 +92,16 @@
 		const world = new Container();
 		let renderScene: () => void = () => {};
 
+		// Eased camera transition state (motion budget): when set, the ticker
+		// lerps the camera toward `cameraTarget` and clears it when close.
+		let cameraTarget: CameraState | null = null;
+		let cameraAnimStart = 0;
+
 		(async () => {
 			app = new Application();
 			await app.init({
 				resizeTo: host,
-				background: 0x1e1e1e,
+				background: color.canvasBg,
 				antialias: true
 			});
 			if (disposed) {
@@ -85,46 +136,75 @@
 					const bcWorld = bcWorldPosition(i, bcCount);
 					const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
 					edges
-						.moveTo(projScreen.x + (TILE_W * z) / 2, projScreen.y + (TILE_H * z) / 2)
-						.lineTo(bcScreen.x + (BC_W * z) / 2, bcScreen.y + (BC_H * z) / 2);
+						.moveTo(
+							projScreen.x + (shape.tileWidth * z) / 2,
+							projScreen.y + (shape.tileHeight * z) / 2
+						)
+						.lineTo(
+							bcScreen.x + (shape.bcWidth * z) / 2,
+							bcScreen.y + (shape.bcHeight * z) / 2
+						);
 				});
-				edges.stroke({ width: Math.max(1, 2 * z), color: 0x555555 });
+				edges.stroke({
+					width: Math.max(1, shape.borderWidth * z),
+					color: color.edge
+				});
 				world.addChild(edges);
 
-				// BC nodes.
+				// BC nodes — secondary hierarchy: smaller, cool border, with a
+				// status badge derived from task counts.
 				snapshot.bcs.forEach((bc, i) => {
 					const bcWorld = bcWorldPosition(i, bcCount);
 					const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
+					const key = `bc:${bc.name}`;
 					world.addChild(
-						makeNode(
-							bcScreen.x,
-							bcScreen.y,
-							BC_W * z,
-							BC_H * z,
-							0x2d2d2d,
-							0x3c8b8e,
-							bc.name,
-							`b:${bc.task_counts.backlog}  t:${bc.task_counts.todo}  ` +
-								`d:${bc.task_counts.doing}  ✓:${bc.task_counts.done}`,
+						makeNode({
+							key,
+							screenX: bcScreen.x,
+							screenY: bcScreen.y,
+							w: shape.bcWidth * z,
+							h: shape.bcHeight * z,
+							radius: shape.radiusBc * z,
+							fill: color.bcFill,
+							border: color.bcBorder,
+							titleColor: color.bcText,
+							subtitleColor: color.bcTextMuted,
+							title: bc.name,
+							subtitle:
+								`b ${bc.task_counts.backlog}   t ${bc.task_counts.todo}   ` +
+								`d ${bc.task_counts.doing}   done ${bc.task_counts.done}`,
+							statusState: deriveBcStatus(bc),
 							z
-						)
+						})
 					);
 				});
 
-				// The project tile, drawn last (on top).
-				const tile = makeNode(
-					projScreen.x,
-					projScreen.y,
-					TILE_W * z,
-					TILE_H * z,
-					0x252540,
-					0x6c6cae,
-					snapshot.name,
-					snapshot.path,
+				// The project tile — primary hierarchy: larger, warm border,
+				// drawn last (on top).
+				const tile = makeNode({
+					key: 'project',
+					screenX: projScreen.x,
+					screenY: projScreen.y,
+					w: shape.tileWidth * z,
+					h: shape.tileHeight * z,
+					radius: shape.radiusTile * z,
+					fill: color.tileFill,
+					border: color.tileBorder,
+					titleColor: color.tileText,
+					subtitleColor: color.tileTextMuted,
+					title: snapshot.name,
+					subtitle: snapshot.path,
+					statusState: null,
 					z
-				);
+				});
 				makeDraggable(tile, projScreen, z);
 				world.addChild(tile);
+
+				// Voice-state affordance — a single ambient glyph pinned to the
+				// bottom-right corner of the viewport (not world space, so it
+				// stays put while the canvas pans). Established here as the
+				// visual contract; the voice BC drives `voiceState` later.
+				world.addChild(makeVoiceIndicator());
 			};
 
 			// --- camera interaction: pan (drag empty space) + zoom (wheel) -
@@ -138,6 +218,7 @@
 				panning = true;
 				lastX = e.clientX;
 				lastY = e.clientY;
+				cameraTarget = null; // a manual gesture cancels any eased transition
 			});
 			window.addEventListener('pointermove', (e) => {
 				if (!panning) return;
@@ -159,11 +240,21 @@
 					const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
 					const rect = host.getBoundingClientRect();
 					camera.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
+					cameraTarget = null;
 					renderScene();
 					void saveCamera(camera.snapshot());
 				},
 				{ passive: false }
 			);
+
+			// --- camera affordance: zoom-to-fit on "f" --------------------
+			// Eased per the motion budget (durationCamera). The keyboard hint
+			// is shown in the corner overlay below.
+			window.addEventListener('keydown', (e) => {
+				if (e.key === 'f' || e.key === 'F') {
+					beginZoomToFit();
+				}
+			});
 
 			// --- initial fetch + live updates (ADR-009) -------------------
 			await refresh();
@@ -174,14 +265,62 @@
 
 			renderScene();
 
-			// Re-render on PixiJS ticker so a window resize re-projects.
-			app.ticker.add(renderScene);
+			// Re-render on PixiJS ticker so a window resize re-projects, and
+			// step any in-progress eased camera transition.
+			app.ticker.add(() => {
+				if (cameraTarget) stepCameraTransition();
+				renderScene();
+			});
 		})();
+
+		// Start an eased zoom-to-fit transition framing the project tile and
+		// all BC nodes within the viewport.
+		function beginZoomToFit() {
+			if (!app || !snapshot) return;
+			const box = sceneWorldBounds();
+			const viewport = { w: app.renderer.width, h: app.renderer.height };
+			cameraTarget = camera.fitTo(box, viewport);
+			cameraAnimStart = performance.now();
+		}
+
+		// Advance the eased camera transition; clear the target when settled.
+		function stepCameraTransition() {
+			if (!cameraTarget) return;
+			const elapsed = performance.now() - cameraAnimStart;
+			const t = Math.min(1, elapsed / motion.durationCamera);
+			// ease-out cubic — matches motion.easeStandard's character.
+			const eased = 1 - Math.pow(1 - t, 3);
+			// Lerp by the *incremental* eased step so the motion decelerates.
+			camera.lerpTo(cameraTarget, eased);
+			if (t >= 1) {
+				camera.restore(cameraTarget);
+				cameraTarget = null;
+				void saveCamera(camera.snapshot());
+			}
+		}
+
+		// World-space bounding box of the whole scene (project tile + BCs),
+		// used by zoom-to-fit.
+		function sceneWorldBounds(): { x: number; y: number; w: number; h: number } {
+			let minX = tilePos.x;
+			let minY = tilePos.y;
+			let maxX = tilePos.x + shape.tileWidth;
+			let maxY = tilePos.y + shape.tileHeight;
+			const bcCount = snapshot?.bcs.length ?? 0;
+			for (let i = 0; i < bcCount; i++) {
+				const p = bcWorldPosition(i, bcCount);
+				minX = Math.min(minX, p.x);
+				minY = Math.min(minY, p.y);
+				maxX = Math.max(maxX, p.x + shape.bcWidth);
+				maxY = Math.max(maxY, p.y + shape.bcHeight);
+			}
+			return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+		}
 
 		async function refresh() {
 			try {
 				snapshot = await getProject();
-				status = `${snapshot.bcs.length} bounded contexts`;
+				status = `${snapshot.bcs.length} bounded contexts · press F to fit`;
 				renderScene();
 			} catch (e) {
 				status = `error: ${e}`;
@@ -195,45 +334,182 @@
 			if (count === 0) return { x: 0, y: 0 };
 			const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
 			return {
-				x: tilePos.x + Math.cos(angle) * BC_RADIUS,
-				y: tilePos.y + Math.sin(angle) * BC_RADIUS
+				x: tilePos.x + Math.cos(angle) * shape.bcOrbitRadius,
+				y: tilePos.y + Math.sin(angle) * shape.bcOrbitRadius
 			};
 		}
 
-		// A greybox node: filled rounded rect, border, title, subtitle.
-		function makeNode(
-			screenX: number,
-			screenY: number,
-			w: number,
-			h: number,
-			fill: number,
-			border: number,
-			title: string,
-			subtitle: string,
-			z: number
-		): Container {
+		// A styleguide node: filled rounded rect, border, title + subtitle in
+		// the type scale, an optional status badge, and a focus ring when the
+		// pointer is over it.
+		function makeNode(opts: {
+			key: string;
+			screenX: number;
+			screenY: number;
+			w: number;
+			h: number;
+			radius: number;
+			fill: number;
+			border: number;
+			titleColor: number;
+			subtitleColor: number;
+			title: string;
+			subtitle: string;
+			statusState: TaskState | null;
+			z: number;
+		}): Container {
 			const node = new Container();
+			const { screenX, screenY, w, h, z } = opts;
+
+			const focused = hoveredKey === opts.key;
+
 			const g = new Graphics();
-			g.roundRect(screenX, screenY, w, h, 8 * z)
-				.fill(fill)
-				.stroke({ width: Math.max(1, 2 * z), color: border });
+			g.roundRect(screenX, screenY, w, h, opts.radius)
+				.fill(opts.fill)
+				.stroke({
+					width: Math.max(1, opts.border && opts.z ? shape.borderWidth * z : 1),
+					color: opts.border
+				});
+			// Focus/hover affordance — a brighter ring just outside the border.
+			if (focused) {
+				g.roundRect(
+					screenX - 2 * z,
+					screenY - 2 * z,
+					w + 4 * z,
+					h + 4 * z,
+					opts.radius + 2 * z
+				).stroke({
+					width: Math.max(1, shape.borderWidthFocus * z),
+					color: color.focusRing
+				});
+			}
 			node.addChild(g);
 
 			const titleText = new Text({
-				text: title,
-				style: { fill: 0xffffff, fontSize: Math.max(8, 16 * z), fontWeight: 'bold' }
+				text: opts.title,
+				style: {
+					fill: opts.titleColor,
+					fontFamily: typography.fontFamily,
+					fontSize: Math.max(8, typography.sizeTitle * z),
+					fontWeight: String(typography.weightBold) as '700'
+				}
 			});
-			titleText.position.set(screenX + 12 * z, screenY + 10 * z);
+			titleText.position.set(screenX + shape.radiusBadge * z + 6 * z, screenY + 10 * z);
 			node.addChild(titleText);
 
 			const subText = new Text({
-				text: subtitle,
-				style: { fill: 0xaaaaaa, fontSize: Math.max(6, 11 * z) }
+				text: opts.subtitle,
+				style: {
+					fill: opts.subtitleColor,
+					fontFamily: typography.fontFamilyMono,
+					fontSize: Math.max(6, typography.sizeCaption * z)
+				}
 			});
-			subText.position.set(screenX + 12 * z, screenY + h - 22 * z);
+			subText.position.set(
+				screenX + shape.radiusBadge * z + 6 * z,
+				screenY + h - 20 * z
+			);
 			node.addChild(subText);
 
+			// Status badge — a small pill in the top-right corner. Colour +
+			// glyph (colourblind-friendly: colour is never the only signal).
+			if (opts.statusState) {
+				node.addChild(makeStatusBadge(screenX, screenY, w, opts.statusState, z));
+			}
+
+			// Hover tracking for the focus-ring affordance.
+			node.eventMode = 'static';
+			node.hitArea = {
+				contains: (x: number, y: number) =>
+					x >= screenX && x <= screenX + w && y >= screenY && y <= screenY + h
+			};
+			node.on('pointerover', () => {
+				hoveredKey = opts.key;
+				renderScene();
+			});
+			node.on('pointerout', () => {
+				if (hoveredKey === opts.key) {
+					hoveredKey = null;
+					renderScene();
+				}
+			});
+
 			return node;
+		}
+
+		// A status badge — a coloured pill with the status glyph, pinned to a
+		// node's top-right corner.
+		function makeStatusBadge(
+			nodeX: number,
+			nodeY: number,
+			nodeW: number,
+			state: TaskState,
+			z: number
+		): Container {
+			const badge = new Container();
+			const size = shape.badgeHeight * z;
+			const bx = nodeX + nodeW - size - 6 * z;
+			const by = nodeY + 6 * z;
+
+			const g = new Graphics();
+			g.roundRect(bx, by, size, size, shape.radiusBadge * z).fill(statusColor[state]);
+			badge.addChild(g);
+
+			const glyph = new Text({
+				text: statusGlyph[state],
+				style: {
+					fill: color.statusText,
+					fontFamily: typography.fontFamily,
+					fontSize: Math.max(6, typography.sizeCaption * z),
+					fontWeight: String(typography.weightBold) as '700'
+				}
+			});
+			glyph.anchor.set(0.5);
+			glyph.position.set(bx + size / 2, by + size / 2);
+			badge.addChild(glyph);
+
+			return badge;
+		}
+
+		// The ambient voice-state indicator — a small glyph + dot pinned to the
+		// bottom-right of the viewport. Screen-space (not world-space) so it
+		// does not move when the canvas pans. This is the styleguide's voice
+		// affordance contract; the voice BC supplies real state later.
+		function makeVoiceIndicator(): Container {
+			const indicator = new Container();
+			if (!app) return indicator;
+			const w = app.renderer.width;
+			const h = app.renderer.height;
+
+			const voiceColor =
+				voiceState === 'listening'
+					? color.voiceListening
+					: voiceState === 'muted'
+						? color.voiceMuted
+						: color.voiceIdle;
+
+			const r = 5;
+			const cx = w - 22;
+			const cy = h - 22;
+
+			const dot = new Graphics();
+			dot.circle(cx, cy, r).fill(voiceColor);
+			indicator.addChild(dot);
+
+			const label = new Text({
+				text: voiceState === 'listening' ? 'mic' : voiceState === 'muted' ? 'muted' : 'mic',
+				style: {
+					fill: voiceColor,
+					fontFamily: typography.fontFamily,
+					fontSize: typography.sizeCaption,
+					fontWeight: String(typography.weightMedium) as '500'
+				}
+			});
+			label.anchor.set(1, 0.5);
+			label.position.set(cx - r - 6, cy);
+			indicator.addChild(label);
+
+			return indicator;
 		}
 
 		// Make the project tile draggable; persist the new world position on
@@ -243,9 +519,9 @@
 			tile.hitArea = {
 				contains: (x: number, y: number) =>
 					x >= screenPos.x &&
-					x <= screenPos.x + TILE_W * z &&
+					x <= screenPos.x + shape.tileWidth * z &&
 					y >= screenPos.y &&
-					y <= screenPos.y + TILE_H * z
+					y <= screenPos.y + shape.tileHeight * z
 			};
 
 			let dragging = false;
@@ -255,6 +531,7 @@
 			tile.on('pointerdown', (e) => {
 				dragging = true;
 				e.stopPropagation(); // do not let this start a camera pan
+				cameraTarget = null;
 				originScreenX = e.global.x;
 				originScreenY = e.global.y;
 			});
@@ -289,18 +566,22 @@
 <div class="status">{status}</div>
 
 <style>
+	/* The HTML chrome layer reads the design tokens (ADR-003 overlay layer). */
+	@import './design/tokens.css';
+
 	.canvas-host {
 		position: absolute;
 		inset: 0;
 		overflow: hidden;
+		background: var(--guppi-canvas-bg);
 	}
 	.status {
 		position: absolute;
-		left: 8px;
-		bottom: 8px;
-		font-family: monospace;
-		font-size: 12px;
-		color: #888;
+		left: var(--guppi-space-sm);
+		bottom: var(--guppi-space-sm);
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-caption);
+		color: var(--guppi-bc-text-muted);
 		pointer-events: none;
 	}
 </style>
