@@ -1,9 +1,11 @@
 ---
 id: infrastructure-001-desktop-runtime
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: []
+completed: 2026-05-14
+related_adrs: [ADR-001-desktop-runtime]
 ---
 
 # Decision: Desktop runtime
@@ -54,3 +56,14 @@ Requirements:
 - (–) WebView differs across OSes (WebView2 on Windows, WKWebView on macOS) — possible canvas rendering quirks. Test the canvas early on Windows.
 
 **Reversibility.** Medium. Switching to Electron later means rewriting the Rust core in Node, but the frontend would survive mostly intact if we keep IPC behind a thin abstraction.
+
+## Outcome
+
+ADR written and accepted at `.agentheim/knowledge/decisions/ADR-001-desktop-runtime.md`.
+
+Marco signed off on the architect's recommendation, so the ADR is committed with **Status: Accepted** (not Proposed). Two decisions folded into the draft:
+
+- **Runtime: Tauri 2** — Rust core (PTY, FS-watching, sqlite, voice IPC client, project discovery) plus a web-tech frontend (canvas, tile UI, command palette, terminal panel). IPC via Tauri `invoke`/`emit`, kept behind a thin frontend abstraction for reversibility.
+- **Platform scope: Windows-only day one** — Windows 11 / WebView2 is the only validated target. macOS/Linux are "kept possible, not validated"; the ADR's Context and Consequences reflect this rather than claiming cross-platform support.
+
+No code change required (decision-only task). The infrastructure BC README already carries the correct generic ubiquitous language (Runtime, Core, Frontend, IPC) and needed no update.

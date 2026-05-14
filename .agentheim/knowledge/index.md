@@ -17,7 +17,7 @@ Top-level catalog for the GUPPI project. Tracks bounded contexts and global ADRs
 ## Global ADRs
 
 <!-- adr-global:start -->
-*(None yet — foundation decision tasks in `contexts/infrastructure/todo/` will produce these as they are worked.)*
+- [ADR-001 — Desktop runtime: Tauri 2](decisions/ADR-001-desktop-runtime.md) — Accepted. Tauri 2 (Rust core + web frontend), Windows-only validated day one.
 <!-- adr-global:end -->
 
 ## Recent activity

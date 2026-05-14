@@ -17,7 +17,6 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-- [infrastructure-001-desktop-runtime](todo/infrastructure-001-desktop-runtime.md) — `type: decision`. Tauri 2 (architect's recommendation). Open Q: Tauri vs Electron.
 - [infrastructure-002-frontend-framework](todo/infrastructure-002-frontend-framework.md) — `type: decision`. Svelte 5. Open Q: Svelte vs React vs Solid.
 - [infrastructure-003-canvas-rendering](todo/infrastructure-003-canvas-rendering.md) — `type: decision`. PixiJS v8 + HTML overlays.
 - [infrastructure-004-persistence](todo/infrastructure-004-persistence.md) — `type: decision`. SQLite in OS user-config dir.
@@ -31,7 +30,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 - [infrastructure-012-walking-skeleton](todo/infrastructure-012-walking-skeleton.md) — `type: spike`, depends on 001–011. GUPPI's first prototype.
 <!-- todo-list:end -->
 
-**Todo count:** 12
+**Todo count:** 11
 
 ## Doing
 
@@ -42,7 +41,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Done
 
 <!-- done-list:start -->
-*(None yet.)*
+- [infrastructure-001-desktop-runtime](done/infrastructure-001-desktop-runtime.md) — `type: decision`. Tauri 2 chosen, Windows-only day one. → ADR-001.
 <!-- done-list:end -->
 
 ## Research

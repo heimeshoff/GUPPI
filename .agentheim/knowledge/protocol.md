@@ -5,6 +5,14 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 13:59 -- Batch started: [infrastructure-001-desktop-runtime]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-001-desktop-runtime - Desktop runtime
+**Parallel:** no (1 worker)
+
+---
+
 ## 2026-05-13 — Brainstorm: initial vision
 
 **Type:** Brainstorm
