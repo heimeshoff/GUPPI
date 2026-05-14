@@ -17,6 +17,9 @@ Top-level catalog for the GUPPI project. Tracks bounded contexts and global ADRs
 ## Global ADRs
 
 <!-- adr-global:start -->
+- [ADR-010 — Logging: tracing to rotating local files](decisions/ADR-010-logging.md) — Accepted. `tracing` stack to `%APPDATA%\guppi\logs`, daily rotation, 7-day retention, no telemetry, crash dialog with "Open log folder".
+- [ADR-009 — IPC and event bus](decisions/ADR-009-event-bus.md) — Accepted. Tokio broadcast channel (cap 1024) with a typed `DomainEvent` enum in the core; thin frontend-bridge forwards to the WebView via Tauri emit.
+- [ADR-008 — Filesystem observation](decisions/ADR-008-filesystem-observation.md) — Accepted. `notify-debouncer-full`, one 250ms-debounced watcher per project scoped to `.agentheim/`, central `WatcherSupervisor`.
 - [ADR-007 — Voice integration: Whisperheim WebSocket bridge](decisions/ADR-007-voice-integration.md) — Accepted. Extend Whisperheim with a local WebSocket bridge; GUPPI subscribes to wake-word/transcript, emits speak. Contract: `contexts/infrastructure/voice-bridge.md`.
 - [ADR-005 — Project discovery: explicit registry + manual scan](decisions/ADR-005-project-discovery.md) — Accepted. Explicit registry primary (the `projects` table), user-triggered folder scan, no unprompted disk-walking.
 - [ADR-003 — Canvas rendering: PixiJS v8](decisions/ADR-003-canvas-rendering.md) — Accepted. PixiJS v8 (WebGL) for the canvas, HTML overlays positioned to world coordinates for rich interactive tiles.

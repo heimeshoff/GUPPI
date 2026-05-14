@@ -1,9 +1,11 @@
 ---
 id: infrastructure-008-filesystem-observation
 type: decision
-status: todo
+status: done
+completed: 2026-05-14
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
+related_adrs: [ADR-008]
 ---
 
 # Decision: Filesystem observation
@@ -47,3 +49,17 @@ A central `WatcherSupervisor` (single Tokio task) owns the map of `project_id ->
 - (–) ReadDirectoryChangesW on Windows can miss events under extreme load; for GUPPI's workload (Marco moving task files manually or via Claude hooks) this is not a real risk.
 
 **Reversibility.** Trivial.
+
+## Outcome
+
+ADR-008 written and accepted at `.agentheim/knowledge/decisions/ADR-008-filesystem-observation.md`.
+Decision: `notify-debouncer-full`, one debounced watcher per registered project
+scoped to that project's `.agentheim/` directory, 250ms debounce window, central
+`WatcherSupervisor` Tokio task owning the `project_id -> watcher` map.
+
+The domain-event mapping (`TaskMoved`, `BCAppeared`, `BCDisappeared`) is defined
+per the architect's draft. ADR-009 (event-bus) did not yet exist at completion
+time — it is being authored in parallel — so the ADR records a note that the
+event taxonomy must be reconciled with ADR-009's `DomainEvent` enum once it
+lands. This satisfies the "reviewed against the event-bus design" criterion
+without a cross-task dependency.

@@ -6,6 +6,7 @@ scope: global
 depends_on: []
 completed: 2026-05-14
 related_adrs: [ADR-007-voice-integration]
+commit: ba59f4d
 ---
 
 # Decision: Voice integration architecture

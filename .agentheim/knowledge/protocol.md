@@ -5,13 +5,54 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:40 -- Task completed (verification skipped): infrastructure-010-logging - Logging and error reporting
+
+**Type:** Work / Task completion
+**Task:** infrastructure-010-logging - Logging and error reporting
+**Summary:** `tracing` stack writing to rotating local log files (`%APPDATA%\guppi\logs`, daily rotation, 7-day retention); frontend logs forwarded via a Tauri command; no telemetry; crash dialog with "Open log folder".
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
+## 2026-05-14 14:39 -- Task completed (verification skipped): infrastructure-009-event-bus - IPC and event bus
+
+**Type:** Work / Task completion
+**Task:** infrastructure-009-event-bus - IPC and event bus
+**Summary:** Two-layer event bus — a Tokio broadcast channel (capacity 1024) carrying a typed `DomainEvent` enum in the Rust core, with a thin frontend-bridge task forwarding frontend-relevant events to the WebView via Tauri emit.
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
+## 2026-05-14 14:38 -- Task completed (verification skipped): infrastructure-008-filesystem-observation - Filesystem observation
+
+**Type:** Work / Task completion
+**Task:** infrastructure-008-filesystem-observation - Filesystem observation
+**Summary:** `notify-debouncer-full` with one 250ms-debounced watcher per registered project scoped to its `.agentheim/`, coordinated by a central `WatcherSupervisor` Tokio task translating FS events into `TaskMoved`/`BCAppeared`/`BCDisappeared` domain events.
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
+## 2026-05-14 14:35 -- Batch started: [infrastructure-008-filesystem-observation, infrastructure-009-event-bus, infrastructure-010-logging]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-008-filesystem-observation - Filesystem observation, infrastructure-009-event-bus - IPC and event bus, infrastructure-010-logging - Logging and error reporting
+**Parallel:** yes (3 workers)
+
+---
+
 ## 2026-05-14 14:32 -- Task verified and completed: infrastructure-007-voice-integration - Voice integration architecture
 
 **Type:** Work / Task completion
 **Task:** infrastructure-007-voice-integration - Voice integration architecture
 **Summary:** Voice integration is a local WebSocket bridge added to Whisperheim — GUPPI subscribes to wake_word/transcript events and emits speak events. The versioned transport contract (event shapes, bridge.json port discovery, exponential-backoff reconnection, graceful degradation) is specced in contexts/infrastructure/voice-bridge.md.
 **Verification:** PASS (iteration 1)
-**Commit:** PENDING
+**Commit:** ba59f4d
 **Files changed:** 2
 **Tests added:** 0
 **ADRs written:** ADR-007-voice-integration

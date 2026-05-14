@@ -17,14 +17,11 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-- [infrastructure-008-filesystem-observation](todo/infrastructure-008-filesystem-observation.md) — `type: decision`. `notify-debouncer-full`, one watcher per project.
-- [infrastructure-009-event-bus](todo/infrastructure-009-event-bus.md) — `type: decision`. Tokio broadcast + Tauri events.
-- [infrastructure-010-logging](todo/infrastructure-010-logging.md) — `type: decision`. `tracing` to local rotating files, no telemetry.
 - [infrastructure-011-packaging](todo/infrastructure-011-packaging.md) — `type: decision`. Tauri MSI bundler, unsigned initially.
 - [infrastructure-012-walking-skeleton](todo/infrastructure-012-walking-skeleton.md) — `type: spike`, depends on 001–011. GUPPI's first prototype.
 <!-- todo-list:end -->
 
-**Todo count:** 5
+**Todo count:** 2
 
 ## Doing
 
@@ -35,6 +32,9 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-010-logging](done/infrastructure-010-logging.md) — `type: decision`. `tracing` to rotating local logs, 7-day retention, no telemetry. → ADR-010.
+- [infrastructure-009-event-bus](done/infrastructure-009-event-bus.md) — `type: decision`. Tokio broadcast (cap 1024) + frontend-bridge to Tauri emit. → ADR-009.
+- [infrastructure-008-filesystem-observation](done/infrastructure-008-filesystem-observation.md) — `type: decision`. `notify-debouncer-full`, one 250ms watcher per project, `WatcherSupervisor`. → ADR-008.
 - [infrastructure-007-voice-integration](done/infrastructure-007-voice-integration.md) — `type: decision`. Whisperheim WebSocket bridge; `voice-bridge.md` contract specced. → ADR-007.
 - [infrastructure-005-project-discovery](done/infrastructure-005-project-discovery.md) — `type: decision`. Explicit registry primary + user-triggered folder scan; no unprompted disk-walking. → ADR-005.
 - [infrastructure-003-canvas-rendering](done/infrastructure-003-canvas-rendering.md) — `type: decision`. PixiJS v8 (WebGL) + HTML overlays at world coords. → ADR-003.
