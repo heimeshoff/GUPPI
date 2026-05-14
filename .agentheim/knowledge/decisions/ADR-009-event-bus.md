@@ -5,7 +5,7 @@ status: Accepted
 scope: global
 bc: infrastructure
 date: 2026-05-14
-related_tasks: [infrastructure-009-event-bus, infrastructure-014-fine-grained-fs-events]
+related_tasks: [infrastructure-009-event-bus, infrastructure-014-fine-grained-fs-events, canvas-001-targeted-canvas-updates]
 ---
 
 # ADR-009: IPC and event bus — Tokio broadcast channel in the core, Tauri events to the frontend
@@ -69,12 +69,13 @@ enum DomainEvent {
     ProjectAdded { project_id, path },
     ProjectMissing { project_id },
 
-    // Filesystem observation (ADR-008 / infrastructure-014)
+    // Filesystem observation (ADR-008 / infrastructure-014 / canvas-001)
     TaskMoved { project_id, bc, from, to, task_id },
     TaskAdded { project_id, bc, state, task_id },
     TaskRemoved { project_id, bc, state, task_id },
     BCAppeared { project_id, bc },
     BCDisappeared { project_id, bc },
+    ResyncRequired { project_id },  // lag-only; see canvas-001 note below
 
     // claude PTY sessions (ADR-006)
     SessionSpawned { project_id, session_id },
@@ -103,6 +104,29 @@ kept aligned with the filesystem-observation work in ADR-008.
 > `from_state` / `to_state` draft was reconciled away. The skeleton's coarse
 > `AgentheimChanged` variant still exists in the implemented enum alongside
 > these — it is a deliberate compatibility seam, retired by `canvas-001`.
+
+> **Reconciliation note (canvas-001, 2026-05-14):** the coarse
+> `AgentheimChanged` variant is **retired and renamed** — but not deleted, it
+> still had a second job. `AgentheimChanged` carried *two* roles: (1) the
+> skeleton's normal-path "any `.agentheim/` change → re-fetch" event, and
+> (2) the lag-resync signal this ADR's *Consequences* section requires —
+> emitted by the frontend bridge's `Lagged` arm when the broadcast receiver
+> falls behind capacity. `canvas-001` splits these:
+>
+> - **Normal path** — the watcher now publishes *only* the fine-grained
+>   `TaskMoved` / `TaskAdded` / `TaskRemoved` / `BCAppeared` / `BCDisappeared`
+>   events. The frontend patches its `ProjectSnapshot` model in place from
+>   them (counts tick, BC nodes appear/disappear) with no `get_project`
+>   round-trip. Role (1) of the coarse event is gone.
+>
+> - **Lag resync** — role (2) survives, renamed `AgentheimChanged` →
+>   **`ResyncRequired { project_id }`** (same payload). It is emitted **only**
+>   by `lib.rs`'s `Lagged` arm — never by the watcher — and is the **only**
+>   event that triggers a full `get_project` re-fetch in the frontend. By
+>   definition the bridge has *lost* events when it lags and cannot
+>   reconstruct them from the fine-grained stream, so an explicit
+>   resync-from-source-of-truth signal is still needed; this is that signal,
+>   under a name that says what it is for.
 
 ### Frontend bridge
 

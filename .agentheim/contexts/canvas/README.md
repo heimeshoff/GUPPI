@@ -28,6 +28,20 @@ The styleguide was signed off in person by Marco on 2026-05-14, so the gate is o
 - **Status badge** — the per-BC visual indicator (running / idle / blocked-on-question dot), driven by `agent-awareness`.
 - **Detail view** — the project-detail pane that renders markdown documents from a project.
 - **Markdown pane** — the renderer for `vision.md`, `research/*.md`, ADRs, BC READMEs in the detail view.
+- **Targeted update** — patching the client-side `ProjectSnapshot` in place from a fine-grained filesystem event (`task_moved` / `task_added` / `task_removed` / `bc_appeared` / `bc_disappeared`) instead of re-fetching the whole snapshot. A tile's task counts tick, a BC node appears/disappears, without a `get_project` round-trip (`canvas-001`).
+- **Resync** — the one remaining full `get_project` re-fetch, triggered only by the `resync_required` domain event. The Rust core's event bridge emits it when its broadcast receiver lags and loses events it cannot reconstruct (ADR-009 lag-resync strategy).
+
+## How the canvas stays live
+
+The canvas does not poll. The Rust core watches each project's `.agentheim/`
+and emits fine-grained domain events; the frontend applies them to its
+in-memory model as **targeted updates** (see `src/lib/snapshot-patch.ts`).
+Robustness rules baked into the patching: a `task_*` event for a BC not yet in
+the model lazily creates a zero-count node (filesystem events can arrive before
+the `bc_appeared` for the same batch); a delta that would push a count below
+zero is clamped at 0 and logged (the client model has drifted from disk); and
+every event is filtered by `project_id`. A full re-fetch happens only on
+**resync** (`resync_required`).
 
 ## Upstream dependencies
 

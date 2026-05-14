@@ -7,14 +7,14 @@
 //! multi-project supervisor lands with the project registry, not here
 //! (`infrastructure-014` scope-out).
 //!
-//! What this module does (`infrastructure-014`): it correlates each debounced
-//! batch of raw filesystem events into the fine-grained ADR-008/ADR-009 domain
-//! events — `TaskMoved`, `TaskAdded`, `TaskRemoved`, `BCAppeared`,
-//! `BCDisappeared` — and publishes them onto the event bus. It *also* still
-//! publishes the coarse `AgentheimChanged` for every batch, unchanged from the
-//! walking skeleton: a deliberate seam so the skeleton frontend keeps working
-//! while `canvas-001` migrates it to the fine-grained events and retires
-//! `AgentheimChanged`.
+//! What this module does (`infrastructure-014` / `canvas-001`): it correlates
+//! each debounced batch of raw filesystem events into the fine-grained
+//! ADR-008/ADR-009 domain events — `TaskMoved`, `TaskAdded`, `TaskRemoved`,
+//! `BCAppeared`, `BCDisappeared` — and publishes *only* those onto the event
+//! bus. `canvas-001` retired the coarse skeleton-compat event: the watcher no
+//! longer publishes anything on the normal path beyond `correlate()`'s output.
+//! The lag-only `ResyncRequired` signal is emitted by `lib.rs`'s frontend
+//! bridge, not here.
 //!
 //! Correlation rule (ADR-008): a create and a delete of the **same `task_id`**
 //! landing in the **same 250ms debounce window** is one `TaskMoved`. An
@@ -62,9 +62,9 @@ impl AgentheimWatcher {
     /// Begin watching `<project>/.agentheim/` recursively. Every debounced
     /// batch of filesystem events is correlated into fine-grained domain
     /// events (`TaskMoved` / `TaskAdded` / `TaskRemoved` / `BCAppeared` /
-    /// `BCDisappeared`) which are published onto the bus; a coarse
-    /// `AgentheimChanged` is also published for the batch (skeleton-compat
-    /// seam — see module docs).
+    /// `BCDisappeared`) which are published onto the bus. Those are the only
+    /// events the watcher publishes — `canvas-001` retired the coarse
+    /// skeleton-compat event (see module docs).
     pub fn start(
         project_id: i64,
         project_path: &Path,
@@ -87,15 +87,12 @@ impl AgentheimWatcher {
             match result {
                 Ok(events) if !events.is_empty() => {
                     // ADR-008/014: correlate the raw batch into fine-grained
-                    // domain events.
+                    // domain events — the only events the watcher publishes.
                     let raw: Vec<Event> =
                         events.iter().map(|e| e.event.clone()).collect();
                     for event in correlate(project_id, &agentheim_root, &raw) {
                         bus.publish(event);
                     }
-                    // Skeleton-compat seam: the coarse event still fires for
-                    // every batch. `canvas-001` retires it.
-                    bus.publish(DomainEvent::AgentheimChanged { project_id });
                 }
                 Ok(_) => {}
                 Err(errors) => {
@@ -525,9 +522,10 @@ mod tests {
 
     #[test]
     fn non_task_changes_under_agentheim_produce_no_fine_grained_events() {
-        // An edit to vision.md or an INDEX.md is a real `.agentheim/` change
-        // (so `AgentheimChanged` still fires from `start`), but it moves no
-        // task and creates no BC — `correlate` yields nothing.
+        // An edit to vision.md or an INDEX.md is a real `.agentheim/` change,
+        // but it moves no task and creates no BC — `correlate` yields nothing,
+        // and since `canvas-001` the watcher publishes nothing for such a
+        // batch (no coarse event remains).
         let root = Path::new("/fake/.agentheim");
         let batch = vec![
             create(root.join("vision.md")),
@@ -544,7 +542,10 @@ mod tests {
     // --- the real debounced path (integration) ---------------------------
 
     #[tokio::test]
-    async fn moving_a_task_file_emits_task_moved_and_still_emits_agentheim_changed() {
+    async fn moving_a_task_file_emits_only_task_moved() {
+        // Since `canvas-001` the watcher emits *only* the fine-grained events
+        // from `correlate()` — no coarse event on the normal path. A move
+        // therefore yields exactly one `TaskMoved` and nothing else.
         let dir = scratch_project();
         fs::write(dir.join(".agentheim/vision.md"), "# Watch\n").unwrap();
         fs::write(
@@ -565,13 +566,11 @@ mod tests {
         )
         .unwrap();
 
-        // Drain the batch's events (debounce window 250ms; generous slack for
-        // CI/Windows). The batch yields the fine-grained event(s) followed by
-        // the coarse `AgentheimChanged`.
+        // The batch yields the fine-grained event(s). Drain until `TaskMoved`
+        // is seen (debounce window 250ms; generous slack for CI/Windows).
         let mut saw_moved = false;
-        let mut saw_changed = false;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while !(saw_moved && saw_changed) {
+        while !saw_moved {
             let event = tokio::time::timeout_at(deadline, rx.recv())
                 .await
                 .expect("events should arrive within the timeout")
@@ -591,14 +590,11 @@ mod tests {
                     assert_eq!(task_id, "canvas-007");
                     saw_moved = true;
                 }
-                DomainEvent::AgentheimChanged { project_id } => {
-                    assert_eq!(project_id, 42);
-                    saw_changed = true;
-                }
                 // Some platforms surface the rename as create+remove in the
                 // same batch; either way a `TaskMoved` must result. An
                 // unexpected `TaskAdded`/`TaskRemoved` would fail the
-                // `saw_moved` assertion by timeout.
+                // `saw_moved` assertion by timeout. A coarse event arriving
+                // here would also fail — the watcher must not emit one.
                 other => panic!("unexpected event: {other:?}"),
             }
         }

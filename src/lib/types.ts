@@ -36,12 +36,45 @@ export interface CameraState {
 	zoom: number;
 }
 
+/** An Agentheim task-state directory name — the `from` / `to` / `state`
+ * fields of the filesystem-observation events (ADR-008). */
+export type AgentheimState = 'backlog' | 'todo' | 'doing' | 'done';
+
 /**
  * The `DomainEvent` payload forwarded by the Rust core's frontend bridge
- * under the single `guppi://event` Tauri event name (ADR-009). Only the
- * variants the skeleton emits are modelled; `kind` is the serde tag.
+ * under the single `guppi://event` Tauri event name (ADR-009). `kind` is the
+ * serde `snake_case` tag of the Rust `DomainEvent` enum.
+ *
+ * The filesystem-observation variants (`task_*`, `bc_*`) are the fine-grained
+ * normal-path events the canvas patches its model from in place. The lag-only
+ * `resync_required` is the single event that triggers a full `getProject()`
+ * re-fetch (ADR-009 lag-resync strategy — `canvas-001`).
  */
 export type DomainEvent =
 	| { kind: 'project_added'; project_id: number; path: string }
 	| { kind: 'project_missing'; project_id: number }
-	| { kind: 'agentheim_changed'; project_id: number };
+	| {
+			kind: 'task_moved';
+			project_id: number;
+			bc: string;
+			from: AgentheimState;
+			to: AgentheimState;
+			task_id: string;
+	  }
+	| {
+			kind: 'task_added';
+			project_id: number;
+			bc: string;
+			state: AgentheimState;
+			task_id: string;
+	  }
+	| {
+			kind: 'task_removed';
+			project_id: number;
+			bc: string;
+			state: AgentheimState;
+			task_id: string;
+	  }
+	| { kind: 'bc_appeared'; project_id: number; bc: string }
+	| { kind: 'bc_disappeared'; project_id: number; bc: string }
+	| { kind: 'resync_required'; project_id: number };

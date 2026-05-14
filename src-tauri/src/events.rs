@@ -32,9 +32,9 @@ pub enum DomainEvent {
 
     // Filesystem observation (ADR-008 / ADR-009) — the fine-grained taxonomy.
     // `infrastructure-014` makes the single-project watcher correlate raw
-    // debounced FS events into these. The coarse `AgentheimChanged` below
-    // still fires alongside them (deliberate seam — its retirement is
-    // `canvas-001`'s job), so the skeleton frontend keeps working unchanged.
+    // debounced FS events into these. `canvas-001` made them the *only*
+    // normal-path filesystem events: the watcher publishes nothing else for a
+    // debounced batch, and the frontend patches its model in place from them.
     //
     // `from` / `to` / `state` are Agentheim task states: one of
     // `backlog`, `todo`, `doing`, `done`.
@@ -67,11 +67,15 @@ pub enum DomainEvent {
     /// A `contexts/<bc>/` directory was removed.
     BCDisappeared { project_id: i64, bc: String },
 
-    // Filesystem observation (ADR-008) — the skeleton's deliberately coarse
-    // event: any change under `.agentheim/` triggers a frontend re-fetch.
-    // Kept alive alongside the fine-grained variants above so the skeleton
-    // frontend is untouched; retired by `canvas-001`.
-    AgentheimChanged { project_id: i64 },
+    // Filesystem observation (ADR-008 / ADR-009) — the lag-only resync signal.
+    // ADR-009: when the frontend bridge's broadcast receiver reports `Lagged`,
+    // events have been *lost* and cannot be reconstructed from the fine-grained
+    // stream. The bridge emits this so the frontend re-fetches the whole
+    // `get_project` snapshot. This is the *only* event that triggers a full
+    // re-fetch. It is emitted **only** by `lib.rs`'s `Lagged` arm — never by
+    // the watcher's normal path. (Was `AgentheimChanged`; `canvas-001` renamed
+    // it and dropped its normal-path role.)
+    ResyncRequired { project_id: i64 },
 
     // Claude session ownership / PTY (ADR-006). A `ClaudeSession` actor's read
     // loop publishes raw PTY-master bytes as `SessionOutput` — no VT parsing
@@ -121,11 +125,11 @@ mod tests {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
 
-        bus.publish(DomainEvent::AgentheimChanged { project_id: 7 });
+        bus.publish(DomainEvent::ResyncRequired { project_id: 7 });
 
         let received = rx.recv().await.expect("event should be delivered");
         match received {
-            DomainEvent::AgentheimChanged { project_id } => assert_eq!(project_id, 7),
+            DomainEvent::ResyncRequired { project_id } => assert_eq!(project_id, 7),
             other => panic!("unexpected event: {other:?}"),
         }
     }

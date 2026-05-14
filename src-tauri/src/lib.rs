@@ -259,8 +259,11 @@ pub fn run() {
             // --- ADR-009: the one frontend-bridge task -----------------
             // This is the ONLY place Tauri's `emit` is called for domain
             // events. It forwards the frontend-relevant subset to the WebView
-            // under a single event name. A lagged receiver resyncs by simply
-            // forwarding a change signal — the frontend re-fetches anyway.
+            // under a single event name. The fine-grained filesystem events
+            // let the frontend patch its model in place; a lagged receiver has
+            // *lost* events it cannot reconstruct, so the bridge emits
+            // `ResyncRequired` — the one signal that makes the frontend
+            // re-fetch the whole snapshot (ADR-009 lag-resync strategy).
             let app_handle = app.handle().clone();
             let mut rx = bus.subscribe();
             tauri::async_runtime::spawn(async move {
@@ -273,11 +276,14 @@ pub fn run() {
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             // ADR-009: never block; treat as "resync from
-                            // source of truth". Nudge the frontend to refetch.
+                            // source of truth". The bridge has lost events it
+                            // cannot reconstruct, so it emits `ResyncRequired`
+                            // — the one event that makes the frontend re-fetch
+                            // the whole `get_project` snapshot.
                             tracing::warn!(skipped = n, "event bridge lagged; signalling resync");
                             let _ = app_handle.emit(
                                 FRONTEND_EVENT,
-                                &DomainEvent::AgentheimChanged { project_id },
+                                &DomainEvent::ResyncRequired { project_id },
                             );
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

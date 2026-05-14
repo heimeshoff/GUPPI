@@ -35,6 +35,7 @@
 		logToCore
 	} from './ipc';
 	import type { ProjectSnapshot, Point, BcSnapshot, CameraState } from './types';
+	import { applyDomainEvent } from './snapshot-patch';
 	import {
 		color,
 		typography,
@@ -53,6 +54,12 @@
 	let tilePos = $state<Point>({ x: 0, y: 0 });
 	let snapshot = $state<ProjectSnapshot | null>(null);
 	let status = $state('starting…');
+
+	// The id of the loaded project. The skeleton has one hard-coded project;
+	// the frontend learns its id from the `project_added` event the core emits
+	// on startup, and ignores any later domain event whose `project_id` does
+	// not match (ADR-009 — `canvas-001` `project_id` filtering).
+	let projectId = $state<number | null>(null);
 
 	// Voice-state affordance — a single ambient indicator. The voice BC will
 	// drive this later; for the styleguide baseline it sits at "idle" so the
@@ -257,10 +264,47 @@
 			});
 
 			// --- initial fetch + live updates (ADR-009) -------------------
+			// The fine-grained filesystem events patch the snapshot model in
+			// place — no `getProject` round-trip per change (`canvas-001`).
+			// Only `resync_required` (the lag-only escape hatch) re-fetches.
 			await refresh();
 			unlistenEvent = await onDomainEvent((event) => {
-				// Crude per skeleton scope: any .agentheim change -> re-fetch.
-				if (event.kind === 'agentheim_changed') void refresh();
+				switch (event.kind) {
+					case 'project_added':
+						// Learn the loaded project's id so later events can be
+						// filtered by `project_id`.
+						projectId = event.project_id;
+						return;
+					case 'project_missing':
+						return;
+					case 'resync_required':
+						// The bridge lagged and lost events it cannot
+						// reconstruct — the one full re-fetch path (ADR-009).
+						if (projectId === null || event.project_id === projectId) {
+							void refresh();
+						}
+						return;
+					default: {
+						// A fine-grained filesystem-observation event:
+						// `task_moved` / `task_added` / `task_removed` /
+						// `bc_appeared` / `bc_disappeared`. Patch in place.
+						if (!snapshot) return;
+						// Ignore events for a different project (the skeleton
+						// has one, but the filter is real).
+						if (projectId !== null && event.project_id !== projectId) {
+							return;
+						}
+						applyDomainEvent(snapshot, event, (msg) =>
+							void logToCore('warn', msg)
+						);
+						// `snapshot` is Svelte 5 `$state` (deeply reactive);
+						// the mutation is picked up by the ticker's
+						// `renderScene()` on the next frame — no explicit
+						// re-render call, no animation system (silent count
+						// update per the styleguide decision).
+						return;
+					}
+				}
 			});
 
 			renderScene();
