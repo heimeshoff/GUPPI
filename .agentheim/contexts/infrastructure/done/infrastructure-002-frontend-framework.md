@@ -1,9 +1,11 @@
 ---
 id: infrastructure-002-frontend-framework
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
+completed: 2026-05-14
+related_adrs: [ADR-002-frontend-framework]
 ---
 
 # Decision: Frontend framework
@@ -46,3 +48,14 @@ Once the desktop runtime is chosen (ADR-001), pick the frontend framework that m
 **Flag for user:** Pure framework-preference question. If you'd rather use React (largest ecosystem, every canvas library has a wrapper) or Solid (closest to Svelte's ergonomics with React's ecosystem), say so and this ADR changes — nothing downstream depends on the choice except the styleguide task.
 
 **Reversibility.** Low cost early, high cost late. Decide once and live with it.
+
+## Outcome
+
+ADR written and accepted at `.agentheim/knowledge/decisions/ADR-002-frontend-framework.md`.
+
+Marco signed off on the architect's recommendation, so the ADR is committed with **Status: Accepted** (not Proposed).
+
+- **Frontend framework: Svelte 5 + SvelteKit with `@sveltejs/adapter-static`** — the frontend is a single-page app shipped as static assets inside the Tauri bundle (no SSR, all client-side). Svelte 5 runes are the reactivity model. This builds on ADR-001: SvelteKit owns the frontend responsibilities (canvas, tile UI, command palette, terminal panel) and talks to the Rust core via the thin IPC abstraction over `invoke`/`emit`.
+- The Svelte-vs-React-vs-Solid open question is resolved in favour of Svelte 5; the consequences note the smaller ecosystem as the main accepted tradeoff.
+
+No code change required (decision-only task). Per the parallel-batch rule, the infrastructure BC README was not touched.

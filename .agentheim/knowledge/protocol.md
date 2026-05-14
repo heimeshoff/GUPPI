@@ -5,6 +5,36 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:14 -- Task completed (verification skipped): infrastructure-002-frontend-framework - Frontend framework
+
+**Type:** Work / Task completion
+**Task:** infrastructure-002-frontend-framework - Frontend framework
+**Summary:** Frontend framework decision recorded — Svelte 5 + SvelteKit (static adapter), SPA shipped as static assets inside the Tauri 2 bundle.
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
+## 2026-05-14 14:08 -- Batch started: [infrastructure-002-frontend-framework, infrastructure-004-persistence, infrastructure-006-claude-pty]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-002-frontend-framework - Frontend framework, infrastructure-004-persistence - Persistence, infrastructure-006-claude-pty - Claude session ownership & PTY
+**Parallel:** yes (3 workers)
+
+---
+
+## 2026-05-14 14:05 -- Task completed (verification skipped): infrastructure-001-desktop-runtime - Desktop runtime
+
+**Type:** Work / Task completion
+**Task:** infrastructure-001-desktop-runtime - Desktop runtime
+**Summary:** Recorded the desktop runtime decision as an accepted ADR — Tauri 2 (Rust core + web frontend), validated on Windows 11 only day one.
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** 8657d99
+**Files changed:** 1
+
+---
+
 ## 2026-05-14 13:59 -- Batch started: [infrastructure-001-desktop-runtime]
 
 **Type:** Work / Batch start

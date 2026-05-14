@@ -17,11 +17,8 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-- [infrastructure-002-frontend-framework](todo/infrastructure-002-frontend-framework.md) — `type: decision`. Svelte 5. Open Q: Svelte vs React vs Solid.
 - [infrastructure-003-canvas-rendering](todo/infrastructure-003-canvas-rendering.md) — `type: decision`. PixiJS v8 + HTML overlays.
-- [infrastructure-004-persistence](todo/infrastructure-004-persistence.md) — `type: decision`. SQLite in OS user-config dir.
 - [infrastructure-005-project-discovery](todo/infrastructure-005-project-discovery.md) — `type: decision`. Explicit registry + manual scan.
-- [infrastructure-006-claude-pty](todo/infrastructure-006-claude-pty.md) — `type: decision`. `portable-pty` + Job Objects on Windows. Riskiest — needs a real spike. Open Qs: WSL vs native, multi-OS scope.
 - [infrastructure-007-voice-integration](todo/infrastructure-007-voice-integration.md) — `type: decision`. Extend Whisperheim with local WebSocket bridge. Open Q: Marco's willingness to touch Whisperheim.
 - [infrastructure-008-filesystem-observation](todo/infrastructure-008-filesystem-observation.md) — `type: decision`. `notify-debouncer-full`, one watcher per project.
 - [infrastructure-009-event-bus](todo/infrastructure-009-event-bus.md) — `type: decision`. Tokio broadcast + Tauri events.
@@ -30,17 +27,19 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 - [infrastructure-012-walking-skeleton](todo/infrastructure-012-walking-skeleton.md) — `type: spike`, depends on 001–011. GUPPI's first prototype.
 <!-- todo-list:end -->
 
-**Todo count:** 11
+**Todo count:** 8
 
 ## Doing
 
 <!-- doing-list:start -->
-*(None yet.)*
+- [infrastructure-004-persistence](doing/infrastructure-004-persistence.md) — `type: decision`. SQLite in OS user-config dir.
+- [infrastructure-006-claude-pty](doing/infrastructure-006-claude-pty.md) — `type: decision`. `portable-pty` + Job Objects on Windows.
 <!-- doing-list:end -->
 
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-002-frontend-framework](done/infrastructure-002-frontend-framework.md) — `type: decision`. Svelte 5 + SvelteKit (static adapter). → ADR-002.
 - [infrastructure-001-desktop-runtime](done/infrastructure-001-desktop-runtime.md) — `type: decision`. Tauri 2 chosen, Windows-only day one. → ADR-001.
 <!-- done-list:end -->
 

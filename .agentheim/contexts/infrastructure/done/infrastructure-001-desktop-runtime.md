@@ -6,6 +6,7 @@ scope: global
 depends_on: []
 completed: 2026-05-14
 related_adrs: [ADR-001-desktop-runtime]
+commit: 8657d99
 ---
 
 # Decision: Desktop runtime
