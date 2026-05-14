@@ -5,7 +5,7 @@ status: Accepted
 scope: global
 bc: infrastructure
 date: 2026-05-14
-related_tasks: [infrastructure-009-event-bus]
+related_tasks: [infrastructure-009-event-bus, infrastructure-014-fine-grained-fs-events]
 ---
 
 # ADR-009: IPC and event bus — Tokio broadcast channel in the core, Tauri events to the frontend
@@ -69,8 +69,10 @@ enum DomainEvent {
     ProjectAdded { project_id, path },
     ProjectMissing { project_id },
 
-    // Filesystem observation (infrastructure-008)
+    // Filesystem observation (ADR-008 / infrastructure-014)
     TaskMoved { project_id, bc, from, to, task_id },
+    TaskAdded { project_id, bc, state, task_id },
+    TaskRemoved { project_id, bc, state, task_id },
     BCAppeared { project_id, bc },
     BCDisappeared { project_id, bc },
 
@@ -88,8 +90,19 @@ enum DomainEvent {
 The enum is the contract. It is expected to grow as new producers land
 (logger, narrator dispatcher, telemetry); adding a variant does not touch
 existing producers or consumers that do not care about it. The variants for
-`TaskMoved` / `BCAppeared` / `BCDisappeared` are kept aligned with the
-filesystem-observation work in infrastructure-008.
+`TaskMoved` / `TaskAdded` / `TaskRemoved` / `BCAppeared` / `BCDisappeared` are
+kept aligned with the filesystem-observation work in ADR-008.
+
+> **Reconciliation note (infrastructure-014, 2026-05-14):** the
+> filesystem-observation block above is reconciled with ADR-008's
+> domain-event mapping and the implemented single-project watcher.
+> `TaskAdded` and `TaskRemoved` were added — ADR-008 left the unpaired
+> create/delete case as an open "sensible fallback"; `infrastructure-014`
+> decided it as these two first-class variants. `TaskMoved`'s `from` / `to`
+> field names (this ADR's original shape) are kept; ADR-008's earlier
+> `from_state` / `to_state` draft was reconciled away. The skeleton's coarse
+> `AgentheimChanged` variant still exists in the implemented enum alongside
+> these — it is a deliberate compatibility seam, retired by `canvas-001`.
 
 ### Frontend bridge
 

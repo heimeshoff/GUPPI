@@ -68,9 +68,23 @@ Run command: `pnpm tauri dev`. Release + MSI: `pnpm tauri build`.
   Tauri event name `guppi://event`. The *only* place Tauri's `emit` is called
   for domain events (ADR-009).
 - **AgentheimChanged** — the skeleton's deliberately coarse domain event: any
-  change under a project's `.agentheim/` triggers a frontend re-fetch. The
-  fine-grained `TaskMoved` / `BCAppeared` / `BCDisappeared` taxonomy from
-  ADR-008/009 is deferred to `infrastructure-014`.
+  change under a project's `.agentheim/` triggers a frontend re-fetch. As of
+  `infrastructure-014` the fine-grained taxonomy below is *also* emitted for
+  every batch; `AgentheimChanged` is kept firing alongside it as a deliberate
+  compatibility seam (the skeleton frontend still consumes it) and is retired
+  by `canvas-001`.
+- **Fine-grained FS domain events** (`infrastructure-014`, ADR-008/ADR-009) —
+  the watcher correlates each debounced batch of raw filesystem events into:
+  `TaskMoved { project_id, bc, from, to, task_id }` (a paired create + delete
+  of the *same* `task_id` in one 250ms window — the task file moved between
+  states), `TaskAdded { project_id, bc, state, task_id }` (an unpaired create —
+  a brand-new task file), `TaskRemoved { project_id, bc, state, task_id }` (an
+  unpaired delete), `BCAppeared { project_id, bc }` and
+  `BCDisappeared { project_id, bc }` (a `contexts/<bc>/` directory created or
+  removed). `from` / `to` / `state` are Agentheim task states (`backlog`,
+  `todo`, `doing`, `done`). Correlation lives in the **single-project**
+  `watcher` module; the multi-project `WatcherSupervisor` is later registry
+  work.
 
 ## Ubiquitous language (PTY spike additions)
 

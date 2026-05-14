@@ -5,6 +5,38 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 17:55 -- Task verified and completed: infrastructure-014-fine-grained-fs-events - Fine-grained filesystem domain events
+
+**Type:** Work / Task completion
+**Task:** infrastructure-014-fine-grained-fs-events - Fine-grained filesystem domain events
+**Summary:** The single-project `.agentheim/` watcher now correlates each debounced filesystem batch into the fine-grained ADR-008/ADR-009 domain events (`TaskMoved`, `TaskAdded`, `TaskRemoved`, `BCAppeared`, `BCDisappeared`), while the coarse `AgentheimChanged` keeps firing as a deliberate compatibility seam for the skeleton frontend.
+**Verification:** PASS (iteration 1)
+**Commit:** <pending>
+**Files changed:** 5
+**Tests added:** 7+ (paired move, unpaired create, unpaired delete, different-`task_id` non-pairing, BC appear/disappear; `cargo test --lib` 26/26)
+**ADRs written:** ADR-008 + ADR-009 reconciled in place (no new ADR)
+
+---
+
+## 2026-05-14 17:45 -- Batch started: [infrastructure-014-fine-grained-fs-events]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-014-fine-grained-fs-events - Fine-grained filesystem domain events
+**Parallel:** no (1 worker)
+
+---
+
+## 2026-05-14 17:30 -- Model / Refined: infrastructure-014-fine-grained-fs-events - Fine-grained filesystem domain events
+
+**Type:** Model / Refine
+**BC:** infrastructure
+**Status after:** todo
+**Summary:** Resolved four open decisions baked into the task — (1) refactor the skeleton's single-project watcher **in place** rather than waiting for the multi-project `WatcherSupervisor`; (2) unpaired create/delete get first-class `TaskAdded` / `TaskRemoved` variants (the ADR-008 "sensible fallback", now decided); (3) the ADR-008↔ADR-009 `from_state`/`to_state` vs `from`/`to` disagreement is reconciled to `from`/`to`, folded into the 014 worker (no separate decision task); (4) the frontend reaction is split out to a new `canvas-001` task. Added a full acceptance-criteria section and the deliberate "`AgentheimChanged` kept alive" seam so 014 and canvas-001 can land independently. Promoted backlog → todo.
+**Split into:** canvas-001-targeted-canvas-updates (new, in canvas/backlog)
+**ADRs written:** none (ADR-008 + ADR-009 to be updated *in place* by the 014 worker)
+
+---
+
 ## 2026-05-14 16:55 -- Work session ended
 
 **Type:** Work / Session end

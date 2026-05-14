@@ -5,7 +5,7 @@ status: Accepted
 scope: global
 bc: infrastructure
 date: 2026-05-14
-related_tasks: [infrastructure-008-filesystem-observation]
+related_tasks: [infrastructure-008-filesystem-observation, infrastructure-014-fine-grained-fs-events]
 related_adrs: [ADR-001, ADR-005]
 ---
 
@@ -67,12 +67,17 @@ the `project_id -> debounced watcher` map. It is the one place that:
 
 ### Domain-event mapping
 
-Debounced filesystem events are translated by the supervisor into domain
-events before they leave the Rust core:
+Debounced filesystem events are translated by the watcher into domain events
+before they leave the Rust core:
 
-- **`TaskMoved { project_id, bc, from_state, to_state, task_id }`** — a task
-  file appeared in one `{backlog,todo,doing,done}/` directory and disappeared
-  from another within the same debounce window.
+- **`TaskMoved { project_id, bc, from, to, task_id }`** — a task file appeared
+  in one `{backlog,todo,doing,done}/` directory and disappeared from another,
+  for the **same `task_id`**, within the same debounce window.
+- **`TaskAdded { project_id, bc, state, task_id }`** — an *unpaired* create: a
+  brand-new task file appeared with no matching delete in the window (`model`
+  writes new task files straight into `backlog/` / `todo/` all the time).
+- **`TaskRemoved { project_id, bc, state, task_id }`** — an *unpaired* delete:
+  a task file was removed outright with no matching create in the window.
 - **`BCAppeared { project_id, bc }`** — a new `contexts/<bc>/` directory was
   created.
 - **`BCDisappeared { project_id, bc }`** — a `contexts/<bc>/` directory was
@@ -80,11 +85,15 @@ events before they leave the Rust core:
 
 These domain events flow into the event bus (ADR-009).
 
-> **Note:** ADR-009 (event-bus design) is being authored in parallel with this
-> ADR and does not yet exist. The event taxonomy above is the architect's
-> draft; it **must be reconciled with ADR-009's `DomainEvent` enum** once that
-> ADR lands — names, field shapes, and the boundary between "raw FS event" and
-> "domain event" should match what ADR-009 defines.
+> **Reconciliation note (infrastructure-014, 2026-05-14):** ADR-009 has landed
+> and this section is reconciled with its `DomainEvent` enum. `TaskMoved` uses
+> the field names `from` / `to` — this ADR's original draft said
+> `from_state` / `to_state`; ADR-009's shorter `from` / `to` won. The "sensible
+> fallback" for an unpaired create or delete (see Consequences below) is now
+> decided: the first-class variants `TaskAdded` / `TaskRemoved`, added above —
+> no silent drop, no coarse re-fetch fallback for those cases. The correlation
+> is implemented in the **single-project** watcher (`src-tauri/src/watcher.rs`),
+> not yet the `WatcherSupervisor`, and is covered by unit tests there.
 
 ## Consequences
 

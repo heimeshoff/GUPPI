@@ -30,10 +30,47 @@ pub enum DomainEvent {
     ProjectAdded { project_id: i64, path: String },
     ProjectMissing { project_id: i64 },
 
-    // Filesystem observation (ADR-008) — the skeleton emits the coarse
-    // `AgentheimChanged` below rather than the fully-correlated `TaskMoved`.
-    // Reconciling the fine-grained taxonomy with the watcher's correlation
-    // logic is tracked as a follow-up (see infrastructure backlog).
+    // Filesystem observation (ADR-008 / ADR-009) — the fine-grained taxonomy.
+    // `infrastructure-014` makes the single-project watcher correlate raw
+    // debounced FS events into these. The coarse `AgentheimChanged` below
+    // still fires alongside them (deliberate seam — its retirement is
+    // `canvas-001`'s job), so the skeleton frontend keeps working unchanged.
+    //
+    // `from` / `to` / `state` are Agentheim task states: one of
+    // `backlog`, `todo`, `doing`, `done`.
+    /// A paired create + delete of the *same* `task_id` across two task-state
+    /// directories within one debounce window — the task file moved.
+    TaskMoved {
+        project_id: i64,
+        bc: String,
+        from: String,
+        to: String,
+        task_id: String,
+    },
+    /// An unpaired create — a brand-new task file appeared (ADR-008's
+    /// "sensible fallback", decided in `infrastructure-014`: no silent drop).
+    TaskAdded {
+        project_id: i64,
+        bc: String,
+        state: String,
+        task_id: String,
+    },
+    /// An unpaired delete — a task file was removed outright.
+    TaskRemoved {
+        project_id: i64,
+        bc: String,
+        state: String,
+        task_id: String,
+    },
+    /// A new `contexts/<bc>/` directory was created.
+    BCAppeared { project_id: i64, bc: String },
+    /// A `contexts/<bc>/` directory was removed.
+    BCDisappeared { project_id: i64, bc: String },
+
+    // Filesystem observation (ADR-008) — the skeleton's deliberately coarse
+    // event: any change under `.agentheim/` triggers a frontend re-fetch.
+    // Kept alive alongside the fine-grained variants above so the skeleton
+    // frontend is untouched; retired by `canvas-001`.
     AgentheimChanged { project_id: i64 },
 
     // Claude session ownership / PTY (ADR-006). A `ClaudeSession` actor's read
