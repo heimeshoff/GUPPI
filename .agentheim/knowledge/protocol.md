@@ -5,13 +5,24 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:29 -- Task completed (verification skipped): infrastructure-005-project-discovery - Project discovery model
+
+**Type:** Work / Task completion
+**Task:** infrastructure-005-project-discovery - Project discovery model
+**Summary:** Project discovery is an explicit registry (the ADR-004 `projects` table) plus a user-triggered "Scan folder for projects…" command — no unprompted disk-walking; canvas BC UI affordances noted as downstream modeling.
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
 ## 2026-05-14 14:26 -- Task completed (verification skipped): infrastructure-003-canvas-rendering - Canvas rendering library
 
 **Type:** Work / Task completion
 **Task:** infrastructure-003-canvas-rendering - Canvas rendering library
 **Summary:** PixiJS v8 (WebGL) chosen as the infinite-canvas renderer, with HTML overlays positioned to world coordinates for tiles needing rich interactive content (markdown viewer, terminal panel).
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** 1f9942c
 **Files changed:** 1
 
 ---

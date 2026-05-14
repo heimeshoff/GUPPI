@@ -1,9 +1,11 @@
 ---
 id: infrastructure-005-project-discovery
 type: decision
-status: todo
+status: done
+completed: 2026-05-14
 scope: global
 depends_on: [infrastructure-004-persistence]
+related_adrs: [ADR-005]
 ---
 
 # Decision: Project discovery model
@@ -44,3 +46,17 @@ Projects are tracked by **canonical absolute path**, normalised on entry. If a p
 - (–) Discovering newly-cloned projects requires a manual action. Acceptable; this is a personal tool.
 
 **Reversibility.** Trivial; the scanner can be made automatic later if it ever feels missing.
+
+## Outcome
+
+Decided: explicit registry primary (the `projects` table from ADR-004) plus a
+user-triggered "Scan folder for projects…" command — no unprompted
+disk-walking. Projects tracked by canonical absolute path; missing paths show a
+"missing" tile state rather than being auto-removed; removed projects' tile
+state is retained 30 days.
+
+ADR written and Accepted: `.agentheim/knowledge/decisions/ADR-005-project-discovery.md`.
+
+The canvas BC UI affordances ("Add project…", "Scan folder…", "Remove
+project") are recorded as a Downstream note in the ADR — they are canvas BC
+modeling work and were intentionally not created as tasks here (BC boundary).

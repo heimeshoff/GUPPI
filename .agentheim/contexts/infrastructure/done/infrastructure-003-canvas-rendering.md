@@ -6,6 +6,7 @@ completed: 2026-05-14
 scope: global
 depends_on: [infrastructure-002-frontend-framework]
 related_adrs: [ADR-003]
+commit: 1f9942c
 ---
 
 # Decision: Canvas rendering library
