@@ -1,9 +1,11 @@
 ---
 id: infrastructure-009-event-bus
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
+completed: 2026-05-14
+related_adrs: [ADR-009-event-bus]
 ---
 
 # Decision: IPC and event bus
@@ -61,3 +63,15 @@ The frontend bridge subscribes and emits `tauri::Builder::default().emit_all("gu
 - (–) Broadcast channels drop messages for slow consumers — must be sized appropriately (start with 1024) and consumers must not block.
 
 **Reversibility.** High.
+
+## Outcome
+
+ADR written and accepted at `.agentheim/knowledge/decisions/ADR-009-event-bus.md` with **Status: Accepted** (the architect's recommendation stood; no Marco open question on this task).
+
+Decisions folded into the ADR:
+
+- **Two-layer event bus** — a single `EventBus` in the Rust core wrapping a Tokio `broadcast` channel carrying a typed `DomainEvent` enum, plus a thin frontend-bridge task that subscribes and forwards frontend-relevant events to the WebView via `app_handle.emit()` under the `guppi://event` name. The bridge is the only place Tauri's `emit` is called for domain events, keeping the core runtime-agnostic per ADR-001.
+- **Broadcast-channel capacity: 1024** — architect's suggestion accepted. Consumers must handle `RecvError::Lagged` by resyncing from the source of truth and must not block in their receive loop.
+- **Initial `DomainEvent` taxonomy** recorded, covering project registry, filesystem observation (`TaskMoved`/`BCAppeared`/`BCDisappeared`, kept aligned with the parallel infrastructure-008 work), `claude` PTY sessions, and the voice bridge. The enum is the contract and is expected to grow without touching existing producers/consumers.
+
+No code change required (decision-only task). Infrastructure BC README left untouched — it already carries the generic IPC ubiquitous language and the ADR is the artifact.
