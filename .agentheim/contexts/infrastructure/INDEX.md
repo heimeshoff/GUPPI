@@ -11,8 +11,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
-- [infrastructure-015-log-retention-sweep](backlog/infrastructure-015-log-retention-sweep.md) — `type: feature`, depends on 012. Add the ADR-010 7-day retention sweep of rotated log files (rotation is wired; pruning is not).
-- [infrastructure-016-readme-resync-required-rename](backlog/infrastructure-016-readme-resync-required-rename.md) — `type: chore`, depends on `canvas-001`. Update the infrastructure README's event taxonomy: `AgentheimChanged` is retired → document `ResyncRequired` (lag-only) + the fine-grained events as the normal path. Surfaced by `canvas-001` (cross-BC scope).
+*(None.)*
 <!-- backlog-list:end -->
 
 ## Todo
@@ -32,6 +31,8 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-016-readme-resync-required-rename](done/infrastructure-016-readme-resync-required-rename.md) — `type: chore`. Resynced the BC README's event taxonomy: dropped the stale live `AgentheimChanged` "compatibility seam" entry, added a `ResyncRequired` entry (lag-only signal, emitted solely by `lib.rs`'s `Lagged` arm), labelled the fine-grained FS events as the normal path. Doc-only; the code + ADR-009 were already done by `canvas-001`.
+- [infrastructure-015-log-retention-sweep](done/infrastructure-015-log-retention-sweep.md) — `type: feature`. Startup-only retention sweep in `logging.rs` (`sweep_retention`, called from `init()`): deletes rotated `guppi.log.YYYY-MM-DD` files older than the `RETENTION_DAYS` window (default 7), dated by filename not mtime; non-matching files untouched, failed deletions log+continue. Wires ADR-010's retention half.
 - [infrastructure-014-fine-grained-fs-events](done/infrastructure-014-fine-grained-fs-events.md) — `type: feature`. Single-project watcher correlates each debounced batch into the fine-grained taxonomy (`TaskMoved`/`TaskAdded`/`TaskRemoved`/`BCAppeared`/`BCDisappeared`); ADR-008↔ADR-009 reconciled in place; `AgentheimChanged` kept alive as a compatibility seam. Frontend reaction → `canvas-001`.
 - [infrastructure-013-pty-spike](done/infrastructure-013-pty-spike.md) — `type: spike`. ADR-006 PTY spike PASSED — `ClaudeSession` actor (`portable-pty` + Windows Job Object + cwd-per-spawn) in the `pty` module, mechanics proven by `cargo test` (18/18); real-`claude.exe` hands-on items exercisable via `pty_*` IPC. → ADR-006, ADR-012.
 - [infrastructure-012-walking-skeleton](done/infrastructure-012-walking-skeleton.md) — `type: spike`. GUPPI's first code — Tauri 2 + Svelte 5 + PixiJS walking skeleton; all eleven foundation ADRs validated by execution (14 Rust tests, `pnpm check`, MSI build).

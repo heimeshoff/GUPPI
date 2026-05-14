@@ -3,6 +3,7 @@ id: infrastructure-016-readme-resync-required-rename
 type: chore
 status: done
 completed: 2026-05-14
+commit: 7af6f4c
 scope: bc
 depends_on:
   - canvas-001-targeted-canvas-updates

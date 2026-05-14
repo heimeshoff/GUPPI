@@ -5,6 +5,80 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 23:10 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 2 (first-try PASS: 2, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 2 (d260393 infrastructure-015, 7af6f4c infrastructure-016)
+**Note:** Both infrastructure tasks completed, each passing verification first try. Run separately rather than in parallel — both touch the infrastructure BC README, so the conflict rule held them to one-per-batch. `todo/`, `doing/`, and `backlog/` are now empty in every context. No new backlog items, no concept candidates. Note: the orchestrator's INDEX.md / protocol.md / SHA-stamp bookkeeping is left uncommitted on the working tree (matches the prior session's pattern — a separate `chore(work)` commit folds it in).
+
+---
+
+## 2026-05-14 23:08 -- Task verified and completed: infrastructure-016-readme-resync-required-rename - Update infrastructure README — `AgentheimChanged` → `ResyncRequired`
+
+**Type:** Work / Task completion
+**Task:** infrastructure-016-readme-resync-required-rename - Update infrastructure README — `AgentheimChanged` → `ResyncRequired`
+**Summary:** Resynced the infrastructure BC README's event taxonomy — dropped the stale live `AgentheimChanged` "compatibility seam" entry, added a `ResyncRequired` entry (lag-only signal, emitted solely by `lib.rs`'s `Lagged` arm), labelled the fine-grained FS events as the normal path.
+**Verification:** PASS (iteration 1)
+**Commit:** 7af6f4c
+**Files changed:** 1 (infrastructure README)
+**Tests added:** 0 (doc-only chore)
+**ADRs written:** none (ADR-009 already amended by `canvas-001`)
+
+---
+
+## 2026-05-14 23:06 -- Batch started: [infrastructure-016-readme-resync-required-rename]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-016-readme-resync-required-rename - Update infrastructure README — `AgentheimChanged` → `ResyncRequired`
+**Parallel:** no (1 worker)
+
+---
+
+## 2026-05-14 23:05 -- Task verified and completed: infrastructure-015-log-retention-sweep - Log retention — 7-day sweep of rotated log files
+
+**Type:** Work / Task completion
+**Task:** infrastructure-015-log-retention-sweep - Log retention — 7-day sweep of rotated log files
+**Summary:** Startup retention sweep added to `logging.rs` — `sweep_retention` (called from `init()`) deletes rotated `guppi.log.YYYY-MM-DD` files older than the `RETENTION_DAYS` window (default 7), dated by parsing the filename not mtime; non-matching files untouched, failed deletions log+continue.
+**Verification:** PASS (iteration 1)
+**Commit:** d260393
+**Files changed:** 2 (logging.rs, infrastructure README)
+**Tests added:** 4 (logging.rs unit tests — `cargo test --lib` 30/30)
+**ADRs written:** none (implements ADR-010's retention half)
+
+---
+
+## 2026-05-14 23:00 -- Batch started: [infrastructure-015-log-retention-sweep]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-015-log-retention-sweep - Log retention — 7-day sweep of rotated log files
+**Parallel:** no (1 worker)
+
+---
+
+## 2026-05-14 22:45 -- Model / Refined: infrastructure-015-log-retention-sweep - Log retention — 7-day sweep of rotated log files
+
+**Type:** Model / Refine
+**BC:** infrastructure
+**Status after:** todo
+**Summary:** Grounded against the real code (`logging.rs`, `lib.rs:210` `.setup()` hook). Resolved the two open decisions with Marco: (1) sweep runs **startup-only**, no background timer; (2) file age is read by **parsing `YYYY-MM-DD` from the `guppi.log.YYYY-MM-DD` filename**, not mtime. Rewrote the task with a full 6-point acceptance-criteria checklist (named constant default 7d, non-matching files untouched, deletion failure logs+continues, unit test against dated fixtures). No orchestrator round — ADR-010 leaves no architectural depth. Refinement made it ready → promoted to `todo/`. `infrastructure/backlog/` now empty.
+**Split into:** none
+**ADRs written:** none
+
+---
+
+## 2026-05-14 22:30 -- Model / Promoted: infrastructure-016-readme-resync-required-rename - Update infrastructure README — `AgentheimChanged` → `ResyncRequired`
+
+**Type:** Model / Promote
+**BC:** infrastructure
+**From → To:** backlog → todo
+**Note:** Readiness confirmed — 3 concrete acceptance criteria, exact file + line scope, pure doc change. Sole dependency `canvas-001` is done (commit 5fa7080). `infrastructure/todo/` now has 1 item; `infrastructure-015-log-retention-sweep` left in backlog.
+
+---
+
 ## 2026-05-14 22:12 -- Work session ended
 
 **Type:** Work / Session end

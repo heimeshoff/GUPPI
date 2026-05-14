@@ -3,6 +3,7 @@ id: infrastructure-015-log-retention-sweep
 type: feature
 status: done
 completed: 2026-05-14
+commit: d260393
 scope: global
 depends_on:
   - infrastructure-012-walking-skeleton
