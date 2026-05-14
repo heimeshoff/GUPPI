@@ -17,11 +17,10 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-- [infrastructure-011-packaging](todo/infrastructure-011-packaging.md) — `type: decision`. Tauri MSI bundler, unsigned initially.
 - [infrastructure-012-walking-skeleton](todo/infrastructure-012-walking-skeleton.md) — `type: spike`, depends on 001–011. GUPPI's first prototype.
 <!-- todo-list:end -->
 
-**Todo count:** 2
+**Todo count:** 1
 
 ## Doing
 
@@ -32,6 +31,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-011-packaging](done/infrastructure-011-packaging.md) — `type: decision`. Tauri bundler, unsigned MSI, per-user install, GitHub Release updater feed. → ADR-011.
 - [infrastructure-010-logging](done/infrastructure-010-logging.md) — `type: decision`. `tracing` to rotating local logs, 7-day retention, no telemetry. → ADR-010.
 - [infrastructure-009-event-bus](done/infrastructure-009-event-bus.md) — `type: decision`. Tokio broadcast (cap 1024) + frontend-bridge to Tauri emit. → ADR-009.
 - [infrastructure-008-filesystem-observation](done/infrastructure-008-filesystem-observation.md) — `type: decision`. `notify-debouncer-full`, one 250ms watcher per project, `WatcherSupervisor`. → ADR-008.

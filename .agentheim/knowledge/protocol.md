@@ -5,13 +5,32 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:46 -- Task completed (verification skipped): infrastructure-011-packaging - Packaging and install
+
+**Type:** Work / Task completion
+**Task:** infrastructure-011-packaging - Packaging and install
+**Summary:** Tauri's bundler targets an unsigned MSI on Windows (deferred-unsigned signing posture), per-user install at `%LOCALAPPDATA%\Programs\guppi\`, updates via the Tauri updater plugin against a GitHub Release feed.
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
+## 2026-05-14 14:43 -- Batch started: [infrastructure-011-packaging]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-011-packaging - Packaging and install
+**Parallel:** no (1 worker)
+
+---
+
 ## 2026-05-14 14:40 -- Task completed (verification skipped): infrastructure-010-logging - Logging and error reporting
 
 **Type:** Work / Task completion
 **Task:** infrastructure-010-logging - Logging and error reporting
 **Summary:** `tracing` stack writing to rotating local log files (`%APPDATA%\guppi\logs`, daily rotation, 7-day retention); frontend logs forwarded via a Tauri command; no telemetry; crash dialog with "Open log folder".
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** 0c64059
 **Files changed:** 1
 
 ---
@@ -22,7 +41,7 @@ Newest entries on top.
 **Task:** infrastructure-009-event-bus - IPC and event bus
 **Summary:** Two-layer event bus — a Tokio broadcast channel (capacity 1024) carrying a typed `DomainEvent` enum in the Rust core, with a thin frontend-bridge task forwarding frontend-relevant events to the WebView via Tauri emit.
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** a1d21d5
 **Files changed:** 1
 
 ---
@@ -33,7 +52,7 @@ Newest entries on top.
 **Task:** infrastructure-008-filesystem-observation - Filesystem observation
 **Summary:** `notify-debouncer-full` with one 250ms-debounced watcher per registered project scoped to its `.agentheim/`, coordinated by a central `WatcherSupervisor` Tokio task translating FS events into `TaskMoved`/`BCAppeared`/`BCDisappeared` domain events.
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** c1cc2be
 **Files changed:** 1
 
 ---

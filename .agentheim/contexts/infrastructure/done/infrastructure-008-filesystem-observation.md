@@ -6,6 +6,7 @@ completed: 2026-05-14
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 related_adrs: [ADR-008]
+commit: c1cc2be
 ---
 
 # Decision: Filesystem observation

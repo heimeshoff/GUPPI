@@ -17,6 +17,7 @@ Top-level catalog for the GUPPI project. Tracks bounded contexts and global ADRs
 ## Global ADRs
 
 <!-- adr-global:start -->
+- [ADR-011 — Packaging and install](decisions/ADR-011-packaging.md) — Accepted. Tauri bundler → unsigned MSI (deferred-unsigned), per-user install, Tauri updater against a GitHub Release feed.
 - [ADR-010 — Logging: tracing to rotating local files](decisions/ADR-010-logging.md) — Accepted. `tracing` stack to `%APPDATA%\guppi\logs`, daily rotation, 7-day retention, no telemetry, crash dialog with "Open log folder".
 - [ADR-009 — IPC and event bus](decisions/ADR-009-event-bus.md) — Accepted. Tokio broadcast channel (cap 1024) with a typed `DomainEvent` enum in the core; thin frontend-bridge forwards to the WebView via Tauri emit.
 - [ADR-008 — Filesystem observation](decisions/ADR-008-filesystem-observation.md) — Accepted. `notify-debouncer-full`, one 250ms-debounced watcher per project scoped to `.agentheim/`, central `WatcherSupervisor`.

@@ -6,6 +6,7 @@ scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 completed: 2026-05-14
 related_adrs: [ADR-009-event-bus]
+commit: a1d21d5
 ---
 
 # Decision: IPC and event bus

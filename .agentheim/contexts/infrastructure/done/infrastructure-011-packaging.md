@@ -1,9 +1,11 @@
 ---
 id: infrastructure-011-packaging
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
+completed: 2026-05-14
+related_adrs: [ADR-011-packaging]
 ---
 
 # Decision: Packaging and install
@@ -18,8 +20,21 @@ Single user, single machine, no distribution. Still want a clean install and the
 
 ## Acceptance criteria
 
-- [ ] ADR committed at `.agentheim/knowledge/decisions/ADR-011-packaging.md`
-- [ ] Decision on signing posture (deferred-unsigned vs sign-now)
+- [x] ADR committed at `.agentheim/knowledge/decisions/ADR-011-packaging.md`
+- [x] Decision on signing posture (deferred-unsigned vs sign-now)
+
+## Outcome
+
+Packaging decision recorded as **ADR-011** (Status: Accepted) at
+`.agentheim/knowledge/decisions/ADR-011-packaging.md`. Choice: Tauri's built-in
+bundler (`tauri build`) targeting **MSI** on Windows; **deferred-unsigned**
+signing posture (SmartScreen warns once, click through — signing revisited only
+if it becomes annoying); updates via Tauri's updater plugin against a GitHub
+Release feed in the personal `guppi` repo; per-user install at
+`%LOCALAPPDATA%\Programs\guppi\` with no admin required. The signing-posture
+acceptance criterion resolved to **deferred-unsigned** per the architect's
+recommendation, on the grounds that reversibility is trivial. No application
+code in this task — implementation is left for a future build task.
 
 ## Notes — architect's ADR draft
 

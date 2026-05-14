@@ -6,6 +6,7 @@ scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 related_adrs: [ADR-010]
 completed: 2026-05-14
+commit: 0c64059
 ---
 
 # Decision: Logging and error reporting
