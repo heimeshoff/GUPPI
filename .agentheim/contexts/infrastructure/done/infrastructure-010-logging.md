@@ -1,9 +1,11 @@
 ---
 id: infrastructure-010-logging
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
+related_adrs: [ADR-010]
+completed: 2026-05-14
 ---
 
 # Decision: Logging and error reporting
@@ -18,8 +20,19 @@ Personal tool, no cloud, no team. Need enough observability to debug a crash you
 
 ## Acceptance criteria
 
-- [ ] ADR committed at `.agentheim/knowledge/decisions/ADR-010-logging.md`
-- [ ] Log retention window confirmed (default 7 days)
+- [x] ADR committed at `.agentheim/knowledge/decisions/ADR-010-logging.md`
+- [x] Log retention window confirmed (default 7 days)
+
+## Outcome
+
+Logging decision recorded as **ADR-010** (Status: Accepted) at
+`.agentheim/knowledge/decisions/ADR-010-logging.md`. Choice: `tracing` +
+`tracing-subscriber` + `tracing-appender` writing to
+`%APPDATA%\guppi\logs\guppi.log` with daily rotation, 7-day retention;
+frontend logs forwarded via a `log_from_frontend` Tauri command into the same
+file; no Sentry/telemetry; crash dialog with "Open log folder" button. The
+7-day retention default was confirmed and accepted. No application code in
+this task — implementation is left for a future build task.
 
 ## Notes — architect's ADR draft
 
