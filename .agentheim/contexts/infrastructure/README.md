@@ -47,8 +47,9 @@ The walking skeleton (`infrastructure-012`) is GUPPI's first code. Layout:
   `project` (`get_project` → `ProjectSnapshot`), `watcher` (ADR-008 debounced
   `.agentheim/` observer), `events` (ADR-009 `EventBus` + typed `DomainEvent`),
   `pty` (ADR-006 / ADR-012 `ClaudeSession` actor — `portable-pty` + Windows Job
-  Object), `logging` (ADR-010 `tracing` to rotating files), `lib.rs` (Tauri
-  wiring, IPC commands, the single ADR-009 frontend-bridge task).
+  Object), `logging` (ADR-010 `tracing` to rotating files, plus a startup
+  retention sweep), `lib.rs` (Tauri wiring, IPC commands, the single ADR-009
+  frontend-bridge task).
 - **`src/`** — the SvelteKit **Frontend** (ADR-002). `lib/ipc.ts` is the thin
   IPC abstraction over Tauri `invoke`/`listen` (ADR-001); `lib/camera.svelte.ts`
   is the camera rune store (ADR-003); `lib/Canvas.svelte` is the PixiJS v8
@@ -85,6 +86,19 @@ Run command: `pnpm tauri dev`. Release + MSI: `pnpm tauri build`.
   `todo`, `doing`, `done`). Correlation lives in the **single-project**
   `watcher` module; the multi-project `WatcherSupervisor` is later registry
   work.
+
+## Ubiquitous language (logging additions)
+
+- **Retention sweep** — the one-shot prune of rotated log files that runs at
+  startup inside `logging::init` (`infrastructure-015`, ADR-010).
+  `tracing-appender` rotates `guppi.log` daily into `guppi.log.YYYY-MM-DD`
+  files but never deletes them; the sweep deletes any rotated file whose
+  *filename date* (not mtime) is older than the `RETENTION_DAYS` window
+  (default 7). It only ever deletes files it can positively date as rotated
+  GUPPI logs — the live `guppi.log` and any unrelated file are left untouched —
+  and a deletion failure logs a warning and continues rather than aborting
+  startup. Startup-only by deliberate decision: GUPPI restarts often enough
+  that a background timer is unwarranted.
 
 ## Ubiquitous language (PTY spike additions)
 
