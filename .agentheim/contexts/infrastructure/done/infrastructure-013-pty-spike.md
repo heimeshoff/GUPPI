@@ -58,25 +58,28 @@ Job Object + native `claude.exe` works end-to-end with a long-running session.
 
 - [x] `claude.exe` spawns in the correct `cwd` and its TUI output streams to
       the Rust core. *(Mechanics agent-verified by `cargo test` with a
-      deterministic stand-in; real-`claude.exe` TUI rendering exercisable via
-      the `pty_spawn_claude` IPC command, awaits Marco's hands-on confirmation.)*
+      deterministic stand-in; real-`claude.exe` TUI rendering confirmed
+      hands-on 2026-05-14 — `SessionOutput` events carrying VT redraw
+      sequences streamed to the WebView from a live `pty_spawn_claude`.)*
 - [x] Input and resize round-trip without crashing the session. *(Agent-verified
-      by `cargo test`.)*
-- [~] A long-running session stays alive and responsive across idle/active
-      periods. *(Implemented and exercisable via the `pty_*` IPC commands;
-      a minutes-long live session needs Marco's hands-on confirmation.)*
+      by `cargo test`; also confirmed hands-on — live `pty_resize` +
+      `pty_write` round-tripped, the real `claude.exe` reacted to the input.)*
+- [x] A long-running session stays alive and responsive across idle/active
+      periods. *(Confirmed hands-on 2026-05-14: session left idle several
+      minutes, `pty_is_alive` still true, `pty_write` still produced output.)*
 - [x] Killing GUPPI normally leaves zero orphan `claude.exe` processes.
       *(Clean-exit path agent-verified: `dropping_the_session_kills_the_child`
-      confirms the child pid is gone from `tasklist` after the actor drops.)*
-- [~] Force-crashing GUPPI leaves zero orphan `claude.exe` processes (Job
-      Object `KILL_ON_JOB_CLOSE` verified). *(Job Object wired with
-      `KILL_ON_JOB_CLOSE`; the unclean-crash orphan check needs Marco to kill
-      GUPPI's process abruptly and check Task Manager — hands-on.)*
+      confirms the child pid is gone from `tasklist` after the actor drops;
+      also confirmed hands-on via `pty_kill`.)*
+- [x] Force-crashing GUPPI leaves zero orphan `claude.exe` processes (Job
+      Object `KILL_ON_JOB_CLOSE` verified). *(Confirmed hands-on 2026-05-14:
+      GUPPI's process abruptly End-Task'd from Task Manager, no `claude.exe`
+      survived — the Job Object's `KILL_ON_JOB_CLOSE` fired on an unclean exit.)*
 - [x] Result recorded back into ADR-006: spike **PASSED** — the "Empirical
       spike" section is moved from DEFERRED to DONE / PASSED.
 
-`[x]` = agent-verified · `[~]` = implemented + exercisable, awaits Marco's
-hands-on confirmation (same situation as the walking skeleton's GUI checks).
+All DoD items `[x]` — automated mechanics agent-verified by `cargo test`, the
+real-`claude.exe` hands-on items confirmed by Marco on 2026-05-14.
 
 ## Risks retired
 
@@ -132,24 +135,22 @@ The automated tests use `cmd.exe` as a deterministic stand-in for `claude.exe`
 — the PTY + Job Object + cwd + env mechanics are identical regardless of which
 program runs inside, and CI must not depend on a real Claude login.
 
-### Awaits Marco's hands-on confirmation (implemented + exercisable, not agent-verifiable)
+### Hands-on confirmation — DONE (Marco, 2026-05-14)
 
-Same situation as the walking skeleton's GUI checks — these need a live session
-against the real `claude.exe`:
+The items that needed a live session against the real `claude.exe` were driven
+from the WebView console (`window.__TAURI__.core.invoke`, with
+`withGlobalTauri` temporarily enabled for the spike then reverted) and all
+passed:
 
-- `claude.exe`'s actual TUI rendering through ConPTY.
-- A genuinely long-running session (minutes) staying alive across idle/active
-  periods.
-- The **force-crash** orphan check — kill GUPPI's process abruptly (not a clean
-  exit) and confirm via Task Manager that no `claude.exe` survives, i.e. the
-  Job Object's `KILL_ON_JOB_CLOSE` firing on an unclean exit. The clean-exit
-  path is already agent-verified.
-
-To run the hands-on checks: `pnpm tauri dev`, then invoke `pty_spawn_claude`,
-`pty_write`, `pty_resize`, `pty_is_alive` from the WebView console (or a temp
-button), leave the session idle/active for some minutes, then test both a clean
-`pty_kill` and an abrupt process-kill of GUPPI followed by a Task Manager
-orphan check.
+- `claude.exe`'s actual TUI rendering through ConPTY — `SessionOutput` events
+  carried real VT redraw sequences (e.g. `\r ESC[K \r\n ESC[K ESC[80C`).
+- A long-running session (several minutes idle, then active) stayed alive —
+  `pty_is_alive` true throughout, `pty_write` still produced output afterward.
+- Input round-trip — `pty_write` made the real `claude.exe` react.
+- Clean-exit orphan check via `pty_kill` — no orphan.
+- The **force-crash** orphan check — GUPPI's process abruptly End-Task'd from
+  Task Manager, no `claude.exe` survived: the Job Object's
+  `KILL_ON_JOB_CLOSE` fired on an unclean exit.
 
 ### Bug found and fixed during the spike → ADR-012
 

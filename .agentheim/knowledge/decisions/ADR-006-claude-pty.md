@@ -126,17 +126,17 @@ What was proven, and how:
     `claude.exe`: the PTY + Job Object + cwd + env mechanics are identical
     regardless of which program runs inside, and CI must not depend on a real
     Claude login.
-- **Implemented and exercisable, pending Marco's hands-on confirmation
-  against the real `claude.exe`** — driven via the `pty_spawn_claude` /
-  `pty_write` / `pty_resize` / `pty_kill` / `pty_is_alive` IPC commands in a
-  live `pnpm tauri dev` session:
-  - `claude.exe`'s TUI rendering through ConPTY end-to-end.
-  - A genuinely long-running session staying alive and responsive across
-    idle/active periods (minutes).
-  - The force-crash orphan check: kill GUPPI's process abruptly and confirm
-    via Task Manager that no `claude.exe` survives — i.e. the Job Object's
-    `KILL_ON_JOB_CLOSE` firing on an *unclean* exit. (The clean-exit path is
-    already agent-verified above.)
+- **Confirmed hands-on by Marco against the real `claude.exe` (2026-05-14)** —
+  driven via the `pty_spawn_claude` / `pty_write` / `pty_resize` / `pty_kill` /
+  `pty_is_alive` IPC commands in a live `pnpm tauri dev` session:
+  - `claude.exe`'s TUI rendering through ConPTY end-to-end — `SessionOutput`
+    events carried real VT redraw sequences.
+  - A long-running session stayed alive and responsive across idle/active
+    periods (several minutes idle, then `pty_write` still produced output).
+  - The force-crash orphan check passed: GUPPI's process was abruptly
+    End-Task'd from Task Manager and no `claude.exe` survived — the Job
+    Object's `KILL_ON_JOB_CLOSE` fired on an *unclean* exit. The clean-exit
+    path (`pty_kill`) was confirmed too.
 
 A teardown bug found and fixed during the spike: the drop path must release
 the PTY master + writer *before* joining the read-loop thread — on Windows the
@@ -145,10 +145,10 @@ first would hang. The fix drops master/writer first, then does a bounded,
 best-effort join (2s) with the Job Object as the real cleanup guarantee. This
 is recorded in ADR-012.
 
-**ADR-006's residual risk is retired for the validated mechanics** and reduced
-to "confirm the real-`claude.exe` hands-on items" — no longer "the whole stack
-story might change". The `portable-pty` + Job Object + cwd-per-spawn decision
-stands.
+**ADR-006's residual risk is fully retired.** Both the automated mechanics and
+the real-`claude.exe` hands-on items are confirmed — this is no longer "the
+whole stack story might change". The `portable-pty` + Job Object +
+cwd-per-spawn decision stands, validated end-to-end on Windows 11.
 
 ## Consequences
 
