@@ -5,13 +5,25 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 18:00 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 1, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 1 (1415d1e infrastructure-014)
+**Note:** infrastructure-014 passed verification first try. `todo/` and `doing/` now empty in every context. Remaining unscheduled work: `infrastructure-015-log-retention-sweep` and `canvas-001-targeted-canvas-updates` (the frontend reaction to 014's new taxonomy) both sit in `backlog/`, not promoted. canvas-001 is now unblocked — 014 was its only dependency.
+
+---
+
 ## 2026-05-14 17:55 -- Task verified and completed: infrastructure-014-fine-grained-fs-events - Fine-grained filesystem domain events
 
 **Type:** Work / Task completion
 **Task:** infrastructure-014-fine-grained-fs-events - Fine-grained filesystem domain events
 **Summary:** The single-project `.agentheim/` watcher now correlates each debounced filesystem batch into the fine-grained ADR-008/ADR-009 domain events (`TaskMoved`, `TaskAdded`, `TaskRemoved`, `BCAppeared`, `BCDisappeared`), while the coarse `AgentheimChanged` keeps firing as a deliberate compatibility seam for the skeleton frontend.
 **Verification:** PASS (iteration 1)
-**Commit:** <pending>
+**Commit:** 1415d1e
 **Files changed:** 5
 **Tests added:** 7+ (paired move, unpaired create, unpaired delete, different-`task_id` non-pairing, BC appear/disappear; `cargo test --lib` 26/26)
 **ADRs written:** ADR-008 + ADR-009 reconciled in place (no new ADR)

@@ -3,6 +3,7 @@ id: infrastructure-014-fine-grained-fs-events
 type: feature
 status: done
 completed: 2026-05-14
+commit: 1415d1e
 scope: global
 depends_on:
   - infrastructure-012-walking-skeleton
