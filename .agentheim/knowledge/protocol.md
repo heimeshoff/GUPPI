@@ -5,13 +5,24 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:16 -- Task completed (verification skipped): infrastructure-004-persistence - Persistence
+
+**Type:** Work / Task completion
+**Task:** infrastructure-004-persistence - Persistence
+**Summary:** GUPPI's own view-state persists in a single SQLite file (`guppi.db`) in the OS user-config dir, resolved via Tauri's path API; projects/tile_positions/clusters/app_state schema sketch accepted with a schema_version migrations table.
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
 ## 2026-05-14 14:14 -- Task completed (verification skipped): infrastructure-002-frontend-framework - Frontend framework
 
 **Type:** Work / Task completion
 **Task:** infrastructure-002-frontend-framework - Frontend framework
 **Summary:** Frontend framework decision recorded — Svelte 5 + SvelteKit (static adapter), SPA shipped as static assets inside the Tauri 2 bundle.
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** c20f26d
 **Files changed:** 1
 
 ---

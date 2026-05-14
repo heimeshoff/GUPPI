@@ -1,9 +1,11 @@
 ---
 id: infrastructure-004-persistence
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
+related_adrs: [ADR-004-persistence]
+completed: 2026-05-14
 ---
 
 # Decision: Persistence for GUPPI's own state
@@ -58,3 +60,15 @@ Resolved via Tauri's `path` API (`app_config_dir()`). A single `schema_version` 
 - (–) Slightly more upfront than JSON; needs a migration discipline.
 
 **Reversibility.** High. SQLite → JSON export is a one-script job if we ever change our minds.
+
+## Outcome
+
+ADR written and accepted at `.agentheim/knowledge/decisions/ADR-004-persistence.md`.
+
+The architect's recommendation stood — no Marco open question on this task. The ADR is committed with **Status: Accepted**:
+
+- **Storage: SQLite**, a single `guppi.db` file accessed from the Rust core via `rusqlite` (or `sqlx` — the team picks at implementation time). Chosen over a flat JSON file (painful migrations/concurrent writes) and an embedded KV store (no ad-hoc query, weaker migration story).
+- **Location: OS user-config directory**, resolved at runtime via Tauri's `path` API (`app_config_dir()`) rather than hard-coded — `%APPDATA%\guppi\guppi.db` on Windows (the validated day-one target), with the macOS/Linux paths recorded for when cross-platform is exercised.
+- **Schema sketch accepted as drafted**: `projects`, `tile_positions`, `clusters`, `app_state`, plus a `schema_version` table for ordered migrations applied at startup. Treated as a shape, not a frozen contract — types and constraints settle when the persistence layer is built.
+
+Builds on ADR-001 (Tauri 2 runtime): persistence lives on the Rust side, path resolution uses Tauri's `path` API. No code change required (decision-only task).
