@@ -11,7 +11,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
-*(None yet.)*
+- [infrastructure-013-pty-spike](backlog/infrastructure-013-pty-spike.md) — `type: spike`, depends on walking skeleton. Empirical proof that `portable-pty` + Job Object + `claude.exe` works on Windows. Deferred from ADR-006.
 <!-- backlog-list:end -->
 
 ## Todo
@@ -32,12 +32,13 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Doing
 
 <!-- doing-list:start -->
-- [infrastructure-006-claude-pty](doing/infrastructure-006-claude-pty.md) — `type: decision`. `portable-pty` + Job Objects on Windows.
+*(None yet.)*
 <!-- doing-list:end -->
 
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-006-claude-pty](done/infrastructure-006-claude-pty.md) — `type: decision`. `portable-pty` actor-per-session, native `claude.exe`, Job Objects. Empirical spike deferred → infrastructure-013. → ADR-006.
 - [infrastructure-004-persistence](done/infrastructure-004-persistence.md) — `type: decision`. SQLite (`guppi.db`) in the OS user-config dir. → ADR-004.
 - [infrastructure-002-frontend-framework](done/infrastructure-002-frontend-framework.md) — `type: decision`. Svelte 5 + SvelteKit (static adapter). → ADR-002.
 - [infrastructure-001-desktop-runtime](done/infrastructure-001-desktop-runtime.md) — `type: decision`. Tauri 2 chosen, Windows-only day one. → ADR-001.

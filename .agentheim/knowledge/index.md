@@ -17,6 +17,7 @@ Top-level catalog for the GUPPI project. Tracks bounded contexts and global ADRs
 ## Global ADRs
 
 <!-- adr-global:start -->
+- [ADR-006 — Claude session ownership & PTY](decisions/ADR-006-claude-pty.md) — Accepted. `portable-pty` actor-per-session, native `claude.exe` with cwd-per-project, Job Objects for cleanup. Empirical Windows spike deferred (infrastructure-013).
 - [ADR-004 — Persistence: SQLite in OS user-config dir](decisions/ADR-004-persistence.md) — Accepted. Single `guppi.db` SQLite file for GUPPI's own view-state, resolved via Tauri's path API.
 - [ADR-002 — Frontend framework: Svelte 5 + SvelteKit](decisions/ADR-002-frontend-framework.md) — Accepted. Svelte 5 + SvelteKit static adapter, SPA inside the Tauri bundle.
 - [ADR-001 — Desktop runtime: Tauri 2](decisions/ADR-001-desktop-runtime.md) — Accepted. Tauri 2 (Rust core + web frontend), Windows-only validated day one.

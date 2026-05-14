@@ -1,9 +1,11 @@
 ---
 id: infrastructure-006-claude-pty
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: [infrastructure-001-desktop-runtime]
+completed: 2026-05-14
+related_adrs: [ADR-006-claude-pty]
 ---
 
 # Decision: Claude session ownership & PTY library
@@ -66,3 +68,35 @@ GUPPI must spawn `claude` *inside each target project's folder*. PTY (so `claude
 **Reversibility.** Low-cost. The actor boundary insulates the rest of the system from the PTY library.
 
 **Flag:** This is the only place I'd recommend a small dedicated spike *before* committing — spend a day proving that `portable-pty` + Job Object + `claude.exe` on Windows actually works end-to-end with a long-running session.
+
+## Outcome
+
+ADR written and **Accepted** at `.agentheim/knowledge/decisions/ADR-006-claude-pty.md`.
+
+Marco signed off on the two architect open questions, folded into the ADR:
+
+- **`claude.exe` native Windows** — GUPPI spawns the native Windows
+  `claude.exe` directly; no WSL, no path translation. The `portable-pty` /
+  cwd-per-spawn architecture applies as drafted.
+- **Windows-only day one** — built and validated for Windows 11; macOS/Linux
+  kept architecturally possible but not validated, consistent with ADR-001.
+
+**Decision:** `portable-pty` in the Rust core, one Tokio actor per session
+owning the `PtyPair` + child (`cwd = project.path`), read/write/resize
+channels, raw-bytes output (VT parsing deferred), and each child wrapped in a
+Windows Job Object (`KILL_ON_JOB_CLOSE`) for orphan-free cleanup.
+
+**Empirical spike — DEFERRED and tracked.** The hands-on Windows spike named
+in the acceptance criteria cannot run yet: no Rust/Tauri scaffold exists
+(walking-skeleton `infrastructure-012` creates the first code, and its scope
+explicitly says the PTY spike runs separately). The decision itself is fully
+specified, so the ADR is committed now with the empirical validation marked
+DEFERRED inside it. A new backlog task
+`infrastructure-013-pty-spike` (type: spike, `depends_on`
+`infrastructure-012-walking-skeleton`) tracks running it before any feature
+depends on PTY.
+
+Key files:
+- `.agentheim/knowledge/decisions/ADR-006-claude-pty.md` — the decision.
+- `.agentheim/contexts/infrastructure/backlog/infrastructure-013-pty-spike.md`
+  — the deferred empirical spike.

@@ -5,13 +5,27 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:19 -- Task verified and completed: infrastructure-006-claude-pty - Claude session ownership & PTY
+
+**Type:** Work / Task completion
+**Task:** infrastructure-006-claude-pty - Claude session ownership & PTY
+**Summary:** GUPPI owns each Claude session as a Tokio actor over `portable-pty` (ConPTY), spawning native Windows `claude.exe` with cwd-per-project and a Windows Job Object for orphan-free cleanup. Empirical Windows spike marked DEFERRED, tracked as new backlog task infrastructure-013-pty-spike.
+**Verification:** PASS (iteration 1)
+**Commit:** PENDING
+**Files changed:** 2
+**Tests added:** 0
+**ADRs written:** ADR-006-claude-pty
+**New backlog items:** infrastructure-013-pty-spike
+
+---
+
 ## 2026-05-14 14:16 -- Task completed (verification skipped): infrastructure-004-persistence - Persistence
 
 **Type:** Work / Task completion
 **Task:** infrastructure-004-persistence - Persistence
 **Summary:** GUPPI's own view-state persists in a single SQLite file (`guppi.db`) in the OS user-config dir, resolved via Tauri's path API; projects/tile_positions/clusters/app_state schema sketch accepted with a schema_version migrations table.
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** 7608ba2
 **Files changed:** 1
 
 ---
