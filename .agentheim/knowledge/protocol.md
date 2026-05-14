@@ -5,6 +5,49 @@ Newest entries on top.
 
 ---
 
+## 2026-05-15 00:40 -- Model / Refined: canvas-002-render-multiple-project-tiles - Render multiple project tiles
+
+**Type:** Model / Refine
+**BC:** canvas
+**Status after:** todo (promoted)
+**Summary:** Grounded against the real skeleton (`Canvas.svelte` single-valued `snapshot`/`tilePos`/`projectId` $state, `ipc.ts`, `types.ts`, `snapshot-patch.ts`) and the unworked dependency `project-registry-001`. Surfaced one real coordination gap — the canvas needs each project's `project_id` but `ProjectSnapshot` has no `id` field — and resolved four decisions with Marco: (1) **add `id` to `ProjectSnapshot`** (Rust + TS) so id flows with the snapshot; (2) auto-placement is **spiral-out from world origin**; (3) auto-placed positions **persist immediately**; (4) zoom-to-fit (`f`) **frames all tiles**. Orchestrator round (no architect delegation needed — all structural choices already decided, work sits inside ADR-003/ADR-004's envelope) produced a worker-ready body: `Canvas.svelte` single-tile→keyed-collection restructure, new pure `tile-layout.ts` (spiral placement, the no-frontend-test-infra verification surface), shared drag controller replacing N per-tile window listeners, per-project `canvas-001` patching, idempotent live-add on `ProjectAdded`. Verdict: holds as ONE task (the keyed-collection restructure couples every closure in the component). Promoted to `todo/`. Coordination note appended to `project-registry-001` (still in `todo/`, unworked) requiring `id` on `list_projects()` / `get_project()` snapshots.
+**Split into:** none
+**ADRs written:** none — implementation within ADR-003 (PixiJS camera) + ADR-004 (tile-position persistence); the `Map`-vs-array state shape and shared-drag-controller pattern are component-internal, not cross-cutting. Recorded in the task Notes so it isn't re-opened.
+
+---
+
+## 2026-05-15 00:10 -- Model / Refined: project-registry-002-scan-roots-and-discovery — split into 002a + 002b
+
+**Type:** Model / Refine
+**BC:** project-registry (+ capture into canvas)
+**Status after:** todo (both split tasks)
+**Summary:** Grounded against the DB schema (`schema_version` 1, no `scan_roots` table, no `remove_project`) and ADR-005. Resolved four open questions with Marco: (1) **keep the checklist** — scan returns candidates, user picks (faithful to ADR-005), not auto-register; (2) **cascade-deregister** on scan-root removal; (3) **depth cap default 3 + junk-dir pruning**; (4) **track originating scan root** (`projects.scan_root_id`, NULL = manually added) — required to enable the cascade. Also: cascade **hard-deletes** — ADR-005's 30-day tile retention is scoped to the single "Remove project" affordance only. Orchestrator round (architect) produced the schema (`scan_roots` table + nullable FK `ON DELETE RESTRICT`), `scan.rs` walk design, the IPC surface, and recommended the split + a canvas UI task. Split taken: **002a** (schema v1→v2 + scan walk + scan-root CRUD + `add_scan_root`/`rescan`/`list` — independently shippable, returns a checklist) and **002b** (`import_scanned_projects` + `Db::remove_project` + `remove_scan_root` app-driven cascade). Both promoted to `todo/`.
+**Split into:** project-registry-002a-scan-roots-and-walk, project-registry-002b-import-and-cascade-deregister
+**Captured:** canvas-005-project-discovery-affordances (under-refined stub in `canvas/backlog/` — the ADR-005 BC seam: folder pickers, discovery checklist modal, "Remove project", "missing" tile state; depends on `002b` + `design-system-001`)
+**ADRs written:** ADR-013 (Scan roots — persisted, rescannable discovery folders; **note:** orchestrator drafted this as "ADR-010" but that id was already taken by Logging — corrected to ADR-013). ADR-005 amended with a `## Reconciliation` section (superseded-in-part by ADR-013; clarifies the 30-day-retention scoping).
+
+---
+
+## 2026-05-14 23:30 -- Model / Refined: project-registry-001-multi-project-snapshot-model - Multi-project snapshot model
+
+**Type:** Model / Refine
+**BC:** project-registry
+**Status after:** todo
+**Summary:** Grounded against the real skeleton code (`lib.rs` single-project `AppState`, `watcher.rs` single `AgentheimWatcher`, `db.rs` has no `list_projects`). Resolved the three open questions with Marco: (1) `get_project` reshaped to `get_project(project_id)` + `list_projects()` added — per-project resync wants a precise re-fetch; (2) `WatcherSupervisor` uses incremental add/remove, not wholesale rebuild; (3) `list_projects()` is a cold disk read each call, no cached model. Orchestrator round (architect) produced a worker-ready body: new `supervisor.rs` module (`Arc<Mutex>` map — simplifies ADR-008's sketched Tokio-task shape), `AppState` drops `project_id`/`project_path`, `ProjectAdded` published from `supervisor.add`, hardcoded seed kept but routed through `add`, `remove_project` row-deletion deferred to `project-registry-002`. 8 concrete acceptance criteria. Verdict: holds as ONE task (no split — `AppState` restructure couples all three pieces). Promoted to `todo/`.
+**Split into:** none
+**ADRs written:** none — ADR-008 amended with a reconciliation note recording the landed `WatcherSupervisor` (module, `Arc<Mutex>` concurrency shape, `add` publishes `ProjectAdded`, missing `.agentheim/` → registered-but-unwatched).
+
+---
+
+## 2026-05-14 23:15 -- Model / Captured: v1-completion task set (5 tasks across canvas + project-registry)
+
+**Type:** Model / Capture
+**BC:** canvas, project-registry
+**Filed to:** backlog
+**Summary:** "Finish v1 first" capture pass — decomposed the vision's v1 canvas-MVP gap (the walking skeleton renders only one hardcoded project) into 5 backlog tasks. **project-registry:** `project-registry-001` (multi-project snapshot model — `list_projects()` + one watcher per project), `project-registry-002` (scan roots — user hands GUPPI folders, GUPPI recursively walks subfolders for `.agentheim/` projects; Marco's decision, answers the registry README's "where does GUPPI look" open question). **canvas:** `canvas-002` (render N tiles), `canvas-003` (focus-zoom), `canvas-004` (greybox → STYLEGUIDE.md visuals). All filed under-refined to `backlog/` — each needs a REFINE pass (open questions noted in every task). Beyond-v1 roadmap items (voice, live agent-awareness, terminal panel, detail view) deliberately left uncaptured.
+
+---
+
 ## 2026-05-14 23:10 -- Work session ended
 
 **Type:** Work / Session end

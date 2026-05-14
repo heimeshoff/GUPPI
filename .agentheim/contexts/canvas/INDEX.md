@@ -11,13 +11,15 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
-*(None.)*
+- [canvas-003-focus-zoom](backlog/canvas-003-focus-zoom.md) — `type: feature`, depends on `design-system-001`. Click-or-keyboard "zoom to focus" — camera frames a target tile/node within the styleguide motion budget; viewport-only, no layout mutation. v1 core.
+- [canvas-004-styleguide-visuals](backlog/canvas-004-styleguide-visuals.md) — `type: feature`, depends on `design-system-001`. Replace greybox tiles/nodes/edges/counts/badge-slot with `STYLEGUIDE.md` tokens. The frontend gate being exercised. v1 core.
+- [canvas-005-project-discovery-affordances](backlog/canvas-005-project-discovery-affordances.md) — `type: feature`, depends on `project-registry-002b` + `design-system-001`. The canvas-BC UI for ADR-005's affordances — "Add project…", "Scan folder…" + discovery checklist modal, "Remove project", the "missing" tile state. Under-refined stub. v1 core.
 <!-- backlog-list:end -->
 
 ## Todo
 
 <!-- todo-list:start -->
-*(None.)*
+- [canvas-002-render-multiple-project-tiles](todo/canvas-002-render-multiple-project-tiles.md) — `type: feature`, depends on `project-registry-001` + `design-system-001`. Restructure `Canvas.svelte` from single-tile to keyed-by-`project_id` collections: render N tiles, `ProjectSnapshot.id`, spiral auto-placement (persisted immediately), per-project layout, shared drag controller, per-project `canvas-001` patching, `f` fits all tiles. v1 core.
 <!-- todo-list:end -->
 
 ## Doing

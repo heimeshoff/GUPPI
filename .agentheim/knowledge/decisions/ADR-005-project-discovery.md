@@ -108,3 +108,19 @@ automatic discovery ever feels missing, the scan walker already exists — makin
 it run automatically on startup (against a configured set of roots) is a small,
 contained change. Conversely, dropping the scan command and keeping only
 explicit "Add project…" is equally trivial.
+
+## Reconciliation
+
+**2026-05-15 — superseded-in-part by ADR-013 (scan roots).** ADR-005's "Scan
+folder for projects…" was a *one-shot* command: the picked folder was walked
+once and never remembered. ADR-013 evolves this into **persisted, rescannable
+scan roots** with origin tracking and cascade-deregister. ADR-005 still holds
+for: the explicit-registry-primary stance, "Add project…", canonical-path
+tracking, the "missing" tile state, and the BC placement of user-facing
+affordances in the canvas BC.
+
+One clarification ADR-013 depends on: ADR-005's **30-day tile-state retention**
+rule applies specifically to the **user-initiated single "Remove project"**
+affordance — an undo window for an accidental click. It does **not** apply to
+ADR-013's scan-root cascade-deregister, which is a deliberate bulk discard and
+hard-deletes the child projects' tile state.

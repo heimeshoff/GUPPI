@@ -5,7 +5,7 @@ status: Accepted
 scope: global
 bc: infrastructure
 date: 2026-05-14
-related_tasks: [infrastructure-008-filesystem-observation, infrastructure-014-fine-grained-fs-events]
+related_tasks: [infrastructure-008-filesystem-observation, infrastructure-014-fine-grained-fs-events, project-registry-001-multi-project-snapshot-model]
 related_adrs: [ADR-001, ADR-005]
 ---
 
@@ -84,6 +84,19 @@ before they leave the Rust core:
   removed.
 
 These domain events flow into the event bus (ADR-009).
+
+> **Reconciliation note (project-registry-001, 2026-05-14):** The
+> `WatcherSupervisor` "downstream" implementation promised below has landed. It
+> lives in `src-tauri/src/supervisor.rs` and composes the single-project
+> `AgentheimWatcher` from `watcher.rs`. Concurrency shape: the supervisor owns
+> its `project_id -> watcher` map behind an `Arc<Mutex<…>>` rather than a
+> dedicated Tokio task with a command channel — `add`/`remove` are infrequent
+> (registration / removal / startup-seed only, never the hot path) and
+> synchronous calls keep the Tauri IPC command bodies simple. The "single
+> owner" intent of this ADR holds: exactly one `WatcherSupervisor` instance owns
+> the map. `add` publishes `ProjectAdded`; a missing `.agentheim/` at add time
+> leaves the project registered-but-unwatched (the ADR-005 "missing" state)
+> rather than erroring the caller.
 
 > **Reconciliation note (infrastructure-014, 2026-05-14):** ADR-009 has landed
 > and this section is reconciled with its `DomainEvent` enum. `TaskMoved` uses
