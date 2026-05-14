@@ -5,13 +5,26 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:32 -- Task verified and completed: infrastructure-007-voice-integration - Voice integration architecture
+
+**Type:** Work / Task completion
+**Task:** infrastructure-007-voice-integration - Voice integration architecture
+**Summary:** Voice integration is a local WebSocket bridge added to Whisperheim — GUPPI subscribes to wake_word/transcript events and emits speak events. The versioned transport contract (event shapes, bridge.json port discovery, exponential-backoff reconnection, graceful degradation) is specced in contexts/infrastructure/voice-bridge.md.
+**Verification:** PASS (iteration 1)
+**Commit:** PENDING
+**Files changed:** 2
+**Tests added:** 0
+**ADRs written:** ADR-007-voice-integration
+
+---
+
 ## 2026-05-14 14:29 -- Task completed (verification skipped): infrastructure-005-project-discovery - Project discovery model
 
 **Type:** Work / Task completion
 **Task:** infrastructure-005-project-discovery - Project discovery model
 **Summary:** Project discovery is an explicit registry (the ADR-004 `projects` table) plus a user-triggered "Scan folder for projects…" command — no unprompted disk-walking; canvas BC UI affordances noted as downstream modeling.
 **Verification:** SKIPPED — decision-only task (single ADR file)
-**Commit:** PENDING
+**Commit:** 48e95b3
 **Files changed:** 1
 
 ---

@@ -17,6 +17,7 @@ Top-level catalog for the GUPPI project. Tracks bounded contexts and global ADRs
 ## Global ADRs
 
 <!-- adr-global:start -->
+- [ADR-007 — Voice integration: Whisperheim WebSocket bridge](decisions/ADR-007-voice-integration.md) — Accepted. Extend Whisperheim with a local WebSocket bridge; GUPPI subscribes to wake-word/transcript, emits speak. Contract: `contexts/infrastructure/voice-bridge.md`.
 - [ADR-005 — Project discovery: explicit registry + manual scan](decisions/ADR-005-project-discovery.md) — Accepted. Explicit registry primary (the `projects` table), user-triggered folder scan, no unprompted disk-walking.
 - [ADR-003 — Canvas rendering: PixiJS v8](decisions/ADR-003-canvas-rendering.md) — Accepted. PixiJS v8 (WebGL) for the canvas, HTML overlays positioned to world coordinates for rich interactive tiles.
 - [ADR-006 — Claude session ownership & PTY](decisions/ADR-006-claude-pty.md) — Accepted. `portable-pty` actor-per-session, native `claude.exe` with cwd-per-project, Job Objects for cleanup. Empirical Windows spike deferred (infrastructure-013).

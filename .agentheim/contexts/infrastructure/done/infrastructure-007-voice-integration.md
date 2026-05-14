@@ -1,9 +1,11 @@
 ---
 id: infrastructure-007-voice-integration
 type: decision
-status: todo
+status: done
 scope: global
 depends_on: []
+completed: 2026-05-14
+related_adrs: [ADR-007-voice-integration]
 ---
 
 # Decision: Voice integration architecture
@@ -20,9 +22,9 @@ User stated preference: extend Whisperheim to expose an interface GUPPI can subs
 
 ## Acceptance criteria
 
-- [ ] ADR committed at `.agentheim/knowledge/decisions/ADR-007-voice-integration.md`
-- [ ] `voice-bridge.md` contract document specced (event protocol, port discovery, reconnection semantics)
-- [ ] Decision recorded on whether to add the WebSocket bridge to Whisperheim now or fall back to in-process VAD
+- [x] ADR committed at `.agentheim/knowledge/decisions/ADR-007-voice-integration.md`
+- [x] `voice-bridge.md` contract document specced (event protocol, port discovery, reconnection semantics)
+- [x] Decision recorded on whether to add the WebSocket bridge to Whisperheim now or fall back to in-process VAD
 
 ## Architect open question Marco must answer
 
@@ -56,3 +58,35 @@ Utterheim gets a similar contract for TTS output.
 - (–) The contract is now a versioned thing; breaking changes need both repos to move.
 
 **Reversibility.** Medium. The contract is small; if Whisperheim's owner (also Marco) decides differently, we adapt.
+
+## Outcome
+
+ADR written and **Accepted** at `.agentheim/knowledge/decisions/ADR-007-voice-integration.md`.
+
+Marco answered the architect's open question: **yes, willing to add the
+WebSocket bridge to Whisperheim.** The recommended cross-repo approach
+(Option 1) is adopted; the in-process fallback ADR-007a is documented as an
+escape hatch but **not promoted**.
+
+**Decision:** Extend Whisperheim with a local WebSocket bridge bound to
+`127.0.0.1:<port>`. GUPPI connects as a client, subscribes to `wake_word` and
+`transcript` events, and sends `speak` events (forwarded to Utterheim). The
+always-on mic and wake-word detection stay in Whisperheim. Port is discovered
+via a `bridge.json` config file Whisperheim writes; GUPPI reconnects with
+exponential backoff and degrades gracefully (voice-unavailable indicator) when
+the bridge is absent.
+
+The versioned transport contract is specified concretely in
+`voice-bridge.md` (placed in the `infrastructure` BC as a cross-cutting
+transport contract): JSON event shapes, the `bridge.json` discovery file,
+exponential-backoff reconnection with jitter, stale-file detection, and
+graceful-degradation semantics. Protocol version `1`.
+
+Note: the `voice` BC is out of v1 scope — no application code lands now. This
+decision fixes the foundation boundary so other infrastructure choices stay
+coherent.
+
+Key files:
+- `.agentheim/knowledge/decisions/ADR-007-voice-integration.md` — the decision.
+- `.agentheim/contexts/infrastructure/voice-bridge.md` — the versioned
+  transport contract.

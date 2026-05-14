@@ -29,12 +29,13 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Doing
 
 <!-- doing-list:start -->
-- [infrastructure-007-voice-integration](doing/infrastructure-007-voice-integration.md) — `type: decision`. Extend Whisperheim with local WebSocket bridge.
+*(None yet.)*
 <!-- doing-list:end -->
 
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-007-voice-integration](done/infrastructure-007-voice-integration.md) — `type: decision`. Whisperheim WebSocket bridge; `voice-bridge.md` contract specced. → ADR-007.
 - [infrastructure-005-project-discovery](done/infrastructure-005-project-discovery.md) — `type: decision`. Explicit registry primary + user-triggered folder scan; no unprompted disk-walking. → ADR-005.
 - [infrastructure-003-canvas-rendering](done/infrastructure-003-canvas-rendering.md) — `type: decision`. PixiJS v8 (WebGL) + HTML overlays at world coords. → ADR-003.
 - [infrastructure-006-claude-pty](done/infrastructure-006-claude-pty.md) — `type: decision`. `portable-pty` actor-per-session, native `claude.exe`, Job Objects. Empirical spike deferred → infrastructure-013. → ADR-006.

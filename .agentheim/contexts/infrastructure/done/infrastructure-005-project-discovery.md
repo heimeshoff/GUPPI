@@ -6,6 +6,7 @@ completed: 2026-05-14
 scope: global
 depends_on: [infrastructure-004-persistence]
 related_adrs: [ADR-005]
+commit: 48e95b3
 ---
 
 # Decision: Project discovery model
