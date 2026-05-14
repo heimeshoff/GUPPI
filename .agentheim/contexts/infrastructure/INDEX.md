@@ -17,9 +17,6 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-- [infrastructure-003-canvas-rendering](todo/infrastructure-003-canvas-rendering.md) — `type: decision`. PixiJS v8 + HTML overlays.
-- [infrastructure-005-project-discovery](todo/infrastructure-005-project-discovery.md) — `type: decision`. Explicit registry + manual scan.
-- [infrastructure-007-voice-integration](todo/infrastructure-007-voice-integration.md) — `type: decision`. Extend Whisperheim with local WebSocket bridge. Open Q: Marco's willingness to touch Whisperheim.
 - [infrastructure-008-filesystem-observation](todo/infrastructure-008-filesystem-observation.md) — `type: decision`. `notify-debouncer-full`, one watcher per project.
 - [infrastructure-009-event-bus](todo/infrastructure-009-event-bus.md) — `type: decision`. Tokio broadcast + Tauri events.
 - [infrastructure-010-logging](todo/infrastructure-010-logging.md) — `type: decision`. `tracing` to local rotating files, no telemetry.
@@ -27,17 +24,19 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 - [infrastructure-012-walking-skeleton](todo/infrastructure-012-walking-skeleton.md) — `type: spike`, depends on 001–011. GUPPI's first prototype.
 <!-- todo-list:end -->
 
-**Todo count:** 8
+**Todo count:** 5
 
 ## Doing
 
 <!-- doing-list:start -->
-*(None yet.)*
+- [infrastructure-005-project-discovery](doing/infrastructure-005-project-discovery.md) — `type: decision`. Explicit registry + manual scan.
+- [infrastructure-007-voice-integration](doing/infrastructure-007-voice-integration.md) — `type: decision`. Extend Whisperheim with local WebSocket bridge.
 <!-- doing-list:end -->
 
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-003-canvas-rendering](done/infrastructure-003-canvas-rendering.md) — `type: decision`. PixiJS v8 (WebGL) + HTML overlays at world coords. → ADR-003.
 - [infrastructure-006-claude-pty](done/infrastructure-006-claude-pty.md) — `type: decision`. `portable-pty` actor-per-session, native `claude.exe`, Job Objects. Empirical spike deferred → infrastructure-013. → ADR-006.
 - [infrastructure-004-persistence](done/infrastructure-004-persistence.md) — `type: decision`. SQLite (`guppi.db`) in the OS user-config dir. → ADR-004.
 - [infrastructure-002-frontend-framework](done/infrastructure-002-frontend-framework.md) — `type: decision`. Svelte 5 + SvelteKit (static adapter). → ADR-002.

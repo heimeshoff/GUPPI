@@ -6,6 +6,7 @@ scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 related_adrs: [ADR-004-persistence]
 completed: 2026-05-14
+commit: 7608ba2
 ---
 
 # Decision: Persistence for GUPPI's own state

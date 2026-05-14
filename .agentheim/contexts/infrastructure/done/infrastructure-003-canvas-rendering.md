@@ -1,9 +1,11 @@
 ---
 id: infrastructure-003-canvas-rendering
 type: decision
-status: todo
+status: done
+completed: 2026-05-14
 scope: global
 depends_on: [infrastructure-002-frontend-framework]
+related_adrs: [ADR-003]
 ---
 
 # Decision: Canvas rendering library
@@ -47,3 +49,13 @@ Three approaches: SVG, HTML5 `<canvas>` 2D, WebGL (PixiJS / Konva).
 - (–) Accessibility (screen readers) is poor on canvas. Acceptable here — single user, not a public product.
 
 **Reversibility.** Medium. The world-coordinate abstraction is portable; the rendering layer behind it could be swapped if needed.
+
+## Outcome
+
+ADR-003 written at `.agentheim/knowledge/decisions/ADR-003-canvas-rendering.md`
+with **Status: Accepted**. Decision: **PixiJS v8 (WebGL)** for the canvas, with
+**HTML overlays positioned to match world coordinates** for tiles needing rich
+interactive content (markdown viewer, emulated terminal). A single camera-state
+source of truth (Svelte 5 runes per ADR-002) drives both the PixiJS scene and
+the overlay layer. The ADR follows ADR-002's frontmatter and section
+conventions and links to ADR-002 as its base.

@@ -5,13 +5,32 @@ Newest entries on top.
 
 ---
 
+## 2026-05-14 14:26 -- Task completed (verification skipped): infrastructure-003-canvas-rendering - Canvas rendering library
+
+**Type:** Work / Task completion
+**Task:** infrastructure-003-canvas-rendering - Canvas rendering library
+**Summary:** PixiJS v8 (WebGL) chosen as the infinite-canvas renderer, with HTML overlays positioned to world coordinates for tiles needing rich interactive content (markdown viewer, terminal panel).
+**Verification:** SKIPPED — decision-only task (single ADR file)
+**Commit:** PENDING
+**Files changed:** 1
+
+---
+
+## 2026-05-14 14:22 -- Batch started: [infrastructure-003-canvas-rendering, infrastructure-005-project-discovery, infrastructure-007-voice-integration]
+
+**Type:** Work / Batch start
+**Tasks:** infrastructure-003-canvas-rendering - Canvas rendering library, infrastructure-005-project-discovery - Project discovery model, infrastructure-007-voice-integration - Voice integration architecture
+**Parallel:** yes (3 workers)
+
+---
+
 ## 2026-05-14 14:19 -- Task verified and completed: infrastructure-006-claude-pty - Claude session ownership & PTY
 
 **Type:** Work / Task completion
 **Task:** infrastructure-006-claude-pty - Claude session ownership & PTY
 **Summary:** GUPPI owns each Claude session as a Tokio actor over `portable-pty` (ConPTY), spawning native Windows `claude.exe` with cwd-per-project and a Windows Job Object for orphan-free cleanup. Empirical Windows spike marked DEFERRED, tracked as new backlog task infrastructure-013-pty-spike.
 **Verification:** PASS (iteration 1)
-**Commit:** PENDING
+**Commit:** 08dc87b
 **Files changed:** 2
 **Tests added:** 0
 **ADRs written:** ADR-006-claude-pty

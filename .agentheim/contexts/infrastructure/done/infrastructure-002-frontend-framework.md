@@ -6,6 +6,7 @@ scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 completed: 2026-05-14
 related_adrs: [ADR-002-frontend-framework]
+commit: c20f26d
 ---
 
 # Decision: Frontend framework

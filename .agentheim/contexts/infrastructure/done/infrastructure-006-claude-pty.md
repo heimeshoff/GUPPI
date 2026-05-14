@@ -6,6 +6,7 @@ scope: global
 depends_on: [infrastructure-001-desktop-runtime]
 completed: 2026-05-14
 related_adrs: [ADR-006-claude-pty]
+commit: 08dc87b
 ---
 
 # Decision: Claude session ownership & PTY library
