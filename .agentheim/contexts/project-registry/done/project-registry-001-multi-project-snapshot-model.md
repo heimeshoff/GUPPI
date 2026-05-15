@@ -3,6 +3,7 @@ id: project-registry-001-multi-project-snapshot-model
 type: feature
 status: done
 completed: 2026-05-15
+commit: d594ad5
 scope: bc
 depends_on: []
 related_adrs:

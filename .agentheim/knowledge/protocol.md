@@ -5,6 +5,214 @@ Newest entries on top.
 
 ---
 
+## 2026-05-15 13:00 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 4 (first-try PASS: 4, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 4 (f83222c canvas-006, ebe2e48 project-registry-003, 8ff6a1e canvas-005a, 4979e27 canvas-005b)
+**Note:** Cleared the entire canvas-discovery refinement chain — canvas-006 (live-add serialisation) → project-registry-003 (manual register/remove + soft-delete + missing snapshot + ProjectRemoved event from both single-remove and scan-root cascade, schema v3, 30-day GC sweep) → canvas-005a (right-click context menu shell, Add/Remove/Missing affordances, `tauri-plugin-dialog` wired in, `project_removed` canonical handler established) → canvas-005b (scan-folder flow + scan-roots management modals + cascade-confirm; new `Modal.svelte` primitive extracted; new `list_projects_by_scan_root` IPC wrapper). All four PASS first try. Backend tests 73 → 89; `pnpm check` 0/0/0 throughout (937 → 938 files). New dependencies: `tauri-plugin-dialog` (Cargo + npm) + `dialog:allow-open` capability. No new ADRs (all decisions sat inside ADR-003 + ADR-004 + ADR-005 + ADR-008 + ADR-013 + the existing styleguide token vocabulary). No bounces, no escalations, no concept candidates. **todo/, doing/, backlog/ now empty in every BC.** Orchestrator's INDEX.md / protocol.md bookkeeping is uncommitted on the working tree — a separate `chore(work)` commit folds it in (matches the prior session pattern). **One verifier note worth surfacing:** the `scan::tests::register_project_rejects_a_non_agentheim_folder_with_exact_error_string` test added in project-registry-003 is tautological (asserts a hardcoded constant against itself rather than exercising the IPC handler) — production code at `lib.rs` correctly returns the exact string `"not an Agentheim project"`, but the regression contract is unenforced by that test. Worth strengthening when next touched.
+
+---
+
+## 2026-05-15 12:55 -- Task verified and completed: canvas-005b-scan-flow-and-scan-root-management - Scan flow + scan-root management
+
+**Type:** Work / Task completion
+**Task:** canvas-005b-scan-flow-and-scan-root-management - Scan flow + scan-root management
+**Summary:** Landed the scan-folder flow and the scan-roots management surface as three HTML-overlay modals built on a new generic `Modal.svelte` primitive (header/body/footer slots + backdrop + Escape dismissal). Scan-folder: folder picker → `addScanRoot` → discovery checklist modal (already-imported rows at 60% opacity + pre-checked-disabled + "imported" badge; togglable rows checkbox-default-unchecked; Select-all/Select-none gated on togglable rows; "Import selected" disabled when zero NEW picks; rescan-flagged header with " (rescan)" suffix; empty-candidates state with single "OK"). Manage-scan-roots: hidden when zero roots, refreshed after add/remove; list rows show path, child-project count, Rescan, Remove. Cascade-confirm: stacks atop manage modal, names path + N child count + "Tile state for those projects will not be retained." Per-row child count via new thin `#[tauri::command] list_projects_by_scan_root` wrapper. `project_removed` handler from canvas-005a reused without duplication; cascade fan-out drops N tiles cleanly. canvas-006's `liveAddChain` is the smoke-test fix that makes the N-arrival import path correct.
+**Verification:** PASS (iteration 1)
+**Commit:** 4979e27
+**Files changed:** 7 (Canvas.svelte, new Modal.svelte, ipc.ts, types.ts, src-tauri/lib.rs [+17 lines — one IPC wrapper], canvas README, moved task)
+**Tests added:** 0 — no frontend test runner; `pnpm check` 0/0/0 (938 files) + `cargo check` clean. Backend test count unchanged (89/89 from project-registry-003).
+**ADRs written:** none — modal patterns are component-internal under ADR-003 (PixiJS + HTML overlays) and the design-system tokens; cascade semantics realise ADR-013; retention boundary documented in confirm dialog body per ADR-005.
+**Worth noting:** Modal extraction triggered by three consumers in one task (checklist + manage + cascade-confirm). A styleguide entry codifying the Modal pattern would be the right next step; not added in this task (cross-BC into design-system) and not promoted to backlog (the next design-system pass can pick it up from this task's done/ file).
+
+---
+
+## 2026-05-15 12:35 -- Batch started: [canvas-005b-scan-flow-and-scan-root-management]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-005b-scan-flow-and-scan-root-management - Scan flow + scan-root management
+**Parallel:** no (1 worker — final wave; all deps satisfied [canvas-006 ✓ project-registry-003 ✓ canvas-005a ✓ design-system-001 ✓])
+
+---
+
+## 2026-05-15 12:30 -- Task verified and completed: canvas-005a-single-shot-discovery-affordances - Single-shot Add / Remove / Missing
+
+**Type:** Work / Task completion
+**Task:** canvas-005a-single-shot-discovery-affordances - Single-shot Add / Remove / Missing
+**Summary:** Landed ADR-005's three single-shot discovery affordances on the canvas — right-click empty canvas opens an HTML-overlay context menu with "Add project…" (Tauri folder picker via `@tauri-apps/plugin-dialog` → `registerProject` → live-add via existing `ProjectAdded` chain, error toast surfaces the exact `"not an Agentheim project"` rejection for 3s, cancelled picker is silent); right-click on a tile opens a context menu with "Remove project" (no confirmation step, ADR-005's 30-day undo is the safety net via `removeProject` → `ProjectRemoved` → canonical handler drops tile + clears tile-position cache + removes from `tile-layout`); missing tiles render at 50% opacity with `statusMissing` magenta border and a `✕` corner glyph at `spacing.lg` in `statusMissing` colour (no BC nodes drawn — `bcs: []` from the backend handles this). New HTML-overlay context-menu + error-toast patterns inlined under ADR-003 + design tokens; the `project_removed` handler is wired as THE canonical listener and 005b will reuse it without duplication. canvas-006's `liveAddChain` contract preserved.
+**Verification:** PASS (iteration 1)
+**Commit:** 8ff6a1e
+**Files changed:** 10 (Canvas.svelte, ipc.ts, Cargo.toml, Cargo.lock, capabilities/default.json, src-tauri/lib.rs [+5 lines — plugin init only], package.json, pnpm-lock.yaml, canvas README, moved task)
+**Tests added:** 0 — no frontend test runner; `pnpm check` 0/0/0 (937 files) + `cargo check` clean. Same posture as canvas-001 / canvas-002 / canvas-006.
+**ADRs written:** none — context-menu and toast patterns are component-internal under ADR-003 (PixiJS + HTML overlays) and the design-system tokens. The task explicitly stipulates this; a future styleguide entry can codify the patterns if they proliferate (canvas-005b will exercise them, design-system follow-up can decide).
+**New dependencies:** `tauri-plugin-dialog = "2"` (Cargo) + `@tauri-apps/plugin-dialog ^2.7.1` (npm) + `dialog:allow-open` capability. First consumer of the folder picker in this codebase.
+
+---
+
+## 2026-05-15 12:10 -- Batch started: [canvas-005a-single-shot-discovery-affordances]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-005a-single-shot-discovery-affordances - Single-shot Add / Remove / Missing
+**Parallel:** no (1 worker — canvas-005a unblocked by project-registry-003; 005b blocked on 005a so cannot run in parallel)
+
+---
+
+## 2026-05-15 12:05 -- Task verified and completed: project-registry-003-manual-add-remove-and-missing-projects - Manual add / remove / missing projects
+
+**Type:** Work / Task completion
+**Task:** project-registry-003-manual-add-remove-and-missing-projects - Manual add / remove / missing projects
+**Summary:** Landed the remaining half of ADR-005's IPC surface — `register_project` (canonicalise + `.agentheim/` validate + upsert with NULL `scan_root_id` + supervisor arm, exact `"not an Agentheim project"` reject string, idempotent on canonical path; revives soft-deleted rows clearing `deleted_at` and rearming the watcher while keeping the `tile_positions` row), `remove_project` (soft-delete via `projects.deleted_at`, watcher torn down, `ProjectRemoved` event), schema v2→v3 with `projects.deleted_at TEXT NULL` + 30-day startup GC sweep (`RETENTION_DAYS = 30` single edit point), `ProjectSnapshot.missing: bool` for registered-but-unwatched rows (no more silent skip in `list_projects` / `get_project`), `ProjectRemoved { project_id }` domain event fired by **both** single-remove **and** the `remove_scan_root` cascade (BEFORE supervisor.remove + db.remove_project per child). Frontend types mirror; `Canvas.svelte` got a 6-line `project_removed` no-op arm (visual treatment is canvas-005a).
+**Verification:** PASS (iteration 1)
+**Commit:** ebe2e48
+**Files changed:** 9 (db.rs, lib.rs, project.rs, events.rs, scan.rs, types.ts, Canvas.svelte, project-registry README, moved task)
+**Tests added:** 16 — `cargo test --lib` 89/89 (db::tests: v3 migration, deleted_at revival on both upsert paths, soft-delete preserves tile_positions, GC sweep with forged timestamps; project::tests: missing-snapshot builder + healthy carries missing=false; scan::tests: register_project + revive + remove_project + missing-on-`list_projects` + extended cascade test taps the bus to assert observed_removed order); `pnpm check` 0/0/0
+**ADRs written:** none — sits inside ADR-004 (schema) + ADR-005 (discovery + retention) + ADR-008 (watchers) + ADR-013 (cascade ordering)
+**Verifier note:** `scan::tests::register_project_rejects_a_non_agentheim_folder_with_exact_error_string` is tautological — asserts a hardcoded constant against itself rather than calling the IPC handler. Production reject path at `lib.rs` is correct (`return Err("not an Agentheim project".to_string())`), but the regression contract is unenforced by that test. Worth strengthening when next touched.
+
+---
+
+## 2026-05-15 11:45 -- Batch started: [project-registry-003-manual-add-remove-and-missing-projects]
+
+**Type:** Work / Batch start
+**Tasks:** project-registry-003-manual-add-remove-and-missing-projects - Manual add / remove / missing projects
+**Parallel:** no (1 worker — completes the ADR-005 backend surface; unblocks canvas-005a + 005b)
+
+---
+
+## 2026-05-15 11:40 -- Task verified and completed: canvas-006-live-add-race-on-concurrent-project-added - Live-add path races on concurrent `ProjectAdded` events
+
+**Type:** Work / Task completion
+**Task:** canvas-006-live-add-race-on-concurrent-project-added - Live-add path races on concurrent `ProjectAdded` events
+**Summary:** Serialised the canvas `project_added` → `addLiveProject` path through a single named promise chain (`liveAddChain` + `enqueueLiveAdd`); N back-to-back arrivals from `import_scanned_projects` now process strictly sequentially, so each tile lands at a distinct spiral slot in memory and in `tile_positions` instead of colliding to one. Post-await `findProject` re-check kept as defence in depth.
+**Verification:** PASS (iteration 1)
+**Commit:** f83222c
+**Files changed:** 2 (Canvas.svelte, canvas README — moved task file additionally)
+**Tests added:** 0 — no frontend test runner; `pnpm check` 0/0/0 (936 files) + structural inspection per task acceptance (same posture as canvas-001/canvas-002)
+**ADRs written:** none — serialisation primitive is component-internal (same reasoning canvas-002 used for state-shape); recorded in code comments + BC README
+
+---
+
+## 2026-05-15 11:30 -- Batch started: [canvas-006-live-add-race-on-concurrent-project-added]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-006-live-add-race-on-concurrent-project-added - Live-add path races on concurrent `ProjectAdded` events
+**Parallel:** no (1 worker — canvas-006 + project-registry-003 are both no-deps but share `src/lib/Canvas.svelte`; serialising. canvas-006 first because it removes a known race that 005b will hit on first run.)
+
+---
+
+## 2026-05-15 11:15 -- Model / Refined: canvas-005-project-discovery-affordances — split into 005a + 005b; spawned project-registry-003
+
+**Type:** Model / Refine
+**BC:** canvas (+ spawn into project-registry)
+**Status after:** todo (all three new tasks promoted)
+**Summary:** Refined the under-refined canvas-005 stub against the real backend, the styleguide, and ADRs 005/013. **Major finding:** ADR-005's discovery surface is only half-implemented at the IPC layer — `register_project(path)`, `remove_project(project_id)`, the "missing" tile state, and a `ProjectRemoved` event all need to ship before any UI can. `Db::upsert_project` + `Db::remove_project` exist but no IPC wraps them; `list_projects` silently skips unreadable rows; the existing `remove_scan_root` cascade fires no event and would leave stale tiles in the canvas forever. Decided with Marco: **spawn project-registry-003** as a hard backend prerequisite rather than punch through the BC seam from a canvas task. Locked the backend shape: soft-delete via `projects.deleted_at` (schema v2→v3) with 30-day startup GC sweep (faithful to ADR-005's stipulation); `ProjectSnapshot` gains `missing: bool` (single shape, one frontend code path); new `ProjectRemoved { project_id }` event fired by **both** `remove_project` AND the cascade in `remove_scan_root`; `register_project` rejects non-Agentheim folders with **exactly** `"not an Agentheim project"`. **Split canvas-005 into two tasks** along the interaction-surface axis: **005a** (single-shot Add / Remove / Missing — establishes the new right-click context-menu + error-toast patterns and the canonical `project_removed` handler) and **005b** (the scan flow + scan-root management — extends 005a's menu shell with two more items, ships the discovery checklist modal, the scan-roots management modal, and the cascade-remove confirmation; hard-`depends_on` canvas-006 because `import_scanned_projects`'s N-arrival case would otherwise re-demonstrate the live-add race). **Chrome decision:** right-click contextual menus, not toolbars or native menu bars — ambient, voice-first, zero resting chrome. **Three UX decisions:** (1) Remove-project skips a confirmation step, trusting ADR-005's 30-day re-add undo window; (2) missing tiles render as dim (50% opacity) + `statusMissing` magenta border + `✕` corner glyph; (3) already-imported checklist rows are visible-pre-ticked-disabled with an "imported" badge, maximising information at a tiny visual cost. Modal/menu patterns are net-new in this codebase — styling contracts inlined per task with existing `tokens.ts` / `--guppi-*` vocabulary; a follow-up design-system pass can codify "Menu" / "Modal" / "Toast" if patterns proliferate. No orchestrator round — all decisions resolvable from existing ADRs + styleguide + the Rust IPC surface, no architect/strategic-modeler/tactical-modeler delegation needed. Original `canvas-005-project-discovery-affordances.md` removed from `backlog/`; replaced by 005a + 005b + project-registry-003 in `todo/`.
+**Split into:** canvas-005a-single-shot-discovery-affordances, canvas-005b-scan-flow-and-scan-root-management
+**Spawned dependency:** project-registry-003-manual-add-remove-and-missing-projects (todo)
+**ADRs written:** none — implementation sits inside ADR-004 (schema) + ADR-005 (discovery model + retention stipulation) + ADR-013 (cascade ordering, now extended to fire `ProjectRemoved`) + ADR-003 (overlay-layer modals). The "soft-delete with 30-day sweep" is realisation of an ADR-005 stipulation, not a new decision; the right-click context-menu + modal patterns are component-internal pending proliferation. All recorded in the task Notes so the next refiner does not re-open these questions.
+
+---
+
+## 2026-05-15 10:45 -- Model / Captured: canvas-006-live-add-race-on-concurrent-project-added - Live-add path races on concurrent `ProjectAdded` events
+
+**Type:** Model / Capture
+**BC:** canvas
+**Filed to:** todo (direct — diagnosis is precise, scope is one file, acceptance criteria fall out of the diagnosis; no orchestrator round needed)
+**Summary:** Marco exercised `add_scan_root` + `import_scanned_projects` from devtools against `C:\src\heimeshoff`. Backend imported 5 projects + fired 5 `ProjectAdded` events correctly; canvas rendered only 1 new tile (+ seed). Root cause confirmed by reading `Canvas.svelte:523-537`: `addLiveProject` invocations from the `project_added` case are unserialised — concurrent closures all read the same `projects.length` at the spiral-index step (so all five auto-place at the same slot), `projects = [...projects, entry]` is a concurrent read-modify-write (so four entries are lost from the in-memory array), and `buildEntry` calls `saveTilePosition` before the append (so all five colliding positions are persisted to SQLite and will re-stack on restart). canvas-002's verifier missed this because its acceptance criteria probed only the seed-double-add idempotency case, never the N-concurrent-arrivals case that `import_scanned_projects` produces. Captured directly to `todo/` with concrete acceptance criteria covering the N-arrivals case (N tiles at distinct positions, N distinct `tile_positions` rows). DB cleanup of the already-colliding rows is **out of scope per Marco** — one-shot SQL outside Agentheim's flow, not a sweep/auto-repair. No ADR — serialisation primitive is component-internal (same reasoning canvas-002 used for state-shape).
+
+---
+
+## 2026-05-15 10:20 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 4 (first-try PASS: 4, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 4 (d594ad5 project-registry-001, bace9fd project-registry-002a, e690fd3 canvas-002, 5ad554a project-registry-002b)
+**Note:** Cleared the entire v1-completion chain — `project-registry-001` (multi-project snapshot model + WatcherSupervisor) unblocked the parallel pair `project-registry-002a` (scan roots + walker) and `canvas-002` (keyed-by-project_id Canvas restructure), which then unblocked `project-registry-002b` (import + cascade-deregister). All four passed verification first try. Backend test count 32 → 73; `pnpm check` 0/0/0 throughout. No new ADRs (all decisions sat inside existing ADR-013/008/005/004/003 envelopes). No bounces, no escalations, no concept candidates. `todo/`, `doing/`, `backlog/` now empty in every BC. Orchestrator's INDEX.md / protocol.md bookkeeping is uncommitted on the working tree — a separate `chore(work)` commit folds it in (matches the prior session pattern).
+
+---
+
+## 2026-05-15 10:15 -- Task verified and completed: project-registry-002b-import-and-cascade-deregister - Import scanned projects + cascade-deregister
+
+**Type:** Work / Task completion
+**Task:** project-registry-002b-import-and-cascade-deregister - Import scanned projects + cascade-deregister
+**Summary:** Landed the v1 mutation layer for the project registry — `import_scanned_projects` registers checklist picks with origin tracking and watcher arming, and `remove_scan_root` performs the app-driven cascade-deregister (`supervisor.remove` → `db.remove_project` per child → `delete_scan_root` last; `ON DELETE RESTRICT` is the checked invariant). Hard-delete; manually-added projects (NULL `scan_root_id`) are immune.
+**Verification:** PASS (iteration 1)
+**Commit:** 5ad554a
+**Files changed:** 6 (db.rs, lib.rs, scan.rs, supervisor.rs [+9 lines — dead_code allow removed], project-registry README, moved task)
+**Tests added:** 13 — `cargo test --lib` 73/73 (`db::tests` upsert_scanned_project_stamps_scan_root_id + idempotency + remove_project + RESTRICT-rejects-living-child + list_projects_by_scan_root; `scan::tests` import-registers-and-watches, rejects-out-of-set, cascade-drops-watchers-tiles-then-root, does-not-touch-manually-added)
+**ADRs written:** none — ADR-013 already specifies the cascade semantics; implementation is the realization
+
+---
+
+## 2026-05-15 10:00 -- Batch started: [project-registry-002b-import-and-cascade-deregister]
+
+**Type:** Work / Batch start
+**Tasks:** project-registry-002b-import-and-cascade-deregister - Import scanned projects + cascade-deregister
+**Parallel:** no (1 worker — final v1 chain task; depends on 001 + 002a, both done)
+
+---
+
+## 2026-05-15 09:55 -- Task verified and completed: canvas-002-render-multiple-project-tiles - Render multiple project tiles
+
+**Type:** Work / Task completion
+**Task:** canvas-002-render-multiple-project-tiles - Render multiple project tiles
+**Summary:** Restructured the canvas from a single-tile component to a keyed per-project collection — every registered project renders as its own tile with project-scoped node keys, a shared window-level drag controller, spiral auto-placement persisted on first sight, per-id event routing, live-add idempotency, and unioned zoom-to-fit bounds.
+**Verification:** PASS (iteration 1)
+**Commit:** e690fd3
+**Files changed:** 4 (Canvas.svelte, new tile-layout.ts, canvas README, moved task)
+**Tests added:** 0 — no frontend test runner; `pnpm check` (936 files / 0 errors / 0 warnings) + pure-module extraction `tile-layout.ts` (same verification strategy as `snapshot-patch.ts` from canvas-001) per task notes
+**ADRs written:** none — implementation sits inside ADR-003 (PixiJS camera) + ADR-004 (tile-position persistence); state-shape and shared-drag-controller pattern are component-internal, recorded in code comments
+
+---
+
+## 2026-05-15 09:50 -- Task verified and completed: project-registry-002a-scan-roots-and-walk - Scan roots + folder discovery walk
+
+**Type:** Work / Task completion
+**Task:** project-registry-002a-scan-roots-and-walk - Scan roots + folder discovery walk
+**Summary:** Landed the ADR-013 scan-root storage + discovery foundation — schema v1→v2 migration (new `scan_roots` table + nullable `projects.scan_root_id` FK with `ON DELETE RESTRICT`), new `scan.rs` module with depth-capped, junk-pruned, canonicalised walker that returns a `ScanCandidate` checklist, scan-root CRUD on `Db`, and three new IPC commands (`add_scan_root` / `rescan_scan_root` / `list_scan_roots`).
+**Verification:** PASS (iteration 1)
+**Commit:** bace9fd
+**Files changed:** 5 (db.rs, new scan.rs, lib.rs, project-registry README, moved task)
+**Tests added:** 19 — `cargo test --lib` 60/60 green (`db::tests::fresh_db_is_at_schema_version_two`, `v1_db_migrates_to_v2_without_data_loss`, `scan_roots_persist_across_db_handle_close_and_reopen`, `empty_scan_root_is_still_persisted_and_rescannable` + the `scan::tests` battery covering pruning, depth-cap, no-descent-into-identified-project, `already_imported`, UNC canonicalisation, composition)
+**ADRs written:** none — ADR-013 already covers this surface; the `\\?\` UNC-strip detail in `canonicalize_root` recorded inline in code
+
+---
+
+## 2026-05-15 09:25 -- Batch started: [project-registry-002a-scan-roots-and-walk, canvas-002-render-multiple-project-tiles]
+
+**Type:** Work / Batch start
+**Tasks:** project-registry-002a-scan-roots-and-walk - Scan roots + folder discovery walk; canvas-002-render-multiple-project-tiles - Render multiple project tiles
+**Parallel:** yes (2 workers — disjoint surfaces: 002a is Rust-only, canvas-002 is frontend-only; different BC READMEs)
+
+---
+
+## 2026-05-15 09:20 -- Task verified and completed: project-registry-001-multi-project-snapshot-model - Multi-project snapshot model
+
+**Type:** Work / Task completion
+**Task:** project-registry-001-multi-project-snapshot-model - Multi-project snapshot model
+**Summary:** Generalised the path-implicit single-project core into a multi-project model — every per-project IPC command takes `project_id` explicitly, `list_projects()` + `get_project(project_id)` serve the canvas, and the new `WatcherSupervisor` (`Arc<Mutex>` map) owns the per-project debounced watcher map publishing `ProjectAdded` on add. `AppState` dropped `project_id`/`project_path` fields.
+**Verification:** PASS (iteration 1)
+**Commit:** d594ad5
+**Files changed:** 9 (db.rs, project.rs, supervisor.rs [new], lib.rs, Canvas.svelte, ipc.ts, types.ts, project-registry README, moved task)
+**Tests added:** 10 (cargo test --lib 41/41 green; `pnpm check` clean)
+**ADRs written:** none — ADR-008's "downstream" supervisor implementation cashed in; the `Arc<Mutex>` vs Tokio-task simplification recorded in source doc + ADR-008 reconciliation note (already amended)
+
+---
+
+## 2026-05-15 09:00 -- Batch started: [project-registry-001-multi-project-snapshot-model]
+
+**Type:** Work / Batch start
+**Tasks:** project-registry-001-multi-project-snapshot-model - Multi-project snapshot model
+**Parallel:** no (1 worker — root of the v1 chain; 002a/002b/canvas-002 all blocked on it)
+
+---
+
 ## 2026-05-15 00:40 -- Model / Refined: canvas-002-render-multiple-project-tiles - Render multiple project tiles
 
 **Type:** Model / Refine

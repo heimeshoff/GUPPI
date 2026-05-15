@@ -3,6 +3,7 @@ id: project-registry-002b-import-and-cascade-deregister
 type: feature
 status: done
 completed: 2026-05-15
+commit: 5ad554a
 scope: bc
 depends_on:
   - project-registry-002a-scan-roots-and-walk

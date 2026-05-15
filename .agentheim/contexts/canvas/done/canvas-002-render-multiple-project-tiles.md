@@ -3,6 +3,7 @@ id: canvas-002-render-multiple-project-tiles
 type: feature
 status: done
 completed: 2026-05-15
+commit: e690fd3
 scope: bc
 depends_on:
   - project-registry-001-multi-project-snapshot-model

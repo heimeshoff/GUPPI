@@ -3,6 +3,7 @@ id: canvas-005b-scan-flow-and-scan-root-management
 type: feature
 status: done
 completed: 2026-05-15
+commit: 4979e27
 scope: bc
 depends_on:
   - canvas-006-live-add-race-on-concurrent-project-added

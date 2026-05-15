@@ -3,6 +3,7 @@ id: canvas-006-live-add-race-on-concurrent-project-added
 type: bug
 status: done
 completed: 2026-05-15
+commit: f83222c
 scope: bc
 depends_on: []
 related_adrs:

@@ -3,6 +3,7 @@ id: project-registry-002a-scan-roots-and-walk
 type: feature
 status: done
 completed: 2026-05-15
+commit: bace9fd
 scope: bc
 depends_on:
   - project-registry-001-multi-project-snapshot-model

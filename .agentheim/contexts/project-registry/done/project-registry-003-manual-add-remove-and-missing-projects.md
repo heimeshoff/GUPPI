@@ -3,6 +3,7 @@ id: project-registry-003-manual-add-remove-and-missing-projects
 type: feature
 status: done
 completed: 2026-05-15
+commit: ebe2e48
 scope: bc
 depends_on: []
 related_adrs:

@@ -3,6 +3,7 @@ id: canvas-005a-single-shot-discovery-affordances
 type: feature
 status: done
 completed: 2026-05-15
+commit: 8ff6a1e
 scope: bc
 depends_on:
   - project-registry-003-manual-add-remove-and-missing-projects
