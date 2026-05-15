@@ -60,8 +60,16 @@ surface alongside `snapshot-patch.ts`); each auto-placed position is persisted
 immediately, so a never-dragged tile lands in the same spot across restarts.
 A `project_added` for a new id triggers `get_project` + auto-place + persist +
 render with no manual refresh; a `project_added` for an already-rendered id
-(the startup seed double-add) is a no-op. Zoom-to-fit (`f`) frames the union
-of every tile and its BCs.
+(the startup seed double-add) is a no-op. Live-adds are **serialised through a
+single promise chain** (`canvas-006`) so a burst of N `project_added` events —
+the normal shape of `import_scanned_projects` announcing N picks back-to-back
+on the event bus — processes strictly sequentially. Without that chain, the
+concurrent closures all read the same `projects.length` for the spiral-index
+step and the `projects = [...projects, entry]` reassignment loses every loser
+to last-write-wins; the colliding `saveTilePosition` rows also reach SQLite
+before the array catches up. Treat "N concurrent arrivals" as the default test
+stance for any future change to this handler, not the single-arrival case.
+Zoom-to-fit (`f`) frames the union of every tile and its BCs.
 
 ## Upstream dependencies
 

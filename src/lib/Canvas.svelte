@@ -331,11 +331,16 @@
 						// Live-add path: the registry just registered (or the
 						// startup seed announced) a project. If we already
 						// have an entry with this id, this is the seed
-						// double-add — no-op. Otherwise fetch its snapshot,
-						// pick the next spiral slot, persist that slot, and
-						// add it to the collection.
+						// double-add — no-op. Otherwise enqueue the live-add
+						// on the serialisation chain (canvas-006): bursts of
+						// `project_added` (e.g. from `import_scanned_projects`
+						// announcing N picks back-to-back on the event bus)
+						// must process strictly sequentially, otherwise the
+						// concurrent closures all read the same `projects.length`
+						// at the spiral-index step and the `projects = [...]`
+						// reassignment loses entries to last-write-wins.
 						if (findProject(event.project_id)) return;
-						void addLiveProject(event.project_id);
+						enqueueLiveAdd(event.project_id);
 						return;
 					case 'project_missing':
 						// Reserved for canvas-005 (missing-tile state). The
@@ -516,10 +521,40 @@
 			}
 		}
 
+		// --- live-add serialisation chain (canvas-006) ----------------
+		// `addLiveProject` reads `projects.length` and then performs a
+		// read-modify-write of `projects` across an `await`. If two
+		// `project_added` events fire back-to-back (the normal shape of
+		// `import_scanned_projects`'s announce phase), unserialised
+		// invocations collide: all closures read the same `length` for the
+		// spiral index, and the array reassignment is last-write-wins so
+		// every loser silently drops its entry — while its
+		// `saveTilePosition` row is already persisted at the colliding
+		// position. The fix is structural: enqueue every live-add onto a
+		// single promise chain so each `addLiveProject` runs only after
+		// the previous one has settled. A failing step `catch`-es so a
+		// single broken arrival cannot wedge the chain for the rest of
+		// the burst.
+		let liveAddChain: Promise<void> = Promise.resolve();
+		function enqueueLiveAdd(id: number) {
+			liveAddChain = liveAddChain
+				.then(() => addLiveProject(id))
+				.catch((e) => {
+					logToCore('error', `live-add chain step failed for ${id}: ${e}`);
+				});
+		}
+
 		/** Live-add path: a `project_added` arrived for a project not already
 		 * in the collection. Fetch its snapshot, auto-place it at the next
 		 * spiral slot, persist that slot, and append. The next ticker frame
-		 * draws it — no manual refresh button. */
+		 * draws it — no manual refresh button.
+		 *
+		 * Invoked only via `enqueueLiveAdd` so calls are strictly serialised
+		 * (canvas-006). The post-await `findProject` re-check below is now
+		 * redundant under strict serialisation but is kept as defence in
+		 * depth — the cost is a single Array#find and it preserves
+		 * idempotency if the serialisation contract is ever broken
+		 * upstream. */
 		async function addLiveProject(id: number) {
 			try {
 				// Re-check now that we are async: a parallel arrival or the
