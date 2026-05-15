@@ -49,12 +49,20 @@ pub struct BcSnapshot {
 /// it on the snapshot is the load-bearing change for `canvas-002`: the
 /// canvas needs the id to key its per-project state and to route fine-grained
 /// domain events back to the right tile (`project-registry-001`).
+///
+/// `missing` is `true` for a registry row whose `.agentheim/` directory is
+/// gone on disk — the ADR-005 **registered-but-unwatched** state
+/// (`project-registry-003`). Such snapshots always carry `bcs: []`, the
+/// `name` falls back to the folder name, and `path` is the canonical path the
+/// row was registered under. The canvas renders these in its missing-tile
+/// visual (canvas-005a) rather than dropping the tile.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProjectSnapshot {
     pub id: i64,
     pub name: String,
     pub path: String,
     pub bcs: Vec<BcSnapshot>,
+    pub missing: bool,
 }
 
 /// Read the Agentheim project rooted at `project_path` into a snapshot.
@@ -80,7 +88,32 @@ pub fn get_project(project_id: i64, project_path: &Path) -> Result<ProjectSnapsh
         name,
         path: project_path.to_string_lossy().into_owned(),
         bcs,
+        missing: false,
     })
+}
+
+/// Build a synthetic `ProjectSnapshot` for the ADR-005 "missing" state — a
+/// registry row whose `.agentheim/` directory has been removed on disk. The
+/// snapshot carries `missing: true`, `bcs: []`, and a `name` that falls back
+/// to the folder name (vision.md cannot be read; no `.agentheim/` exists).
+/// `path` is the canonical path the registry knows the project by.
+///
+/// Used by `list_projects` and `get_project` in `lib.rs` when
+/// `project::get_project` returns `NotAnAgentheimProject`: rather than silently
+/// skipping or surfacing an error, the IPC layer hands the canvas a missing
+/// snapshot so the tile can render in its missing visual (canvas-005a).
+pub fn missing_snapshot(project_id: i64, project_path: &Path) -> ProjectSnapshot {
+    let name = project_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Unnamed project".to_string());
+    ProjectSnapshot {
+        id: project_id,
+        name,
+        path: project_path.to_string_lossy().into_owned(),
+        bcs: Vec::new(),
+        missing: true,
+    }
 }
 
 /// The project name is the first line of `.agentheim/vision.md`, with a
@@ -255,6 +288,44 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn healthy_get_project_carries_missing_false() {
+        // `project-registry-003`: every present-project snapshot must set
+        // `missing: false` so the canvas's missing-tile visual (canvas-005a)
+        // does not fire spuriously.
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Healthy\n").unwrap();
+        let snap = get_project(1, &dir).unwrap();
+        assert!(!snap.missing, "healthy project must have missing = false");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_snapshot_builds_a_missing_true_snapshot_for_a_registered_path() {
+        // `project-registry-003`: when `.agentheim/` is gone the IPC layer
+        // hands the canvas a synthetic snapshot instead of skipping the row.
+        // The shape: missing = true, bcs empty, name = folder name, path
+        // preserved.
+        let dir = std::env::temp_dir().join(format!(
+            "guppi-missing-snap-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        // The folder need not exist for the helper to work — it operates on
+        // the path string + registry id alone.
+        let snap = missing_snapshot(123, &dir);
+        assert!(snap.missing, "missing snapshot must have missing = true");
+        assert_eq!(snap.id, 123);
+        assert!(snap.bcs.is_empty(), "missing snapshot must have no BCs");
+        // The folder name is reflected in `name`; the full path in `path`.
+        let folder = dir.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(snap.name, folder);
+        assert_eq!(snap.path, dir.to_string_lossy());
     }
 
     #[test]

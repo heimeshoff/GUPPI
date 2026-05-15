@@ -22,12 +22,21 @@ export interface BcSnapshot {
  * ADR-005). Carrying it on the snapshot is the load-bearing change for
  * `canvas-002`: the canvas keys per-project state on it, and uses it to
  * route fine-grained domain events back to the right tile
- * (`project-registry-001`). */
+ * (`project-registry-001`).
+ *
+ * `missing` is `true` for a registry row whose `.agentheim/` directory is
+ * gone on disk — the ADR-005 **registered-but-unwatched** state
+ * (`project-registry-003`). Such snapshots always carry `bcs: []`, with the
+ * `name` falling back to the folder name. canvas-005a is the visual
+ * treatment (dim + magenta border + glyph); for the project-registry-003
+ * scope the canvas only needs to *tolerate* the new field without dropping
+ * the tile. */
 export interface ProjectSnapshot {
 	id: number;
 	name: string;
 	path: string;
 	bcs: BcSnapshot[];
+	missing: boolean;
 }
 
 /** A 2D position in world coordinates. */
@@ -60,6 +69,7 @@ export type AgentheimState = 'backlog' | 'todo' | 'doing' | 'done';
 export type DomainEvent =
 	| { kind: 'project_added'; project_id: number; path: string }
 	| { kind: 'project_missing'; project_id: number }
+	| { kind: 'project_removed'; project_id: number }
 	| {
 			kind: 'task_moved';
 			project_id: number;

@@ -29,6 +29,13 @@ pub enum DomainEvent {
     // Project registry (ADR-005)
     ProjectAdded { project_id: i64, path: String },
     ProjectMissing { project_id: i64 },
+    /// A registered project just left the registry — either via a single
+    /// "Remove project" (soft-delete, `project-registry-003`) or via a
+    /// `remove_scan_root` cascade (`project-registry-002b` / ADR-013, hard
+    /// delete). The frontend drops the matching tile on receipt; the registry
+    /// has already torn down the watcher and removed/soft-deleted the row by
+    /// the time this fires.
+    ProjectRemoved { project_id: i64 },
 
     // Filesystem observation (ADR-008 / ADR-009) — the fine-grained taxonomy.
     // `infrastructure-014` makes the single-project watcher correlate raw

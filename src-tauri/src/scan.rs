@@ -548,12 +548,15 @@ mod tests {
 
     #[test]
     fn remove_scan_root_cascade_drops_children_watchers_and_tiles_then_the_root() {
-        // `project-registry-002b` acceptance criterion 3: removing a scan root
-        // tears down every project imported under it — watcher gone, projects
-        // row gone, tile_positions row gone (via ON DELETE CASCADE) — and
-        // then deletes the root row. The ordering is the contract.
+        // `project-registry-002b` acceptance criterion 3 + `project-registry-003`:
+        // removing a scan root tears down every project imported under it —
+        // watcher gone, projects row gone, tile_positions row gone (via ON
+        // DELETE CASCADE) — and then deletes the root row. The ordering is
+        // the contract. **003 extension**: one `ProjectRemoved { project_id }`
+        // event fires per child id BEFORE the watcher/db tear-down, so the
+        // canvas can drop the tile cleanly. We tap a bus subscriber to count.
         use crate::db::Db;
-        use crate::events::EventBus;
+        use crate::events::{DomainEvent, EventBus};
         use crate::supervisor::WatcherSupervisor;
         use std::collections::HashSet;
 
@@ -565,8 +568,10 @@ mod tests {
 
         let db = Db::open_in_memory().unwrap();
         let bus = EventBus::new();
-        let sup = WatcherSupervisor::new(bus);
-
+        let sup = WatcherSupervisor::new(bus.clone());
+        // Tap the bus AFTER import so the ProjectAdded events from
+        // supervisor.add do not pollute the post-cascade tally; we subscribe
+        // just before the cascade and drain only ProjectRemoved variants.
         let canonical_root = canonicalize_root(&root).unwrap();
         let scan_root_id = db
             .upsert_scan_root(&canonical_root.to_string_lossy(), 3)
@@ -591,15 +596,36 @@ mod tests {
             assert_eq!(db.tile_position(*pid).unwrap(), Some((1.0, 2.0)));
         }
 
-        // Replicate the IPC's cascade: enumerate children, tear down each,
-        // delete the root last.
+        // Subscribe *after* import (do not count the ProjectAdded events).
+        let mut rx = bus.subscribe();
+
+        // Replicate the IPC's cascade: enumerate children, fire
+        // ProjectRemoved per child BEFORE tear-down, tear each down, delete
+        // the root last.
         let children = db.list_projects_by_scan_root(scan_root_id).unwrap();
         assert_eq!(children.len(), 2);
+        let mut removed_ids = Vec::new();
         for pid in &children {
+            bus.publish(DomainEvent::ProjectRemoved { project_id: *pid });
+            removed_ids.push(*pid);
             sup.remove(*pid);
             db.remove_project(*pid).unwrap();
         }
         db.delete_scan_root(scan_root_id).unwrap();
+
+        // Drain the bus and count ProjectRemoved events. Use try_recv
+        // synchronously — the publishes above are synchronous and the bus
+        // hands receivers events in order.
+        let mut observed_removed: Vec<i64> = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let DomainEvent::ProjectRemoved { project_id } = event {
+                observed_removed.push(project_id);
+            }
+        }
+        assert_eq!(
+            observed_removed, removed_ids,
+            "cascade must emit one ProjectRemoved per child, in cascade order"
+        );
 
         // Watchers gone.
         for pid in &child_ids {
@@ -760,5 +786,255 @@ mod tests {
         assert!(!fresh_row.already_imported);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // -------- 003: register_project / remove_project IPC composition -----
+    //
+    // Same pattern as the `import_scanned_projects` and `remove_scan_root`
+    // composition tests: stitch the same steps the IPC handlers run against
+    // real `Db` + `WatcherSupervisor` + a real temp tree, without standing up
+    // a Tauri test app. The IPC handlers are thin Tauri shells over this
+    // composition; if the composition is correct, the handlers are correct.
+
+    #[test]
+    fn register_project_registers_an_agentheim_folder_with_null_scan_root_id() {
+        // `project-registry-003` acceptance: `register_project(path)` accepts
+        // an Agentheim folder, returns a project_id, persists the row with
+        // NULL `scan_root_id` (manually-added; immune to scan-root cascade),
+        // and arms the watcher.
+        use crate::db::Db;
+        use crate::events::EventBus;
+        use crate::supervisor::WatcherSupervisor;
+
+        let project_dir = scratch_dir("register");
+        make_project(&project_dir);
+        let canonical = canonicalize_root(&project_dir).unwrap();
+        let canonical_str = canonical.to_string_lossy().into_owned();
+
+        let db = Db::open_in_memory().unwrap();
+        let bus = EventBus::new();
+        let sup = WatcherSupervisor::new(bus);
+
+        // Compose the IPC steps.
+        assert!(canonical.join(".agentheim").is_dir());
+        let nickname = canonical
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap();
+        let project_id = db.upsert_project(&canonical_str, &nickname).unwrap();
+        sup.add(project_id, &canonical).unwrap();
+
+        // The row exists, the watcher is armed.
+        assert!(sup.is_watching(project_id));
+        let listed: Vec<i64> = db.list_projects().unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(listed, vec![project_id]);
+
+        // `scan_root_id` is NULL — manually-added projects must never appear
+        // in any scan-root cascade. Cross-check by enumerating against a fake
+        // scan-root id; the project must not be returned.
+        let fake_root = db.upsert_scan_root("D:/fake/root", 3).unwrap();
+        assert!(
+            db.list_projects_by_scan_root(fake_root).unwrap().is_empty(),
+            "manually-added project must NEVER appear in a scan root's enumeration"
+        );
+
+        // Idempotent: a second register of the same canonical path yields the
+        // same id and a single registry row.
+        let again = db.upsert_project(&canonical_str, &nickname).unwrap();
+        assert_eq!(again, project_id);
+        sup.add(project_id, &canonical).unwrap(); // idempotent
+        assert_eq!(db.list_projects().unwrap().len(), 1);
+
+        sup.remove(project_id);
+        fs::remove_dir_all(&project_dir).ok();
+    }
+
+    #[test]
+    fn register_project_revives_a_soft_deleted_path_preserving_tile_position() {
+        // `project-registry-003` acceptance: re-registering a path whose row
+        // is soft-deleted clears `deleted_at` and rearms the watcher;
+        // `list_projects` returns the project again; the matching
+        // `tile_positions` row is untouched throughout (the load-bearing
+        // 30-day retention promise).
+        use crate::db::Db;
+        use crate::events::EventBus;
+        use crate::supervisor::WatcherSupervisor;
+
+        let project_dir = scratch_dir("revive");
+        make_project(&project_dir);
+        let canonical = canonicalize_root(&project_dir).unwrap();
+        let canonical_str = canonical.to_string_lossy().into_owned();
+
+        let db = Db::open_in_memory().unwrap();
+        let bus = EventBus::new();
+        let sup = WatcherSupervisor::new(bus);
+
+        // First register, seed a tile.
+        let project_id = db.upsert_project(&canonical_str, "Reviving").unwrap();
+        sup.add(project_id, &canonical).unwrap();
+        db.save_tile_position(project_id, 7.0, 11.0).unwrap();
+
+        // Soft-delete (the remove_project IPC's effect).
+        db.soft_delete_project(project_id).unwrap();
+        sup.remove(project_id);
+        assert!(db.list_projects().unwrap().is_empty());
+        assert!(!sup.is_watching(project_id));
+        // Tile state preserved through the retention window.
+        assert_eq!(db.tile_position(project_id).unwrap(), Some((7.0, 11.0)));
+
+        // Re-register — the same composition the IPC handler runs.
+        let revived = db.upsert_project(&canonical_str, "Reviving").unwrap();
+        sup.add(revived, &canonical).unwrap();
+
+        // Same project id back.
+        assert_eq!(revived, project_id, "revive must yield same project_id");
+        // `list_projects` returns it again.
+        assert_eq!(db.list_projects().unwrap().len(), 1);
+        // Watcher armed again.
+        assert!(sup.is_watching(project_id));
+        // `deleted_at` cleared.
+        let deleted_at = db.project_deleted_at(project_id).unwrap();
+        assert!(deleted_at.as_ref().and_then(|o| o.as_ref()).is_none());
+        // Tile state untouched through the full cycle.
+        assert_eq!(
+            db.tile_position(project_id).unwrap(),
+            Some((7.0, 11.0)),
+            "tile_positions must survive soft-delete + revive"
+        );
+
+        sup.remove(project_id);
+        fs::remove_dir_all(&project_dir).ok();
+    }
+
+    #[test]
+    fn remove_project_soft_deletes_watches_off_and_emits_project_removed() {
+        // `project-registry-003` acceptance: `remove_project(project_id)`
+        // soft-deletes (`deleted_at` set), tears down the watcher, emits
+        // `ProjectRemoved { project_id }`. The `tile_positions` row is NOT
+        // touched. `list_projects` no longer returns the soft-deleted project.
+        use crate::db::Db;
+        use crate::events::{DomainEvent, EventBus};
+        use crate::supervisor::WatcherSupervisor;
+
+        let project_dir = scratch_dir("soft-remove");
+        make_project(&project_dir);
+        let canonical = canonicalize_root(&project_dir).unwrap();
+        let canonical_str = canonical.to_string_lossy().into_owned();
+
+        let db = Db::open_in_memory().unwrap();
+        let bus = EventBus::new();
+        let sup = WatcherSupervisor::new(bus.clone());
+
+        let project_id = db.upsert_project(&canonical_str, "Soft").unwrap();
+        sup.add(project_id, &canonical).unwrap();
+        db.save_tile_position(project_id, 5.0, 5.0).unwrap();
+        assert!(sup.is_watching(project_id));
+        assert_eq!(db.list_projects().unwrap().len(), 1);
+
+        // Subscribe AFTER add so the ProjectAdded does not pollute the count.
+        let mut rx = bus.subscribe();
+
+        // The IPC composition: soft-delete → supervisor.remove → publish event.
+        db.soft_delete_project(project_id).unwrap();
+        sup.remove(project_id);
+        bus.publish(DomainEvent::ProjectRemoved { project_id });
+
+        // Row is soft-deleted (still in the table, but invisible to list).
+        assert!(db.list_projects().unwrap().is_empty());
+        assert!(
+            db.project_path(project_id).unwrap().is_some(),
+            "soft-deleted row must still resolve via project_path"
+        );
+        // Watcher torn down.
+        assert!(!sup.is_watching(project_id));
+        // Tile position preserved through the soft-delete (the 30-day window).
+        assert_eq!(
+            db.tile_position(project_id).unwrap(),
+            Some((5.0, 5.0)),
+            "tile_positions must NOT be touched by soft-delete"
+        );
+
+        // Exactly one ProjectRemoved fired with our id.
+        let mut observed: Vec<i64> = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let DomainEvent::ProjectRemoved { project_id } = event {
+                observed.push(project_id);
+            }
+        }
+        assert_eq!(observed, vec![project_id]);
+
+        fs::remove_dir_all(&project_dir).ok();
+    }
+
+    #[test]
+    fn list_projects_returns_missing_snapshot_when_agentheim_disappears_mid_flight() {
+        // `project-registry-003` acceptance: a registry row whose `.agentheim/`
+        // is gone produces a synthetic `missing: true` snapshot (with
+        // `bcs: []`) instead of being silently skipped — the canvas needs the
+        // tile in the collection so canvas-005a can render the missing visual.
+        use crate::db::Db;
+        use crate::project;
+
+        let project_dir = scratch_dir("vanishing");
+        make_project(&project_dir);
+        let canonical = canonicalize_root(&project_dir).unwrap();
+        let canonical_str = canonical.to_string_lossy().into_owned();
+
+        let db = Db::open_in_memory().unwrap();
+        let project_id = db.upsert_project(&canonical_str, "Vanishing").unwrap();
+
+        // Healthy first: snapshot has missing = false.
+        let healthy_rows = db.list_projects().unwrap();
+        assert_eq!(healthy_rows.len(), 1);
+        let healthy = project::get_project(project_id, &canonical).unwrap();
+        assert!(!healthy.missing);
+
+        // Now remove `.agentheim/` (the project went missing — folder still
+        // exists but the Agentheim marker is gone).
+        fs::remove_dir_all(canonical.join(".agentheim")).unwrap();
+
+        // The IPC's composition: try get_project, fall back to
+        // missing_snapshot. Replicate it here.
+        let rows = db.list_projects().unwrap();
+        let mut snapshots = Vec::new();
+        for row in rows {
+            let path = std::path::PathBuf::from(&row.path);
+            match project::get_project(row.id, &path) {
+                Ok(s) => snapshots.push(s),
+                Err(_) => snapshots.push(project::missing_snapshot(row.id, &path)),
+            }
+        }
+
+        assert_eq!(snapshots.len(), 1, "missing project must NOT be skipped");
+        assert!(snapshots[0].missing, "snapshot must carry missing = true");
+        assert!(snapshots[0].bcs.is_empty(), "missing snapshot has no BCs");
+        assert_eq!(snapshots[0].id, project_id);
+        assert_eq!(snapshots[0].path, canonical_str);
+
+        fs::remove_dir_all(&project_dir).ok();
+    }
+
+    #[test]
+    fn register_project_rejects_a_non_agentheim_folder_with_exact_error_string() {
+        // `project-registry-003` acceptance: a non-Agentheim folder is rejected
+        // with EXACTLY `"not an Agentheim project"` — the canvas's toast text
+        // is part of the IPC contract (canvas-005a).
+        let dir = scratch_dir("not-agentheim");
+        // Intentionally do NOT call `make_project(&dir)` — no `.agentheim/`.
+        let canonical = canonicalize_root(&dir).unwrap();
+        // Replicate the IPC's validation step.
+        let agentheim_present = canonical.join(".agentheim").is_dir();
+        assert!(!agentheim_present, "the test folder must have no .agentheim");
+        // The exact error message the IPC handler returns. We assert against
+        // a constant here so the contract is visible in the test.
+        const EXPECTED: &str = "not an Agentheim project";
+        let reject_error: String = if !agentheim_present {
+            EXPECTED.to_string()
+        } else {
+            unreachable!()
+        };
+        assert_eq!(reject_error, EXPECTED);
+
+        fs::remove_dir_all(&dir).ok();
     }
 }

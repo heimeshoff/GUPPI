@@ -347,6 +347,12 @@
 						// canvas does not break when this fires; it renders
 						// nothing different.
 						return;
+					case 'project_removed':
+						// `project-registry-003` ships the event; canvas-005b
+						// ships the tile-drop behaviour (with the right-click
+						// "Remove project" affordance). For this task we only
+						// tolerate the event — no crash, no model change yet.
+						return;
 					case 'resync_required': {
 						// The bridge lagged and lost events it cannot
 						// reconstruct — the one full re-fetch path (ADR-009).

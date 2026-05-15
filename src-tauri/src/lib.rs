@@ -77,10 +77,18 @@ struct AppState {
 }
 
 /// IPC command — read every registered project into snapshots
-/// (`project-registry-001`). A row whose `.agentheim/` is missing is skipped
-/// and logged rather than aborting the call: a single broken project must not
-/// strand the canvas. The frontend calls this on mount and on
-/// `resync_required` (ADR-009 lag escape hatch — `canvas-001`).
+/// (`project-registry-001`).
+///
+/// **Missing-state snapshots (`project-registry-003`):** a row whose
+/// `.agentheim/` is gone on disk is no longer silently skipped — `list_projects`
+/// returns a synthetic `missing: true` snapshot for it. The canvas renders the
+/// missing-tile visual (canvas-005a) rather than dropping the tile. The original
+/// `project::get_project` error is still logged as `warn` for the ADR-010
+/// operational signal.
+///
+/// The frontend calls this on mount and on `resync_required` (ADR-009 lag
+/// escape hatch — `canvas-001`). Soft-deleted rows (ADR-005 retention) are
+/// invisible to this enumeration — `Db::list_projects` filters them out.
 #[tauri::command]
 fn list_projects(
     state: tauri::State<'_, AppState>,
@@ -96,16 +104,17 @@ fn list_projects(
         match project::get_project(row.id, &path) {
             Ok(snapshot) => snapshots.push(snapshot),
             Err(e) => {
-                // Skip-and-log: a missing .agentheim/ for one project must not
-                // abort the whole list. Logged as `warn` so it shows up in the
-                // tracing file (ADR-010) — the registered-but-unwatched
-                // (ADR-005 "missing") state is the operational signal.
+                // ADR-005 "missing" state: log the original error for the
+                // operational signal (ADR-010), then hand the canvas a
+                // synthetic `missing: true` snapshot so the tile renders in
+                // its missing visual (canvas-005a) instead of disappearing.
                 tracing::warn!(
                     project_id = row.id,
                     path = %row.path,
                     error = %e,
-                    "list_projects: skipping unreadable project"
+                    "list_projects: project is in missing state (no readable .agentheim)"
                 );
+                snapshots.push(project::missing_snapshot(row.id, &path));
             }
         }
     }
@@ -116,6 +125,11 @@ fn list_projects(
 /// (`project-registry-001`). The frontend invokes this for per-project resync
 /// (a `ResyncRequired { project_id }` event re-fetches one project, not all).
 /// An unknown `project_id` is a clean error, never a panic.
+///
+/// **Missing-state snapshots (`project-registry-003`):** if the registry row
+/// exists but its `.agentheim/` is gone, this returns a synthetic
+/// `missing: true` snapshot rather than an error — symmetric with
+/// `list_projects` so the canvas's per-project resync path stays consistent.
 #[tauri::command]
 fn get_project(
     state: tauri::State<'_, AppState>,
@@ -133,10 +147,18 @@ fn get_project(
             format!("unknown project_id: {project_id}")
         })?;
 
-    project::get_project(project_id, &path).map_err(|e| {
-        tracing::error!(error = %e, project_id, "get_project failed");
-        e.to_string()
-    })
+    match project::get_project(project_id, &path) {
+        Ok(snapshot) => Ok(snapshot),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                project_id,
+                path = %path.display(),
+                "get_project: project is in missing state (no readable .agentheim)"
+            );
+            Ok(project::missing_snapshot(project_id, &path))
+        }
+    }
 }
 
 /// The payload `add_scan_root` returns: the persisted root's id plus the
@@ -410,10 +432,23 @@ fn remove_scan_root(
             e.to_string()
         })?;
 
-    // Tear down each child: supervisor first, then DB row. The supervisor's
-    // `remove` is a silent no-op for unknown ids, so a child that was
-    // registered-but-unwatched (ADR-005 "missing" state) is fine.
+    // Tear down each child:
+    //   1. Fire `ProjectRemoved { project_id }` on the bus BEFORE tearing
+    //      anything down so the canvas can drop the tile cleanly
+    //      (`project-registry-003`, ADR-013 reconciliation 2026-05-15). The
+    //      bridge forwards it to the frontend under `guppi://event`; the bus
+    //      is fan-out so a `ProjectRemoved` arriving slightly before the row
+    //      is gone is harmless — the canvas only consults its own model.
+    //   2. `supervisor.remove(id)` — silent no-op for unknown ids, so a child
+    //      that was registered-but-unwatched (ADR-005 "missing" state) is
+    //      fine.
+    //   3. `db.remove_project(id)` — hard-delete; `tile_positions` cascades.
+    //      ADR-005's 30-day retention is scoped to the user-initiated single
+    //      "Remove project" affordance, NOT to this cascade.
     for project_id in &children {
+        state.bus.publish(DomainEvent::ProjectRemoved {
+            project_id: *project_id,
+        });
         state.supervisor.remove(*project_id);
         if let Err(e) = state.db.remove_project(*project_id) {
             tracing::error!(
@@ -441,6 +476,141 @@ fn remove_scan_root(
         cascaded = children.len(),
         "remove_scan_root: cascade-deregister complete"
     );
+    Ok(())
+}
+
+/// IPC command — **register a single project manually** (ADR-005 "Add
+/// project…", `project-registry-003`). The user picks an Agentheim folder from
+/// an OS dialog and the frontend invokes this with its path.
+///
+/// 1. Canonicalise via `scan::canonicalize_root` (same UNC-strip + symlink
+///    resolution the scan walker uses, so the canonical-path invariant of the
+///    `projects` table is preserved).
+/// 2. Validate `.agentheim/` presence on the canonical path. On absence,
+///    reject with **exactly** `"not an Agentheim project"` — canvas-005a
+///    renders this in a toast and the error text is part of the IPC contract.
+/// 3. `Db::upsert_project` with NULL `scan_root_id` (manually-added; immune to
+///    the scan-root cascade per ADR-013). The upsert's `deleted_at = NULL`
+///    clause means re-registering a soft-deleted path revives the row + its
+///    preserved tile-position — the only restore affordance for the 30-day
+///    retention window.
+/// 4. `WatcherSupervisor::add(project_id, path)` — arms the watcher and fires
+///    `ProjectAdded` via the existing supervisor path (idempotent, so a
+///    revive-add does not double-publish).
+///
+/// Returns the registered `project_id`. Idempotent on canonical path —
+/// re-registering yields the same id.
+#[tauri::command]
+fn register_project(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<i64, String> {
+    let canonical = scan::canonicalize_root(std::path::Path::new(&path)).map_err(|e| {
+        tracing::warn!(error = %e, path = %path, "register_project: canonicalisation failed");
+        e.to_string()
+    })?;
+    let canonical_str = canonical.to_string_lossy().into_owned();
+
+    // ADR-005 validation: a non-Agentheim folder is rejected with an EXACT
+    // error string — the frontend renders this in a toast (canvas-005a).
+    if !canonical.join(".agentheim").is_dir() {
+        tracing::warn!(
+            path = %canonical_str,
+            "register_project: not an Agentheim project"
+        );
+        return Err("not an Agentheim project".to_string());
+    }
+
+    // Nickname for v1 is the folder name, matching the scan walker's
+    // `nickname_suggestion` contract. The user can rename later — out of scope
+    // for this task.
+    let nickname = canonical
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| canonical_str.clone());
+
+    let project_id = state
+        .db
+        .upsert_project(&canonical_str, &nickname)
+        .map_err(|e| {
+            tracing::error!(error = %e, path = %canonical_str, "register_project: db upsert failed");
+            e.to_string()
+        })?;
+
+    // Arm the watcher. Missing `.agentheim/` is the registered-but-unwatched
+    // state (ADR-005) — we just validated it exists above, but the
+    // supervisor's contract still covers the race where it vanishes between
+    // the validation and the watcher startup; log and continue rather than
+    // unwind a successful register.
+    if let Err(e) = state
+        .supervisor
+        .add(project_id, &canonical)
+    {
+        tracing::warn!(
+            error = %e,
+            project_id,
+            path = %canonical_str,
+            "register_project: supervisor.add failed; project stays registered-but-unwatched"
+        );
+    }
+
+    tracing::info!(
+        project_id,
+        path = %canonical_str,
+        "register_project: registered manually-added project"
+    );
+    Ok(project_id)
+}
+
+/// IPC command — **soft-delete a registered project** (ADR-005 single "Remove
+/// project" affordance, `project-registry-003`). The realisation of ADR-005's
+/// 30-day tile-state retention.
+///
+/// 1. Look up the project; an unknown id is a clean IPC error (matches
+///    `get_project`'s shape).
+/// 2. `Db::soft_delete_project` — `UPDATE projects SET deleted_at = now`. The
+///    row stays; `tile_positions` is NOT touched (so a re-add via
+///    `register_project` restores the tile in place).
+/// 3. `WatcherSupervisor::remove(project_id)` — tear the watcher down.
+/// 4. Emit `DomainEvent::ProjectRemoved { project_id }` on the broadcast bus
+///    so the canvas can drop the tile cleanly.
+///
+/// The startup GC sweep (`Db::open`) hard-deletes anything still soft-deleted
+/// after `RETENTION_DAYS`. No admin "undelete" affordance exists; re-adding
+/// via `register_project` is the only restore path, intentionally.
+///
+/// Cascade-deregister (`remove_scan_root`) does NOT call this — it
+/// hard-deletes via `Db::remove_project` directly per ADR-013, since the
+/// retention window only applies to user-initiated single removes.
+#[tauri::command]
+fn remove_project(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+) -> Result<(), String> {
+    // Verify the id exists before mutating — an unknown id is a clean error,
+    // not a silent no-op (the user picked it from the canvas; a non-existent
+    // id is a frontend bug).
+    if state
+        .db
+        .project_path(project_id)
+        .map_err(|e| {
+            tracing::error!(error = %e, project_id, "remove_project: db lookup failed");
+            e.to_string()
+        })?
+        .is_none()
+    {
+        tracing::warn!(project_id, "remove_project: unknown project_id");
+        return Err(format!("unknown project_id: {project_id}"));
+    }
+
+    state.db.soft_delete_project(project_id).map_err(|e| {
+        tracing::error!(error = %e, project_id, "remove_project: soft-delete failed");
+        e.to_string()
+    })?;
+    state.supervisor.remove(project_id);
+    state.bus.publish(DomainEvent::ProjectRemoved { project_id });
+
+    tracing::info!(project_id, "remove_project: soft-deleted; tile_positions preserved");
     Ok(())
 }
 
@@ -699,6 +869,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_projects,
             get_project,
+            register_project,
+            remove_project,
             add_scan_root,
             rescan_scan_root,
             list_scan_roots,
