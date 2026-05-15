@@ -40,8 +40,28 @@ Robustness rules baked into the patching: a `task_*` event for a BC not yet in
 the model lazily creates a zero-count node (filesystem events can arrive before
 the `bc_appeared` for the same batch); a delta that would push a count below
 zero is clamped at 0 and logged (the client model has drifted from disk); and
-every event is filtered by `project_id`. A full re-fetch happens only on
-**resync** (`resync_required`).
+every event is routed by `project_id` to the matching tile in the canvas's
+per-project collection (events for a `project_id` not in the collection are
+ignored). A full re-fetch of a single project happens only on **resync**
+(`resync_required { project_id }`).
+
+## Rendering N projects
+
+The canvas holds a keyed collection of project entries (`{ id, snapshot, pos }`
+per project, keyed off `ProjectSnapshot.id`); `Canvas.svelte`'s `renderScene`
+iterates and draws one tile + its orbiting BC nodes + edges per entry. Per-tile
+state — saved position, drag target, fine-grained event routing — is all keyed
+by id; no single-valued `projectId` scalar exists. A **shared drag controller**
+owns the one set of `window` `pointermove`/`pointerup` listeners; tiles claim
+the active drag via their own `pointerdown`. **Auto-placement** for projects
+with no saved position is a deterministic outward spiral from world origin
+(`src/lib/tile-layout.ts` — a pure, no-Svelte/Pixi module, the verification
+surface alongside `snapshot-patch.ts`); each auto-placed position is persisted
+immediately, so a never-dragged tile lands in the same spot across restarts.
+A `project_added` for a new id triggers `get_project` + auto-place + persist +
+render with no manual refresh; a `project_added` for an already-rendered id
+(the startup seed double-add) is a no-op. Zoom-to-fit (`f`) frames the union
+of every tile and its BCs.
 
 ## Upstream dependencies
 

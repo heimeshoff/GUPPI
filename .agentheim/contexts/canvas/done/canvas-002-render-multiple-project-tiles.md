@@ -1,7 +1,8 @@
 ---
 id: canvas-002-render-multiple-project-tiles
 type: feature
-status: todo
+status: done
+completed: 2026-05-15
 scope: bc
 depends_on:
   - project-registry-001-multi-project-snapshot-model
@@ -239,3 +240,75 @@ Open questions from the original capture — **resolved:**
 - Does the registry emit a live event or does the canvas re-poll → the registry
   emits `ProjectAdded` from `WatcherSupervisor::add`; the canvas reacts to it
   (confirmed in `project-registry-001` Notes → Coordination).
+
+## Outcome
+
+Completed 2026-05-15.
+
+`Canvas.svelte` was restructured from a single-tile component to a per-project
+collection rendered tile-by-tile, keyed by `ProjectSnapshot.id`. Every
+per-project concern — saved position, drag target, fine-grained domain-event
+routing — now keys off the id; no `projectId` scalar remains.
+
+**Frontend changes:**
+- `src/lib/tile-layout.ts` — new pure module. `spiralPosition(index)` returns a
+  deterministic outward-spiral world-space slot from origin; `spiralPositions`
+  yields the first `n`. No Svelte / Pixi imports — the verification surface,
+  mirroring `snapshot-patch.ts` from canvas-001 (the project still has no
+  frontend test runner).
+- `src/lib/Canvas.svelte` — full rewrite of the script section:
+  - Single `$state` array of `ProjectEntry = { id, snapshot, pos }` records
+    (justified inline: array reactivity is well-trodden in Svelte 5; a `Map<…>`
+    in `$state` reacts only on reassignment/method calls and is easy to mutate
+    unreactively by mistake).
+  - `renderScene()` loops over `projects`; each entry draws its tile + BC nodes
+    + edges with `bcWorldPosition` now taking a per-tile `origin` parameter.
+  - Node keys are project-scoped: `project:${id}` / `bc:${id}:${name}` — hover
+    rings cannot collide across tiles.
+  - One shared `window` `pointermove`/`pointerup` pair handles both camera-pan
+    and active tile drag, with `dragProjectId` identifying which tile is being
+    dragged. No per-tile listener leak. `pointerup` persists exactly the
+    dragged project's new position via `saveTilePosition(id, pos)`.
+  - On mount: `listProjects()` → `buildEntry(snapshot, spiralIndex)` per
+    project; `buildEntry` restores the saved position if any, otherwise picks
+    `spiralPosition(index)` and **persists immediately** so an undragged tile
+    survives a restart in place.
+  - `onDomainEvent` routes: `project_added` is no-op if already in the
+    collection (startup seed double-add), otherwise `get_project` + auto-place
+    + persist + append (idempotency double-checked after the await). Fine-
+    grained `task_*`/`bc_*` events look up the entry by id and
+    `applyDomainEvent` its snapshot; events for unknown ids are ignored.
+    `resync_required` re-fetches that one project, preserving its `pos`.
+    `project_missing` is an explicit no-op (canvas-005 territory).
+  - `sceneWorldBounds()` unions every tile + every BC orbit; `f` frames the
+    whole overview.
+- `src/lib/types.ts` — unchanged in this task; the `ProjectSnapshot.id` field
+  it already had (added by `project-registry-001`, commit `d594ad5`) was the
+  hinge.
+- `src/lib/ipc.ts` — unchanged in this task; the per-project
+  `saveTilePosition(projectId, …)` / `loadTilePosition(projectId)` /
+  `getProject(projectId)` / `listProjects()` shapes were already in place
+  from `project-registry-001`.
+
+**README updates:** `contexts/canvas/README.md` "How the canvas stays live"
+paragraph reworded to describe per-project routing (was single-project filter
+language). Added a new "Rendering N projects" section capturing the keyed-
+collection model, shared drag controller, spiral auto-placement, live-add
+idempotency, and union-bounds zoom-to-fit.
+
+**ADRs:** none — implementation within ADR-003 (PixiJS camera model) and
+ADR-004 (tile-position persistence), as the task Notes called.
+
+**Verification:** `pnpm check` (svelte-kit sync + svelte-check) — 0 errors,
+0 warnings, 936 files checked. The pure `tile-layout.ts` is unit-test-ready
+(no runtime deps) once frontend test infra arrives; same posture as
+`snapshot-patch.ts`. The untouched `snapshot-patch.ts` continues to power
+fine-grained patching — now per-entry rather than against a module-level
+single snapshot.
+
+**Coordination:** ran in parallel with `project-registry-002a-scan-roots-and-walk`;
+no overlap (this task touched only `src/lib/*` and the canvas BC README; the
+other worker touched only `src-tauri/*` and the project-registry BC README).
+
+**Key files:** `src/lib/Canvas.svelte`, `src/lib/tile-layout.ts`,
+`.agentheim/contexts/canvas/README.md`.

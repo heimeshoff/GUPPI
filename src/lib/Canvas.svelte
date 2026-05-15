@@ -2,6 +2,15 @@
 	// The infinite canvas — PixiJS v8 / WebGL (ADR-003), rendered at the
 	// design-system styleguide baseline (design-system-001-styleguide).
 	//
+	// canvas-002 restructures this component from one tile to **one tile per
+	// registered project**, keyed by `project_id`. Per-project state is held in
+	// a single `$state` array of records (`projects`) rather than a `Map` —
+	// `renderScene` already iterates, Svelte 5 array reactivity is well-trodden,
+	// and the mutation path (`bcs.push`, count edits via `applyDomainEvent`) is
+	// what we already exercised in canvas-001 on a single snapshot. A `Map<…>`
+	// in `$state` would also work but reacts only on reassignment/method calls,
+	// making it easy to mutate unreactively by mistake; we picked the array.
+	//
 	// This is the first consumer of the design tokens. Every colour, size,
 	// font, and duration comes from `./design/tokens` — nothing here is a
 	// magic number. Downstream frontend feature tasks follow the same rule.
@@ -37,6 +46,7 @@
 	} from './ipc';
 	import type { ProjectSnapshot, Point, BcSnapshot, CameraState } from './types';
 	import { applyDomainEvent } from './snapshot-patch';
+	import { spiralPosition } from './tile-layout';
 	import {
 		color,
 		typography,
@@ -50,23 +60,20 @@
 	let host: HTMLDivElement;
 	const camera = new Camera();
 
-	// The persisted world-space position of the project tile. Starts at origin
-	// (0,0); any drag is persisted (ADR-004).
-	let tilePos = $state<Point>({ x: 0, y: 0 });
-	let snapshot = $state<ProjectSnapshot | null>(null);
-	let status = $state('starting…');
+	// One record per rendered project. Keyed by `snapshot.id`; the canvas keys
+	// every per-project concern (position, drag target, event routing) off it,
+	// so there is no separate `projectId` scalar anywhere in this component.
+	// `snapshot` is deeply reactive Svelte 5 `$state`, so `applyDomainEvent`'s
+	// in-place mutation of `bcs` / `task_counts` is picked up on the next
+	// ticker frame, exactly as in canvas-001.
+	interface ProjectEntry {
+		id: number;
+		snapshot: ProjectSnapshot;
+		pos: Point;
+	}
+	let projects = $state<ProjectEntry[]>([]);
 
-	// The id of the loaded project. The skeleton renders one project; the id
-	// flows in two ways:
-	//   1. Directly on the `ProjectSnapshot` returned by `listProjects()` /
-	//      `getProject(projectId)` (`project-registry-001` adds this field).
-	//   2. On the `project_added` domain event, for live registration after
-	//      mount (the `add project…` flow `project-registry-002` will add).
-	// Either way the canvas keeps this single id so it can filter fine-grained
-	// domain events (`canvas-001` `project_id` filtering) and pass it to the
-	// per-project IPC commands (`saveTilePosition`, etc.). `canvas-002` will
-	// generalise this to a per-id map of tiles.
-	let projectId = $state<number | null>(null);
+	let status = $state('starting…');
 
 	// Voice-state affordance — a single ambient indicator. The voice BC will
 	// drive this later; for the styleguide baseline it sits at "idle" so the
@@ -74,8 +81,15 @@
 	type VoiceState = 'idle' | 'listening' | 'muted';
 	let voiceState = $state<VoiceState>('idle');
 
-	// Which node the pointer is over — drives the focus-ring affordance.
+	// Which node the pointer is over — drives the focus-ring affordance. Keys
+	// are now project-scoped (`project:${id}` / `bc:${id}:${name}`) so hover
+	// rings do not collide across tiles.
 	let hoveredKey = $state<string | null>(null);
+
+	/** Find a project entry by id; null if not currently rendered. */
+	function findProject(id: number): ProjectEntry | null {
+		return projects.find((p) => p.id === id) ?? null;
+	}
 
 	/**
 	 * Derive a BC node's status from its task counts. This is the styleguide's
@@ -111,6 +125,16 @@
 		let cameraTarget: CameraState | null = null;
 		let cameraAnimStart = 0;
 
+		// --- shared drag controller (canvas-002) ----------------------
+		// One set of `window` pointer listeners for *all* tiles. The active
+		// drag is identified by `dragProjectId`; tiles register themselves by
+		// setting it on `pointerdown` and clearing it on `pointerup`. This
+		// replaces the per-tile `window.addEventListener` pattern that would
+		// have leaked N listener sets and fired all of them on every move.
+		let dragProjectId: number | null = null;
+		let dragOriginX = 0;
+		let dragOriginY = 0;
+
 		(async () => {
 			app = new Application();
 			await app.init({
@@ -126,9 +150,6 @@
 			app.stage.addChild(world);
 
 			// --- restore persisted camera (ADR-004) ----------------------
-			// Tile position restore moves into `refresh()` — it needs the
-			// project id from `listProjects()`, which `project-registry-001`
-			// made the load-bearing fetch.
 			try {
 				const savedCamera = await loadCamera();
 				if (savedCamera) camera.restore(savedCamera);
@@ -137,88 +158,94 @@
 			}
 
 			// --- the render pass: project world -> screen via the camera --
+			// Loops over every entry in `projects`; each one draws its tile +
+			// BC nodes + edges with its own world-space origin (`entry.pos`).
 			renderScene = () => {
-				if (!app || !snapshot) return;
+				if (!app) return;
 				world.removeChildren();
 
-				const projScreen = camera.worldToScreen(tilePos.x, tilePos.y);
 				const z = camera.zoom;
 
-				// Edges first, so nodes draw on top.
+				// Edges first across all projects, so nodes draw on top.
 				const edges = new Graphics();
-				const bcCount = snapshot.bcs.length;
-				snapshot.bcs.forEach((_, i) => {
-					const bcWorld = bcWorldPosition(i, bcCount);
-					const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
-					edges
-						.moveTo(
-							projScreen.x + (shape.tileWidth * z) / 2,
-							projScreen.y + (shape.tileHeight * z) / 2
-						)
-						.lineTo(
-							bcScreen.x + (shape.bcWidth * z) / 2,
-							bcScreen.y + (shape.bcHeight * z) / 2
-						);
-				});
+				for (const entry of projects) {
+					const projScreen = camera.worldToScreen(entry.pos.x, entry.pos.y);
+					const bcCount = entry.snapshot.bcs.length;
+					for (let i = 0; i < bcCount; i++) {
+						const bcWorld = bcWorldPosition(entry.pos, i, bcCount);
+						const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
+						edges
+							.moveTo(
+								projScreen.x + (shape.tileWidth * z) / 2,
+								projScreen.y + (shape.tileHeight * z) / 2
+							)
+							.lineTo(
+								bcScreen.x + (shape.bcWidth * z) / 2,
+								bcScreen.y + (shape.bcHeight * z) / 2
+							);
+					}
+				}
 				edges.stroke({
 					width: Math.max(1, shape.borderWidth * z),
 					color: color.edge
 				});
 				world.addChild(edges);
 
-				// BC nodes — secondary hierarchy: smaller, cool border, with a
-				// status badge derived from task counts.
-				snapshot.bcs.forEach((bc, i) => {
-					const bcWorld = bcWorldPosition(i, bcCount);
-					const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
-					const key = `bc:${bc.name}`;
-					world.addChild(
-						makeNode({
-							key,
-							screenX: bcScreen.x,
-							screenY: bcScreen.y,
-							w: shape.bcWidth * z,
-							h: shape.bcHeight * z,
-							radius: shape.radiusBc * z,
-							fill: color.bcFill,
-							border: color.bcBorder,
-							titleColor: color.bcText,
-							subtitleColor: color.bcTextMuted,
-							title: bc.name,
-							subtitle:
-								`b ${bc.task_counts.backlog}   t ${bc.task_counts.todo}   ` +
-								`d ${bc.task_counts.doing}   done ${bc.task_counts.done}`,
-							statusState: deriveBcStatus(bc),
-							z
-						})
-					);
-				});
+				// BC nodes + project tiles, per entry. Node keys are
+				// project-scoped so hover/focus rings do not collide across
+				// tiles even when two projects share a BC name.
+				for (const entry of projects) {
+					const projScreen = camera.worldToScreen(entry.pos.x, entry.pos.y);
+					const bcCount = entry.snapshot.bcs.length;
 
-				// The project tile — primary hierarchy: larger, warm border,
-				// drawn last (on top).
-				const tile = makeNode({
-					key: 'project',
-					screenX: projScreen.x,
-					screenY: projScreen.y,
-					w: shape.tileWidth * z,
-					h: shape.tileHeight * z,
-					radius: shape.radiusTile * z,
-					fill: color.tileFill,
-					border: color.tileBorder,
-					titleColor: color.tileText,
-					subtitleColor: color.tileTextMuted,
-					title: snapshot.name,
-					subtitle: snapshot.path,
-					statusState: null,
-					z
-				});
-				makeDraggable(tile, projScreen, z);
-				world.addChild(tile);
+					entry.snapshot.bcs.forEach((bc, i) => {
+						const bcWorld = bcWorldPosition(entry.pos, i, bcCount);
+						const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
+						world.addChild(
+							makeNode({
+								key: `bc:${entry.id}:${bc.name}`,
+								screenX: bcScreen.x,
+								screenY: bcScreen.y,
+								w: shape.bcWidth * z,
+								h: shape.bcHeight * z,
+								radius: shape.radiusBc * z,
+								fill: color.bcFill,
+								border: color.bcBorder,
+								titleColor: color.bcText,
+								subtitleColor: color.bcTextMuted,
+								title: bc.name,
+								subtitle:
+									`b ${bc.task_counts.backlog}   t ${bc.task_counts.todo}   ` +
+									`d ${bc.task_counts.doing}   done ${bc.task_counts.done}`,
+								statusState: deriveBcStatus(bc),
+								z
+							})
+						);
+					});
 
-				// Voice-state affordance — a single ambient glyph pinned to the
-				// bottom-right corner of the viewport (not world space, so it
-				// stays put while the canvas pans). Established here as the
-				// visual contract; the voice BC drives `voiceState` later.
+					const tile = makeNode({
+						key: `project:${entry.id}`,
+						screenX: projScreen.x,
+						screenY: projScreen.y,
+						w: shape.tileWidth * z,
+						h: shape.tileHeight * z,
+						radius: shape.radiusTile * z,
+						fill: color.tileFill,
+						border: color.tileBorder,
+						titleColor: color.tileText,
+						subtitleColor: color.tileTextMuted,
+						title: entry.snapshot.name,
+						subtitle: entry.snapshot.path,
+						statusState: null,
+						z
+					});
+					attachTileDrag(tile, entry.id, projScreen, z);
+					world.addChild(tile);
+				}
+
+				// Voice-state affordance — a single ambient glyph pinned to
+				// the bottom-right of the viewport (screen space, not world
+				// space, so it stays put while the canvas pans).
 				world.addChild(makeVoiceIndicator());
 			};
 
@@ -228,14 +255,31 @@
 			let lastY = 0;
 
 			app.canvas.addEventListener('pointerdown', (e) => {
-				// Tile dragging is handled by the tile's own hit area; a
+				// Tile dragging is handled by each tile's own hit area; a
 				// pointerdown that reaches the canvas is empty-space = pan.
 				panning = true;
 				lastX = e.clientX;
 				lastY = e.clientY;
 				cameraTarget = null; // a manual gesture cancels any eased transition
 			});
+
+			// One shared window-level pointermove for both camera-pan and
+			// active tile drag — canvas-002's shared drag controller.
 			window.addEventListener('pointermove', (e) => {
+				if (dragProjectId !== null) {
+					const entry = findProject(dragProjectId);
+					if (entry) {
+						// Drag delta in screen space -> world space.
+						entry.pos = {
+							x: entry.pos.x + (e.clientX - dragOriginX) / camera.zoom,
+							y: entry.pos.y + (e.clientY - dragOriginY) / camera.zoom
+						};
+						dragOriginX = e.clientX;
+						dragOriginY = e.clientY;
+						renderScene();
+					}
+					return;
+				}
 				if (!panning) return;
 				camera.panBy(e.clientX - lastX, e.clientY - lastY);
 				lastX = e.clientX;
@@ -243,11 +287,21 @@
 				renderScene();
 			});
 			window.addEventListener('pointerup', () => {
+				if (dragProjectId !== null) {
+					// Persist exactly the dragged project's new position.
+					const entry = findProject(dragProjectId);
+					if (entry) {
+						void saveTilePosition(entry.id, entry.pos);
+					}
+					dragProjectId = null;
+					return;
+				}
 				if (panning) {
 					panning = false;
 					void saveCamera(camera.snapshot());
 				}
 			});
+
 			app.canvas.addEventListener(
 				'wheel',
 				(e) => {
@@ -263,8 +317,6 @@
 			);
 
 			// --- camera affordance: zoom-to-fit on "f" --------------------
-			// Eased per the motion budget (durationCamera). The keyboard hint
-			// is shown in the corner overlay below.
 			window.addEventListener('keydown', (e) => {
 				if (e.key === 'f' || e.key === 'F') {
 					beginZoomToFit();
@@ -272,53 +324,52 @@
 			});
 
 			// --- initial fetch + live updates (ADR-009) -------------------
-			// The fine-grained filesystem events patch the snapshot model in
-			// place — no `getProject` round-trip per change (`canvas-001`).
-			// Only `resync_required` (the lag-only escape hatch) re-fetches.
 			await refresh();
 			unlistenEvent = await onDomainEvent((event) => {
 				switch (event.kind) {
 					case 'project_added':
-						// The skeleton sees this for the seed project at
-						// startup (supervisor.add publishes it) and would see
-						// it again for any live-added project. We already
-						// learn the seed id from `listProjects()` in
-						// `refresh()`, so this is harmless re-confirmation;
-						// `canvas-002` extends it to maintain a per-id tile
-						// map for live-add tiles.
-						if (projectId === null) {
-							projectId = event.project_id;
-						}
+						// Live-add path: the registry just registered (or the
+						// startup seed announced) a project. If we already
+						// have an entry with this id, this is the seed
+						// double-add — no-op. Otherwise fetch its snapshot,
+						// pick the next spiral slot, persist that slot, and
+						// add it to the collection.
+						if (findProject(event.project_id)) return;
+						void addLiveProject(event.project_id);
 						return;
 					case 'project_missing':
+						// Reserved for canvas-005 (missing-tile state). The
+						// canvas does not break when this fires; it renders
+						// nothing different.
 						return;
-					case 'resync_required':
+					case 'resync_required': {
 						// The bridge lagged and lost events it cannot
 						// reconstruct — the one full re-fetch path (ADR-009).
-						// Per-project resync: re-fetch exactly the affected
-						// project's snapshot, not the whole list.
-						if (projectId !== null && event.project_id === projectId) {
-							void refreshOne(event.project_id);
-						}
+						// Per-project: re-fetch exactly the affected project,
+						// preserve its on-canvas position, leave every other
+						// tile alone.
+						const entry = findProject(event.project_id);
+						if (!entry) return;
+						void refreshOne(event.project_id);
 						return;
+					}
 					default: {
 						// A fine-grained filesystem-observation event:
 						// `task_moved` / `task_added` / `task_removed` /
-						// `bc_appeared` / `bc_disappeared`. Patch in place.
-						if (!snapshot) return;
-						// Ignore events for a different project (the skeleton
-						// has one, but the filter is real).
-						if (projectId !== null && event.project_id !== projectId) {
-							return;
-						}
-						applyDomainEvent(snapshot, event, (msg) =>
+						// `bc_appeared` / `bc_disappeared`. Route by id; if
+						// the project is not rendered, ignore (it is a
+						// project the canvas does not have — or the live-add
+						// race, in which case the matching `project_added`
+						// will arrive and trigger a fresh fetch that already
+						// reflects the change).
+						const entry = findProject(event.project_id);
+						if (!entry) return;
+						applyDomainEvent(entry.snapshot, event, (msg) =>
 							void logToCore('warn', msg)
 						);
-						// `snapshot` is Svelte 5 `$state` (deeply reactive);
-						// the mutation is picked up by the ticker's
-						// `renderScene()` on the next frame — no explicit
-						// re-render call, no animation system (silent count
-						// update per the styleguide decision).
+						// `entry.snapshot` is part of Svelte 5 `$state`
+						// (deeply reactive). The mutation is picked up by
+						// the ticker's `renderScene()` on the next frame.
 						return;
 					}
 				}
@@ -334,10 +385,10 @@
 			});
 		})();
 
-		// Start an eased zoom-to-fit transition framing the project tile and
-		// all BC nodes within the viewport.
+		// Start an eased zoom-to-fit transition framing every rendered tile
+		// and its BCs within the viewport.
 		function beginZoomToFit() {
-			if (!app || !snapshot) return;
+			if (!app || projects.length === 0) return;
 			const box = sceneWorldBounds();
 			const viewport = { w: app.renderer.width, h: app.renderer.height };
 			cameraTarget = camera.fitTo(box, viewport);
@@ -360,48 +411,88 @@
 			}
 		}
 
-		// World-space bounding box of the whole scene (project tile + BCs),
-		// used by zoom-to-fit.
+		// World-space bounding box of the whole scene — the union of every
+		// project tile and every BC orbit. Used by zoom-to-fit ('f').
 		function sceneWorldBounds(): { x: number; y: number; w: number; h: number } {
-			let minX = tilePos.x;
-			let minY = tilePos.y;
-			let maxX = tilePos.x + shape.tileWidth;
-			let maxY = tilePos.y + shape.tileHeight;
-			const bcCount = snapshot?.bcs.length ?? 0;
-			for (let i = 0; i < bcCount; i++) {
-				const p = bcWorldPosition(i, bcCount);
-				minX = Math.min(minX, p.x);
-				minY = Math.min(minY, p.y);
-				maxX = Math.max(maxX, p.x + shape.bcWidth);
-				maxY = Math.max(maxY, p.y + shape.bcHeight);
+			if (projects.length === 0) {
+				return { x: 0, y: 0, w: shape.tileWidth, h: shape.tileHeight };
+			}
+			let minX = Number.POSITIVE_INFINITY;
+			let minY = Number.POSITIVE_INFINITY;
+			let maxX = Number.NEGATIVE_INFINITY;
+			let maxY = Number.NEGATIVE_INFINITY;
+			for (const entry of projects) {
+				minX = Math.min(minX, entry.pos.x);
+				minY = Math.min(minY, entry.pos.y);
+				maxX = Math.max(maxX, entry.pos.x + shape.tileWidth);
+				maxY = Math.max(maxY, entry.pos.y + shape.tileHeight);
+				const bcCount = entry.snapshot.bcs.length;
+				for (let i = 0; i < bcCount; i++) {
+					const p = bcWorldPosition(entry.pos, i, bcCount);
+					minX = Math.min(minX, p.x);
+					minY = Math.min(minY, p.y);
+					maxX = Math.max(maxX, p.x + shape.bcWidth);
+					maxY = Math.max(maxY, p.y + shape.bcHeight);
+				}
 			}
 			return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 		}
 
-		async function refresh() {
-			// `project-registry-001`: the canvas now learns the project set
-			// from `listProjects()` rather than a path-implicit `getProject()`.
-			// The skeleton renders the first project; `canvas-002` will render
-			// a tile per snapshot in the returned list.
+		/** Build a `ProjectEntry` for `snapshot`: restore its saved position
+		 * if any, otherwise pick the next spiral slot and persist it
+		 * immediately so it is stable across restarts even if never dragged.
+		 * `spiralIndex` is the registration-order index used when no saved
+		 * position exists. */
+		async function buildEntry(
+			snapshot: ProjectSnapshot,
+			spiralIndex: number
+		): Promise<ProjectEntry> {
+			let pos: Point;
 			try {
-				const projects = await listProjects();
-				if (projects.length === 0) {
+				const saved = await loadTilePosition(snapshot.id);
+				if (saved) {
+					pos = saved;
+				} else {
+					pos = spiralPosition(spiralIndex);
+					// Persist auto-placement immediately so a never-dragged
+					// tile still lands in the same spot after a restart.
+					try {
+						await saveTilePosition(snapshot.id, pos);
+					} catch (e) {
+						logToCore(
+							'warn',
+							`could not persist auto-placed position for project ${snapshot.id}: ${e}`
+						);
+					}
+				}
+			} catch (e) {
+				logToCore(
+					'warn',
+					`could not restore tile position for project ${snapshot.id}: ${e}`
+				);
+				pos = spiralPosition(spiralIndex);
+			}
+			return { id: snapshot.id, snapshot, pos };
+		}
+
+		/** On-mount initial population: list every registered project, build
+		 * an entry per project (restoring or auto-placing its position), and
+		 * commit them all to the `projects` array in one assignment so
+		 * reactivity fires once. */
+		async function refresh() {
+			try {
+				const snapshots = await listProjects();
+				if (snapshots.length === 0) {
 					status = 'no projects registered yet';
-					snapshot = null;
+					projects = [];
 					return;
 				}
-				const first = projects[0];
-				projectId = first.id;
-				snapshot = first;
-				// Now that we know the id, restore this project's persisted
-				// tile position (ADR-004).
-				try {
-					const savedTile = await loadTilePosition(first.id);
-					if (savedTile) tilePos = savedTile;
-				} catch (e) {
-					logToCore('warn', `could not restore tile position: ${e}`);
+				const entries: ProjectEntry[] = [];
+				for (let i = 0; i < snapshots.length; i++) {
+					entries.push(await buildEntry(snapshots[i], i));
 				}
-				status = `${snapshot.bcs.length} bounded contexts · press F to fit`;
+				projects = entries;
+				status = `${projects.length} project${projects.length === 1 ? '' : 's'} · press F to fit`;
 				renderScene();
 			} catch (e) {
 				status = `error: ${e}`;
@@ -409,30 +500,53 @@
 			}
 		}
 
-		/** Re-fetch exactly one project's snapshot (the `resync_required`
-		 * lag-recovery path — ADR-009). Keyed by id so a multi-project canvas
-		 * does not redraw the world for one tile's resync. */
+		/** Re-fetch exactly one project's snapshot (`resync_required` —
+		 * ADR-009). Preserves the entry's existing world-space position so the
+		 * tile does not jump on a resync. */
 		async function refreshOne(id: number) {
 			try {
 				const fresh = await getProject(id);
-				// Single-project skeleton: replace the snapshot wholesale.
-				// `canvas-002` patches the per-id entry in its tile map.
-				snapshot = fresh;
-				status = `${snapshot.bcs.length} bounded contexts · press F to fit`;
+				const idx = projects.findIndex((p) => p.id === id);
+				if (idx === -1) return;
+				const existing = projects[idx];
+				projects[idx] = { id, snapshot: fresh, pos: existing.pos };
 				renderScene();
 			} catch (e) {
 				logToCore('error', `get_project failed for ${id}: ${e}`);
 			}
 		}
 
-		// World-space position of BC node `i` of `count`, radiating around the
-		// project tile so edges fan out cleanly.
-		function bcWorldPosition(i: number, count: number): Point {
-			if (count === 0) return { x: 0, y: 0 };
+		/** Live-add path: a `project_added` arrived for a project not already
+		 * in the collection. Fetch its snapshot, auto-place it at the next
+		 * spiral slot, persist that slot, and append. The next ticker frame
+		 * draws it — no manual refresh button. */
+		async function addLiveProject(id: number) {
+			try {
+				// Re-check now that we are async: a parallel arrival or the
+				// `refresh()` race could have inserted it. Keeps idempotency.
+				if (findProject(id)) return;
+				const fresh = await getProject(id);
+				if (findProject(id)) return;
+				const entry = await buildEntry(fresh, projects.length);
+				projects = [...projects, entry];
+				status = `${projects.length} project${projects.length === 1 ? '' : 's'} · press F to fit`;
+				renderScene();
+			} catch (e) {
+				logToCore('error', `live-add get_project failed for ${id}: ${e}`);
+			}
+		}
+
+		// World-space position of BC node `i` of `count`, radiating around
+		// the supplied tile origin so edges fan out cleanly. canvas-002 added
+		// the `origin` parameter so each tile has its own ring of BCs rather
+		// than every BC orbiting the world's single former-module-level
+		// `tilePos`.
+		function bcWorldPosition(origin: Point, i: number, count: number): Point {
+			if (count === 0) return { x: origin.x, y: origin.y };
 			const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
 			return {
-				x: tilePos.x + Math.cos(angle) * shape.bcOrbitRadius,
-				y: tilePos.y + Math.sin(angle) * shape.bcOrbitRadius
+				x: origin.x + Math.cos(angle) * shape.bcOrbitRadius,
+				y: origin.y + Math.sin(angle) * shape.bcOrbitRadius
 			};
 		}
 
@@ -609,9 +723,13 @@
 			return indicator;
 		}
 
-		// Make the project tile draggable; persist the new world position on
-		// release (ADR-004 — "Tile position persisted on drag").
-		function makeDraggable(tile: Container, screenPos: Point, z: number) {
+		/** Wire a project tile into the shared drag controller. The tile
+		 * itself only handles its own `pointerdown` (to claim the drag and
+		 * suppress the camera-pan); the actual `pointermove` / `pointerup`
+		 * handlers live once at window-level above. Persistence is on
+		 * `pointerup` via that shared handler (ADR-004 — tile position
+		 * persisted on drag). */
+		function attachTileDrag(tile: Container, id: number, screenPos: Point, z: number) {
 			tile.eventMode = 'static';
 			tile.hitArea = {
 				contains: (x: number, y: number) =>
@@ -621,39 +739,12 @@
 					y <= screenPos.y + shape.tileHeight * z
 			};
 
-			let dragging = false;
-			let originScreenX = 0;
-			let originScreenY = 0;
-
 			tile.on('pointerdown', (e) => {
-				dragging = true;
 				e.stopPropagation(); // do not let this start a camera pan
 				cameraTarget = null;
-				originScreenX = e.global.x;
-				originScreenY = e.global.y;
-			});
-			window.addEventListener('pointermove', (e) => {
-				if (!dragging) return;
-				// Drag delta in screen space -> world space (divide by zoom).
-				tilePos = {
-					x: tilePos.x + (e.clientX - originScreenX) / camera.zoom,
-					y: tilePos.y + (e.clientY - originScreenY) / camera.zoom
-				};
-				originScreenX = e.clientX;
-				originScreenY = e.clientY;
-				renderScene();
-			});
-			window.addEventListener('pointerup', () => {
-				if (dragging) {
-					dragging = false;
-					// `project-registry-001`: per-project tile position requires
-					// passing the project id explicitly. Skipped if the id is
-					// not yet known (only possible mid-bootstrap, before
-					// `refresh()` resolves).
-					if (projectId !== null) {
-						void saveTilePosition(projectId, tilePos);
-					}
-				}
+				dragProjectId = id;
+				dragOriginX = e.global.x;
+				dragOriginY = e.global.y;
 			});
 		}
 
