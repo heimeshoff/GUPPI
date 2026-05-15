@@ -5,7 +5,15 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { CameraState, DomainEvent, ProjectSnapshot, Point } from './types';
+import type {
+	AddScanRootResult,
+	CameraState,
+	DomainEvent,
+	Point,
+	ProjectSnapshot,
+	ScanCandidate,
+	ScanRootRow
+} from './types';
 
 /** The single Tauri event name the core's frontend bridge emits on (ADR-009). */
 const FRONTEND_EVENT = 'guppi://event';
@@ -44,6 +52,61 @@ export function registerProject(path: string): Promise<number> {
  * tile through its `project_removed` event handler. */
 export function removeProject(projectId: number): Promise<void> {
 	return invoke('remove_project', { projectId });
+}
+
+/** Register a folder as a scan root and walk it for candidate Agentheim
+ * projects (ADR-013, `project-registry-002a`). The root is canonicalised +
+ * persisted FIRST so an empty subtree still leaves a rescannable root behind —
+ * the checklist modal (`canvas-005b`) opens in either case. */
+export function addScanRoot(
+	path: string,
+	depthCap?: number
+): Promise<AddScanRootResult> {
+	return invoke<AddScanRootResult>('add_scan_root', { path, depthCap });
+}
+
+/** Re-walk an already-registered scan root (ADR-013, `project-registry-002a`).
+ * Returns a fresh candidate checklist; previously-imported candidates carry
+ * `already_imported: true` so the modal can grey them out. */
+export function rescanScanRoot(scanRootId: number): Promise<ScanCandidate[]> {
+	return invoke<ScanCandidate[]>('rescan_scan_root', { scanRootId });
+}
+
+/** List every registered scan root (ADR-013). Drives the "Manage scan roots…"
+ * menu item's visibility (`canvas-005b`): hidden when this returns empty. */
+export function listScanRoots(): Promise<ScanRootRow[]> {
+	return invoke<ScanRootRow[]>('list_scan_roots');
+}
+
+/** Import the user's checklist picks from a scan root's walk into the
+ * registry (ADR-013, `project-registry-002b`). The backend re-verifies each
+ * path against a fresh walk before importing; out-of-set paths are skipped.
+ * Returns the imported project ids in input order. Each imported project
+ * triggers a `ProjectAdded` event; the canvas-006 live-add chain serialises
+ * the burst so each tile lands in a distinct spiral slot. */
+export function importScannedProjects(
+	scanRootId: number,
+	paths: string[]
+): Promise<number[]> {
+	return invoke<number[]>('import_scanned_projects', { scanRootId, paths });
+}
+
+/** Remove a scan root, cascade-deregistering every project discovered under
+ * it (ADR-013, `project-registry-002b`). The cascade hard-deletes child
+ * projects (NOT subject to ADR-005's 30-day retention window); the
+ * confirmation dialog (`canvas-005b`) communicates that to the user. Each
+ * cascaded child fires `ProjectRemoved`; the canonical handler in
+ * `Canvas.svelte` (`canvas-005a`) drops the tiles. */
+export function removeScanRoot(scanRootId: number): Promise<void> {
+	return invoke('remove_scan_root', { scanRootId });
+}
+
+/** List every live project id stamped with the given scan root
+ * (`canvas-005b`). The frontend takes `.length` for the per-row child count
+ * in the scan-roots management modal. Soft-deleted children are filtered out
+ * by the DB layer. */
+export function listProjectsByScanRoot(scanRootId: number): Promise<number[]> {
+	return invoke<number[]>('list_projects_by_scan_root', { scanRootId });
 }
 
 /** Persist a project tile's position after a drag (ADR-004). Takes

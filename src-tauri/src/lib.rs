@@ -268,6 +268,22 @@ fn list_scan_roots(state: tauri::State<'_, AppState>) -> Result<Vec<ScanRootRow>
     })
 }
 
+/// IPC command — list every live project id stamped with the given scan root
+/// (`canvas-005b`). Thin wrapper over the existing `Db::list_projects_by_scan_root`
+/// (`project-registry-002b`); the scan-roots management modal takes
+/// `.length` for the per-row child-project count. Soft-deleted children are
+/// filtered out at the DB layer (`project-registry-003`).
+#[tauri::command]
+fn list_projects_by_scan_root(
+    state: tauri::State<'_, AppState>,
+    scan_root_id: i64,
+) -> Result<Vec<i64>, String> {
+    state.db.list_projects_by_scan_root(scan_root_id).map_err(|e| {
+        tracing::error!(error = %e, scan_root_id, "list_projects_by_scan_root: db query failed");
+        e.to_string()
+    })
+}
+
 /// IPC command — import the user's checklist picks from a scan root's walk
 /// into the registry (`project-registry-002b`, ADR-013). For each picked path:
 ///
@@ -879,6 +895,7 @@ pub fn run() {
             add_scan_root,
             rescan_scan_root,
             list_scan_roots,
+            list_projects_by_scan_root,
             import_scanned_projects,
             remove_scan_root,
             save_tile_position,

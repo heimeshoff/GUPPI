@@ -35,19 +35,33 @@
 	import { Application, Container, Graphics, Text } from 'pixi.js';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { Camera } from './camera.svelte';
+	import Modal from './Modal.svelte';
 	import {
+		addScanRoot,
 		getProject,
+		importScannedProjects,
 		listProjects,
+		listProjectsByScanRoot,
+		listScanRoots,
 		loadCamera,
 		loadTilePosition,
 		onDomainEvent,
 		registerProject,
 		removeProject,
+		removeScanRoot,
+		rescanScanRoot,
 		saveCamera,
 		saveTilePosition,
 		logToCore
 	} from './ipc';
-	import type { ProjectSnapshot, Point, BcSnapshot, CameraState } from './types';
+	import type {
+		BcSnapshot,
+		CameraState,
+		Point,
+		ProjectSnapshot,
+		ScanCandidate,
+		ScanRootRow
+	} from './types';
 	import { applyDomainEvent } from './snapshot-patch';
 	import { spiralPosition } from './tile-layout';
 	import {
@@ -78,6 +92,49 @@
 	}
 	let menu = $state<MenuState | null>(null);
 
+	// --- Scan-root modals state (canvas-005b) ------------------------
+	// Three modals share the codebase's new `Modal.svelte` primitive:
+	//
+	//   1. `checklistModal` — the discovery checklist after `add_scan_root`
+	//      OR `rescan_scan_root`. The `isRescan` flag differentiates the
+	//      header label per the task spec.
+	//   2. `manageModal` — the scan-roots management surface
+	//      (`list_scan_roots` + per-row child counts via
+	//      `list_projects_by_scan_root`).
+	//   3. `confirmRemoveModal` — the cascade-remove confirmation. The
+	//      ONE exception to "one modal at a time": when set, it renders ON
+	//      TOP of `manageModal`, which stays mounted behind it.
+	//
+	// `scanRootsCount` caches the live count of registered roots so the
+	// "Manage scan roots…" menu item can be hidden when zero. Refreshed on
+	// mount, after `addScanRoot` resolves, and after `removeScanRoot`
+	// resolves.
+	interface ChecklistRow {
+		candidate: ScanCandidate;
+		ticked: boolean;
+	}
+	interface ChecklistModalState {
+		scanRootId: number;
+		rootPath: string;
+		isRescan: boolean;
+		rows: ChecklistRow[];
+	}
+	interface ManageRoot {
+		root: ScanRootRow;
+		childCount: number;
+	}
+	interface ManageModalState {
+		roots: ManageRoot[];
+	}
+	interface ConfirmRemoveModalState {
+		root: ScanRootRow;
+		childCount: number;
+	}
+	let scanRootsCount = $state(0);
+	let checklistModal = $state<ChecklistModalState | null>(null);
+	let manageModal = $state<ManageModalState | null>(null);
+	let confirmRemoveModal = $state<ConfirmRemoveModalState | null>(null);
+
 	// --- Error toast (canvas-005a) -----------------------------------
 	// One toast at a time; a new toast replaces the current one rather than
 	// stacking. Used for the `register_project` rejection path
@@ -91,6 +148,224 @@
 			toastMessage = null;
 			toastTimer = null;
 		}, 3000);
+	}
+
+	// --- Scan-root flows (canvas-005b) -------------------------------
+	// Defined at script top-level so the modal templates can call them
+	// directly. They only depend on the reactive `$state` declared above
+	// and the `./ipc` wrappers — no PixiJS internals — so this is a clean
+	// extraction from `onMount`.
+
+	/** Refresh the cached count of registered scan roots — drives the
+	 * "Manage scan roots…" menu item's `hidden` flag. Best-effort; on IPC
+	 * failure the cache stays at its last value and the count is re-checked
+	 * the next time the menu opens. */
+	async function refreshScanRootsCount() {
+		try {
+			const roots = await listScanRoots();
+			scanRootsCount = roots.length;
+		} catch (e) {
+			logToCore('warn', `list_scan_roots failed: ${e}`);
+		}
+	}
+
+	/** "Scan folder for projects…" flow. Opens a Tauri-native folder
+	 * picker, invokes `addScanRoot` on a chosen path, opens the discovery
+	 * checklist modal with the returned candidates. The scan root is
+	 * persisted by the backend BEFORE the walk runs, so even an empty
+	 * candidate set leaves a rescannable root behind (ADR-013) — the
+	 * empty-state modal still opens, with an "OK" footer button. */
+	async function runScanFolderFlow() {
+		menu = null;
+		let picked: string | string[] | null = null;
+		try {
+			picked = await openDialog({ directory: true, multiple: false });
+		} catch (e) {
+			logToCore('error', `open dialog failed: ${e}`);
+			showToast(`could not open folder picker: ${e}`);
+			return;
+		}
+		if (picked === null) return;
+		const path = Array.isArray(picked) ? picked[0] : picked;
+		if (!path) return;
+		try {
+			const result = await addScanRoot(path);
+			checklistModal = {
+				scanRootId: result.scan_root_id,
+				rootPath: path,
+				isRescan: false,
+				rows: result.candidates.map((c) => ({
+					candidate: c,
+					// Already-imported rows are pre-checked AND disabled — the
+					// imported pre-checks do NOT count toward the "Import
+					// selected" disabled-when-zero rule.
+					ticked: c.already_imported
+				}))
+			};
+			// The scan root is persisted regardless of candidate count —
+			// refresh the menu's "Manage scan roots…" visibility.
+			await refreshScanRootsCount();
+		} catch (e) {
+			const msg = String(e);
+			showToast(`could not scan folder: ${msg}`);
+			logToCore('warn', `add_scan_root rejected: ${msg}`);
+		}
+	}
+
+	/** Pull the live scan-root list with per-row child counts. Shared by
+	 * the open flow and the post-cascade refresh. Soft-deleted children are
+	 * filtered out at the DB layer (`project-registry-003`). */
+	async function fetchManageRoots(): Promise<ManageRoot[]> {
+		const roots = await listScanRoots();
+		scanRootsCount = roots.length;
+		return Promise.all(
+			roots.map(async (root) => {
+				try {
+					const children = await listProjectsByScanRoot(root.id);
+					return { root, childCount: children.length };
+				} catch (e) {
+					logToCore(
+						'warn',
+						`list_projects_by_scan_root failed for ${root.id}: ${e}`
+					);
+					return { root, childCount: 0 };
+				}
+			})
+		);
+	}
+
+	/** "Manage scan roots…" flow. Fetches the live scan-root list and the
+	 * per-row child-project counts and opens the management modal. */
+	async function runManageScanRootsFlow() {
+		menu = null;
+		try {
+			const entries = await fetchManageRoots();
+			manageModal = { roots: entries };
+		} catch (e) {
+			const msg = String(e);
+			showToast(`could not list scan roots: ${msg}`);
+			logToCore('error', `list_scan_roots failed: ${msg}`);
+		}
+	}
+
+	/** Refresh the open management modal's rows (after a cascade-remove
+	 * resolves). If zero roots remain, close the management modal AND the
+	 * menu visibility cache flips so "Manage scan roots…" hides on the
+	 * next right-click. */
+	async function refreshManageModal() {
+		try {
+			const entries = await fetchManageRoots();
+			if (entries.length === 0) {
+				manageModal = null;
+				return;
+			}
+			manageModal = { roots: entries };
+		} catch (e) {
+			logToCore('error', `refresh manage modal failed: ${e}`);
+		}
+	}
+
+	/** "Rescan" button on a manage-modal row. Invokes `rescanScanRoot` and
+	 * re-opens the checklist modal with `isRescan: true` in the header.
+	 * The management modal closes — the checklist modal takes its place
+	 * (one modal at a time, with the cascade-confirm stack-on-top being
+	 * the lone exception). */
+	async function runRescanFlow(root: ScanRootRow) {
+		try {
+			const candidates = await rescanScanRoot(root.id);
+			manageModal = null;
+			checklistModal = {
+				scanRootId: root.id,
+				rootPath: root.path,
+				isRescan: true,
+				rows: candidates.map((c) => ({
+					candidate: c,
+					ticked: c.already_imported
+				}))
+			};
+		} catch (e) {
+			const msg = String(e);
+			showToast(`could not rescan: ${msg}`);
+			logToCore('error', `rescan_scan_root failed: ${msg}`);
+		}
+	}
+
+	/** Open the cascade-remove confirmation dialog for a scan root. Stacks
+	 * ON TOP of the open management modal — the explicit exception to
+	 * "one modal at a time". */
+	function openConfirmRemove(entry: ManageRoot) {
+		confirmRemoveModal = {
+			root: entry.root,
+			childCount: entry.childCount
+		};
+	}
+
+	/** Confirm cascade-remove of a scan root. The backend cascade fires N
+	 * `project_removed` events BEFORE the DB rows are gone — the
+	 * canvas-005a `project_removed` handler is the single canonical
+	 * listener that drops each tile (this code does NOT duplicate the
+	 * subscription). After the cascade resolves, the management modal's
+	 * row list is refreshed; if zero roots remain, it closes. */
+	async function runRemoveScanRoot(scanRootId: number) {
+		try {
+			await removeScanRoot(scanRootId);
+			confirmRemoveModal = null;
+			await refreshManageModal();
+		} catch (e) {
+			const msg = String(e);
+			showToast(`could not remove scan root: ${msg}`);
+			logToCore(
+				'error',
+				`remove_scan_root failed for ${scanRootId}: ${msg}`
+			);
+			confirmRemoveModal = null;
+		}
+	}
+
+	/** Submit the discovery checklist modal's picks. Already-imported rows
+	 * are pre-ticked AND disabled — they cannot be unticked, and they are
+	 * already in the registry, so they are filtered out of the
+	 * `import_scanned_projects` request entirely. Tiles arrive via N
+	 * `project_added` events; the canvas-006 serialised live-add chain
+	 * gives them distinct spiral slots. */
+	async function runImportSelected(state: ChecklistModalState) {
+		const picks = state.rows
+			.filter((r) => r.ticked && !r.candidate.already_imported)
+			.map((r) => r.candidate.path);
+		if (picks.length === 0) return;
+		try {
+			await importScannedProjects(state.scanRootId, picks);
+			checklistModal = null;
+		} catch (e) {
+			const msg = String(e);
+			showToast(`could not import projects: ${msg}`);
+			logToCore('error', `import_scanned_projects failed: ${msg}`);
+		}
+	}
+
+	/** Whether the checklist modal's "Import selected" button is enabled.
+	 * Already-imported pre-ticks do NOT count toward this. */
+	function hasNewSelection(state: ChecklistModalState): boolean {
+		return state.rows.some(
+			(r) => r.ticked && !r.candidate.already_imported
+		);
+	}
+
+	/** Header controls — "Select all" / "Select none" — operate ONLY on
+	 * togglable (not-already-imported) rows. The header hides these when
+	 * there are zero togglable rows. */
+	function selectAllTogglable(state: ChecklistModalState) {
+		for (const r of state.rows) {
+			if (!r.candidate.already_imported) r.ticked = true;
+		}
+	}
+	function selectNoneTogglable(state: ChecklistModalState) {
+		for (const r of state.rows) {
+			if (!r.candidate.already_imported) r.ticked = false;
+		}
+	}
+	function countTogglableRows(state: ChecklistModalState): number {
+		return state.rows.filter((r) => !r.candidate.already_imported).length;
 	}
 
 	// Menu DOM ref + clamped position (canvas-005a). The menu opens at the
@@ -447,6 +722,11 @@
 
 			// --- initial fetch + live updates (ADR-009) -------------------
 			await refresh();
+			// canvas-005b: prime the "Manage scan roots…" menu item's
+			// visibility cache. The menu only renders this entry when at
+			// least one scan root exists; without the prime, the first
+			// right-click after launch would always omit it.
+			await refreshScanRootsCount();
 			unlistenEvent = await onDomainEvent((event) => {
 				switch (event.kind) {
 					case 'project_added':
@@ -730,8 +1010,15 @@
 		// empty-canvas menu (acceptance criterion).
 
 		/** Open the empty-canvas context menu at viewport coords `(x, y)`.
-		 * canvas-005a contributes a single item: "Add project…". canvas-005b
-		 * will append two more to the same items-array shape. */
+		 * Items, in order:
+		 *   - "Add project…"               (canvas-005a, always shown)
+		 *   - "Scan folder for projects…"  (canvas-005b, always shown)
+		 *   - "Manage scan roots…"         (canvas-005b, hidden when
+		 *                                   `scanRootsCount === 0`)
+		 *
+		 * The `scanRootsCount` cache is refreshed on mount, after every
+		 * `addScanRoot` resolves, and after every `removeScanRoot` resolves
+		 * — see `refreshScanRootsCount`. */
 		function openEmptyCanvasMenu(x: number, y: number) {
 			menu = {
 				x,
@@ -740,6 +1027,15 @@
 					{
 						label: 'Add project…',
 						onClick: () => void runAddProjectFlow()
+					},
+					{
+						label: 'Scan folder for projects…',
+						onClick: () => void runScanFolderFlow()
+					},
+					{
+						label: 'Manage scan roots…',
+						onClick: () => void runManageScanRootsFlow(),
+						hidden: scanRootsCount === 0
 					}
 				]
 			};
@@ -1124,6 +1420,209 @@
 {/if}
 
 <!--
+	Discovery checklist modal (canvas-005b). One reactive snapshot of
+	`checklistModal`; the same modal is reused for the post-`add_scan_root`
+	flow and the post-`rescan_scan_root` flow (the `isRescan` flag
+	differentiates the header).
+-->
+{#if checklistModal}
+	{@const state = checklistModal}
+	{@const togglableCount = countTogglableRows(state)}
+	{@const isEmpty = state.rows.length === 0}
+	<Modal onclose={() => (checklistModal = null)}>
+		{#snippet header()}
+			<div class="checklist-header">
+				<span class="checklist-header-path" title={state.rootPath}>
+					{state.rootPath}
+				</span>
+				<span class="checklist-header-suffix">
+					{#if isEmpty}
+						— no Agentheim projects found{state.isRescan ? ' (rescan)' : ''}
+					{:else}
+						— {state.rows.length} project{state.rows.length === 1 ? '' : 's'} found{state.isRescan
+							? ' (rescan)'
+							: ''}
+					{/if}
+				</span>
+				{#if !isEmpty && togglableCount > 0}
+					<div class="checklist-header-controls">
+						<button
+							type="button"
+							class="modal-link-button"
+							onclick={() => selectAllTogglable(state)}
+						>
+							Select all
+						</button>
+						<button
+							type="button"
+							class="modal-link-button"
+							onclick={() => selectNoneTogglable(state)}
+						>
+							Select none
+						</button>
+					</div>
+				{/if}
+			</div>
+		{/snippet}
+		{#snippet body()}
+			{#if isEmpty}
+				<p class="checklist-empty">
+					Nothing to import. Re-running the scan later will pick up new
+					clones.
+				</p>
+			{:else}
+				<ul class="checklist-list">
+					{#each state.rows as row (row.candidate.path)}
+						<li class="checklist-row" class:already-imported={row.candidate.already_imported}>
+							<label class="checklist-row-label">
+								<input
+									type="checkbox"
+									bind:checked={row.ticked}
+									disabled={row.candidate.already_imported}
+								/>
+								<span class="checklist-row-content">
+									<span class="checklist-row-path">
+										<span class="checklist-row-pathtext">{row.candidate.path}</span>
+										{#if row.candidate.already_imported}
+											<span class="checklist-row-badge">imported</span>
+										{/if}
+									</span>
+									<span class="checklist-row-nickname">
+										{row.candidate.nickname_suggestion}
+									</span>
+								</span>
+							</label>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{/snippet}
+		{#snippet footer()}
+			{#if isEmpty}
+				<button
+					type="button"
+					class="modal-button modal-button-primary"
+					onclick={() => (checklistModal = null)}
+				>
+					OK
+				</button>
+			{:else}
+				<button
+					type="button"
+					class="modal-button modal-button-secondary"
+					onclick={() => (checklistModal = null)}
+				>
+					Cancel
+				</button>
+				<button
+					type="button"
+					class="modal-button modal-button-primary"
+					disabled={!hasNewSelection(state)}
+					onclick={() => void runImportSelected(state)}
+				>
+					Import selected
+				</button>
+			{/if}
+		{/snippet}
+	</Modal>
+{/if}
+
+<!--
+	Scan-roots management modal (canvas-005b). Lists every registered scan
+	root with its child-project count, plus a Rescan and Remove button per
+	row. The cascade-remove confirmation stacks ON TOP of this modal — the
+	one explicit exception to "one modal at a time".
+-->
+{#if manageModal}
+	{@const manage = manageModal}
+	<Modal onclose={() => (manageModal = null)}>
+		{#snippet header()}
+			Scan roots
+		{/snippet}
+		{#snippet body()}
+			<ul class="manage-list">
+				{#each manage.roots as entry (entry.root.id)}
+					<li class="manage-row">
+						<div class="manage-row-info">
+							<span class="manage-row-path" title={entry.root.path}>
+								{entry.root.path}
+							</span>
+							<span class="manage-row-count">
+								{entry.childCount} project{entry.childCount === 1 ? '' : 's'}
+							</span>
+						</div>
+						<div class="manage-row-actions">
+							<button
+								type="button"
+								class="modal-button modal-button-secondary"
+								onclick={() => void runRescanFlow(entry.root)}
+							>
+								Rescan
+							</button>
+							<button
+								type="button"
+								class="modal-button modal-button-secondary modal-button-destructive"
+								onclick={() => openConfirmRemove(entry)}
+							>
+								Remove
+							</button>
+						</div>
+					</li>
+				{/each}
+			</ul>
+		{/snippet}
+		{#snippet footer()}
+			<button
+				type="button"
+				class="modal-button modal-button-secondary"
+				onclick={() => (manageModal = null)}
+			>
+				Close
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
+
+<!--
+	Cascade-remove confirmation dialog (canvas-005b). Renders ON TOP of the
+	manage modal — the stack ordering is just the source order here; the
+	confirmation's higher `z-index` (via the second Modal mount) wins.
+	Communicates the ADR-013 retention exception: cascade hard-deletes tile
+	state, NOT subject to ADR-005's 30-day window.
+-->
+{#if confirmRemoveModal}
+	{@const c = confirmRemoveModal}
+	<Modal maxWidth="480px" onclose={() => (confirmRemoveModal = null)}>
+		{#snippet header()}
+			Remove scan root
+		{/snippet}
+		{#snippet body()}
+			<p class="confirm-body">
+				Remove scan root <span class="confirm-path">{c.root.path}</span> and
+				all {c.childCount} project{c.childCount === 1 ? '' : 's'} discovered
+				under it? Tile state for those projects will not be retained.
+			</p>
+		{/snippet}
+		{#snippet footer()}
+			<button
+				type="button"
+				class="modal-button modal-button-secondary"
+				onclick={() => (confirmRemoveModal = null)}
+			>
+				Cancel
+			</button>
+			<button
+				type="button"
+				class="modal-button modal-button-primary modal-button-destructive"
+				onclick={() => void runRemoveScanRoot(c.root.id)}
+			>
+				Remove
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
+
+<!--
 	Outside-click dismissal for the context menu (canvas-005a). The handler
 	must run in the capture phase — before the canvas/tile pointerdown that
 	may itself want to open a new menu. The sequence "user clicks elsewhere
@@ -1209,5 +1708,221 @@
 		padding: var(--guppi-space-md) var(--guppi-space-lg);
 		z-index: 11;
 		pointer-events: none;
+	}
+
+	/*
+	 * Modal-internal styling (canvas-005b). The `Modal.svelte` primitive
+	 * owns the chrome (header/body/footer padding, backdrop, dismissal);
+	 * these classes style the contents of each consumer's snippets. Every
+	 * value is token-driven; no hard-coded colours/sizes/typography.
+	 */
+
+	/* Checklist modal header */
+	.checklist-header {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: var(--guppi-space-sm);
+	}
+	.checklist-header-path {
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-body);
+		color: var(--guppi-tile-text);
+		direction: rtl; /* truncate from the left for long paths */
+		text-align: left;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
+	}
+	.checklist-header-suffix {
+		color: var(--guppi-tile-text-muted);
+		font-weight: var(--guppi-weight-regular);
+	}
+	.checklist-header-controls {
+		margin-left: auto;
+		display: flex;
+		gap: var(--guppi-space-md);
+	}
+
+	/* Checklist modal body */
+	.checklist-empty {
+		color: var(--guppi-tile-text-muted);
+		margin: 0;
+	}
+	.checklist-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--guppi-space-xs);
+	}
+	.checklist-row {
+		border-radius: var(--guppi-radius-badge);
+	}
+	.checklist-row:hover {
+		background: var(--guppi-canvas-bg-raised);
+	}
+	.checklist-row.already-imported {
+		opacity: 0.6;
+	}
+	.checklist-row.already-imported:hover {
+		background: transparent; /* immune rows do not hover-highlight */
+	}
+	.checklist-row-label {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--guppi-space-md);
+		padding: var(--guppi-space-sm) var(--guppi-space-md);
+		cursor: pointer;
+	}
+	.checklist-row.already-imported .checklist-row-label {
+		cursor: default;
+	}
+	.checklist-row-content {
+		display: flex;
+		flex-direction: column;
+		gap: var(--guppi-space-xs);
+		min-width: 0;
+		flex: 1 1 auto;
+	}
+	.checklist-row-path {
+		display: flex;
+		align-items: center;
+		gap: var(--guppi-space-sm);
+		min-width: 0;
+	}
+	.checklist-row-pathtext {
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-body);
+		color: var(--guppi-bc-text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+	}
+	.checklist-row-badge {
+		background: var(--guppi-status-idle);
+		color: var(--guppi-status-text);
+		border-radius: var(--guppi-radius-badge);
+		padding: 0 var(--guppi-space-sm);
+		font-size: var(--guppi-size-caption);
+		font-weight: var(--guppi-weight-bold);
+		font-family: var(--guppi-font-family);
+		flex-shrink: 0;
+	}
+	.checklist-row-nickname {
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-caption);
+		color: var(--guppi-bc-text-muted);
+	}
+
+	/* Manage-roots modal body */
+	.manage-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--guppi-space-sm);
+	}
+	.manage-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--guppi-space-md);
+		padding: var(--guppi-space-sm) var(--guppi-space-md);
+		border-radius: var(--guppi-radius-badge);
+	}
+	.manage-row:hover {
+		background: var(--guppi-canvas-bg-raised);
+	}
+	.manage-row-info {
+		display: flex;
+		flex-direction: column;
+		gap: var(--guppi-space-xs);
+		min-width: 0;
+		flex: 1 1 auto;
+	}
+	.manage-row-path {
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-body);
+		color: var(--guppi-tile-text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.manage-row-count {
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-caption);
+		color: var(--guppi-tile-text-muted);
+	}
+	.manage-row-actions {
+		display: flex;
+		gap: var(--guppi-space-sm);
+		flex-shrink: 0;
+	}
+
+	/* Confirm-remove modal body */
+	.confirm-body {
+		margin: 0;
+		color: var(--guppi-tile-text);
+		line-height: 1.5;
+	}
+	.confirm-path {
+		font-family: var(--guppi-font-family-mono);
+		color: var(--guppi-bc-text);
+	}
+
+	/*
+	 * Buttons (canvas-005b). The styleguide does not yet codify a Modal
+	 * button pattern; these classes inline the contract. If a third
+	 * consumer surface lands, lift to `STYLEGUIDE.md` as a followup.
+	 */
+	.modal-button {
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-body);
+		font-weight: var(--guppi-weight-medium);
+		padding: var(--guppi-space-sm) var(--guppi-space-md);
+		border-radius: var(--guppi-radius-badge);
+		cursor: pointer;
+		border: 1px solid transparent;
+	}
+	.modal-button-primary {
+		background: var(--guppi-tile-border);
+		color: var(--guppi-status-text);
+		border-color: var(--guppi-tile-border);
+	}
+	.modal-button-primary:disabled {
+		background: var(--guppi-canvas-bg-raised);
+		color: var(--guppi-tile-text-muted);
+		border-color: var(--guppi-canvas-bg-raised);
+		cursor: not-allowed;
+	}
+	.modal-button-secondary {
+		background: transparent;
+		color: var(--guppi-tile-text);
+		border: 1px solid var(--guppi-tile-border);
+	}
+	.modal-button-destructive {
+		border-color: var(--guppi-status-missing);
+	}
+	.modal-button-destructive.modal-button-primary {
+		background: var(--guppi-status-missing);
+		color: var(--guppi-status-text);
+	}
+
+	/* Link-style buttons for the "Select all" / "Select none" header
+	 * controls — chromeless, the styleguide's `tile-text` colour. */
+	.modal-link-button {
+		background: transparent;
+		border: 0;
+		padding: 0;
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-body);
+		color: var(--guppi-tile-border);
+		cursor: pointer;
+		text-decoration: underline;
 	}
 </style>

@@ -45,6 +45,34 @@ export interface Point {
 	y: number;
 }
 
+/** One row of the `scan_roots` table — a folder the user has registered as a
+ * rescannable parent for project discovery (ADR-013, `project-registry-002a`).
+ * Mirrors `db::ScanRootRow`. */
+export interface ScanRootRow {
+	id: number;
+	path: string;
+	depth_cap: number;
+	added_at: string;
+}
+
+/** One row of a scan-root walk's checklist (ADR-013, `project-registry-002a`).
+ * Mirrors `scan::ScanCandidate`. The `already_imported` flag drives the
+ * disabled-pre-checked rendering in the discovery checklist modal
+ * (`canvas-005b`). */
+export interface ScanCandidate {
+	path: string;
+	nickname_suggestion: string;
+	already_imported: boolean;
+}
+
+/** Return shape of `add_scan_root` — the persisted root's id plus the
+ * candidate checklist from walking its subtree. Mirrors
+ * `AddScanRootResult` in `src-tauri/src/lib.rs`. */
+export interface AddScanRootResult {
+	scan_root_id: number;
+	candidates: ScanCandidate[];
+}
+
 /** Camera state — pan + zoom — the single source of truth per ADR-003. */
 export interface CameraState {
 	pan_x: number;

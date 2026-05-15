@@ -30,7 +30,11 @@ The styleguide was signed off in person by Marco on 2026-05-14, so the gate is o
 - **Markdown pane** — the renderer for `vision.md`, `research/*.md`, ADRs, BC READMEs in the detail view.
 - **Targeted update** — patching the client-side `ProjectSnapshot` in place from a fine-grained filesystem event (`task_moved` / `task_added` / `task_removed` / `bc_appeared` / `bc_disappeared`) instead of re-fetching the whole snapshot. A tile's task counts tick, a BC node appears/disappears, without a `get_project` round-trip (`canvas-001`).
 - **Resync** — the one remaining full `get_project` re-fetch, triggered only by the `resync_required` domain event. The Rust core's event bridge emits it when its broadcast receiver lags and loses events it cannot reconstruct (ADR-009 lag-resync strategy).
-- **Context menu** — a screen-space HTML overlay (ADR-003 overlay layer) opened by right-click. The empty-canvas menu and tile menu share one items-array shape (`{ label, onClick, hidden? }`) so future menu items append cleanly. canvas-005a contributes "Add project…" (empty canvas) and "Remove project" (tile); canvas-005b will append "Scan folder for projects…" and "Manage scan roots…" to the empty-canvas menu. Dismissed on item click, pointer-down outside, `Escape`, or any pan/zoom gesture (a window-level capture-phase pointerdown listener owns outside-click dismissal). Viewport-clamped after first paint.
+- **Context menu** — a screen-space HTML overlay (ADR-003 overlay layer) opened by right-click. The empty-canvas menu and tile menu share one items-array shape (`{ label, onClick, hidden? }`) so future menu items append cleanly. canvas-005a contributes "Add project…" (empty canvas) and "Remove project" (tile); canvas-005b appends "Scan folder for projects…" (always shown) and "Manage scan roots…" (hidden when `scanRootsCount === 0`, the cached count of registered scan roots — refreshed on mount, after `addScanRoot`, after `removeScanRoot`). Dismissed on item click, pointer-down outside, `Escape`, or any pan/zoom gesture (a window-level capture-phase pointerdown listener owns outside-click dismissal). Viewport-clamped after first paint.
+- **Modal** — a centered HTML-overlay panel (ADR-003 overlay layer) above a dimmed backdrop (`--guppi-canvas-bg` @ 70%). Generic primitive at `src/lib/Modal.svelte`: header / body / footer snippet slots, `Escape` + backdrop-click dismissal. Three consumers shipped in canvas-005b — the **discovery checklist**, the **scan-roots management** surface, and the **cascade-remove confirmation**. Modals are mutually exclusive — EXCEPT the cascade-confirm dialog, which stacks ON TOP of the management modal (the lower modal stays mounted behind it; clicks on its surface are blocked by the upper modal's backdrop). A fourth consumer is the threshold for codifying buttons/modal as a STYLEGUIDE.md component entry.
+- **Discovery checklist** — the modal that opens after `addScanRoot` or `rescanScanRoot` resolves. Lists every `ScanCandidate` from the walker as a row with a checkbox, mono-path, and nickname suggestion. `already_imported: true` rows render at 60% opacity with the checkbox pre-checked **and disabled** and a small `statusIdle` "imported" pill after the path — they cannot be unticked and are filtered out of the eventual `importScannedProjects` request. "Select all" / "Select none" header controls operate on togglable rows only. "Import selected" is disabled until at least one new (not-already-imported) candidate is ticked. The empty-candidates case (zero rows from `addScanRoot`) still opens the modal, with the "no Agentheim projects found" empty state and a single "OK" button — the scan root is persisted by the backend BEFORE the walk runs, so an empty subtree still leaves a rescannable root behind (ADR-013).
+- **Scan-roots management** — the modal that lists every row from `listScanRoots()` with its per-row child-project count, plus a Rescan button (re-runs the walk + opens the checklist) and a Remove button (opens the cascade-remove confirmation). The per-row count comes from a thin `list_projects_by_scan_root` IPC wrapper (`canvas-005b`) over the existing `Db::list_projects_by_scan_root`; the frontend takes `.length` of the returned `Vec<i64>` because we never need the ids themselves at v1 — only the count. The empty state never renders because the menu item is hidden when zero roots exist.
+- **Cascade-remove confirmation** — the small two-button dialog opened from the management modal's "Remove" button. Names the scan-root path AND the child-project count and explicitly states that tile state will not be retained — ADR-013 makes the cascade hard-delete, NOT subject to ADR-005's 30-day window. Confirming invokes `removeScanRoot(scanRootId)`; the backend fires `ProjectRemoved` per child BEFORE tearing watchers down, and the canvas-005a `project_removed` handler drops the tiles (one event variant, one listener — canvas-005b does NOT re-subscribe). After the cascade resolves, the management modal refreshes via `listScanRoots()` + per-row counts; if zero roots remain, it closes and the "Manage scan roots…" menu item hides on the next right-click.
 - **Error toast** — a screen-space HTML overlay pinned top-center, `statusMissing` border (refusal, not failure). Auto-dismisses after 3000ms; one toast at a time. canvas-005a uses it for the `register_project` rejection path ("not an Agentheim project"), which is the exact IPC contract string and must surface verbatim.
 - **Missing tile** — the canvas visual for a registered-but-unwatched project (`ProjectSnapshot.missing: true`). Tile body at 50% opacity, border swapped from `tileBorder` to `statusMissing`, `✕` glyph at `spacing.lg` in the top-right corner. `bcs: []` on the snapshot keeps the orbit empty; the tile is NOT filtered out of the per-project collection (the missing visual is the affordance). Right-click still offers "Remove project".
 
@@ -92,6 +96,32 @@ duplication (one event variant, two emitters in the project-registry).
 A `ProjectSnapshot.missing` tile renders as a **missing tile** (above);
 its right-click menu still surfaces "Remove project" so the user can
 recover.
+
+The **scan-folder flow** and the **scan-root management surface**
+(canvas-005b) ride the same right-click empty-canvas menu. "Scan folder
+for projects…" opens the same folder picker → `addScanRoot(path)` →
+**discovery checklist modal** with the returned `ScanCandidate` rows
+(checkbox-per-row; already-imported rows pre-ticked-and-disabled with an
+"imported" pill; "Select all" / "Select none" header controls on togglable
+rows only; "Import selected" disabled until a new candidate is ticked).
+The user's picks (with `already_imported` rows filtered out) feed
+`importScannedProjects(scan_root_id, paths)`, which fires N back-to-back
+`ProjectAdded` events — and canvas-006's serialised live-add chain is the
+load-bearing piece that turns those N events into N distinct spiral
+slots (without it, N-1 of the imports collide and silently drop). "Manage
+scan roots…" opens the **scan-roots management modal** listing every
+registered root with its live child-project count (via a thin
+`list_projects_by_scan_root` IPC wrapper that returns `Vec<i64>` — the
+frontend's `.length`), a Rescan button (re-walks the root → reopens the
+checklist with the rescan flag set in the header), and a Remove button
+(opens the cascade-remove confirmation, which stacks ON TOP of the
+management modal — the explicit exception to one-modal-at-a-time). The
+confirmation names the path AND the child count and warns that tile state
+will not be retained (ADR-013 cascade hard-deletes, NOT subject to
+ADR-005's 30-day window). On confirm: `removeScanRoot` fires N
+`ProjectRemoved` events through the canvas-005a handler; the management
+modal refreshes, and if zero roots remain it closes and "Manage scan
+roots…" hides on the next right-click.
 
 ## Upstream dependencies
 
