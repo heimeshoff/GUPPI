@@ -26,6 +26,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 thiserror = "1"
+# ADR-004 / ADR-010: cross-platform OS config dir (Windows `%APPDATA%`, macOS
+# `~/Library/Application Support`, Linux `~/.config`). Used to anchor GUPPI's
+# state under `<config>/guppi/` instead of Tauri's identifier-derived path.
+dirs = "5"
 # ADR-006: PTY/session ownership. `portable-pty` wraps ConPTY on Windows.
 portable-pty = "0.8"
 

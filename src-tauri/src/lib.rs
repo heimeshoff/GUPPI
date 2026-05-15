@@ -590,12 +590,16 @@ pub fn run() {
     tauri::Builder::default()
         .manage(bus.clone())
         .setup(move |app| {
-            // --- ADR-010: logging to %APPDATA%\guppi\logs ---------------
-            let log_dir = app
-                .path()
-                .app_config_dir()
-                .map(|d| d.join("logs"))
-                .unwrap_or_else(|_| PathBuf::from("logs"));
+            // GUPPI anchors its state under `<os-config-dir>/guppi/` per
+            // ADR-004 and ADR-010 — not under Tauri's identifier-derived
+            // path (`%APPDATA%\com.heimeshoff.guppi\`). Resolved via the
+            // `dirs` crate so the same code works on every target.
+            let guppi_dir = dirs::config_dir()
+                .ok_or_else(|| "could not resolve OS config dir".to_string())
+                .map(|d| d.join("guppi"))?;
+
+            // --- ADR-010: logging to <config>/guppi/logs ----------------
+            let log_dir = guppi_dir.join("logs");
             // The guard must outlive the process; hand it to Tauri to own.
             match logging::init(&log_dir) {
                 Ok(guard) => {
@@ -604,12 +608,9 @@ pub fn run() {
                 Err(e) => eprintln!("WARNING: could not initialise file logging: {e}"),
             }
 
-            // --- ADR-004: SQLite state in %APPDATA%\guppi -------------
-            let config_dir = app.path().app_config_dir().map_err(|e| {
-                format!("could not resolve app config dir: {e}")
-            })?;
-            std::fs::create_dir_all(&config_dir)?;
-            let db_path = config_dir.join("guppi.db");
+            // --- ADR-004: SQLite state in <config>/guppi ----------------
+            std::fs::create_dir_all(&guppi_dir)?;
+            let db_path = guppi_dir.join("guppi.db");
             let db = Arc::new(
                 Db::open(&db_path)
                     .map_err(|e| format!("could not open state database: {e}"))?,
