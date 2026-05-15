@@ -25,6 +25,27 @@ export function getProject(projectId: number): Promise<ProjectSnapshot> {
 	return invoke<ProjectSnapshot>('get_project', { projectId });
 }
 
+/** Register a single Agentheim folder manually (ADR-005 "Add project…",
+ * `project-registry-003`). The canvas's right-click → folder-picker flow
+ * (`canvas-005a`) hands this the absolute path the user picked. On success the
+ * core fires `ProjectAdded` and the existing live-add path renders the tile.
+ *
+ * On rejection the backend returns the **exact** string
+ * `"not an Agentheim project"` — the canvas renders this in an error toast.
+ * The string is part of the IPC contract; do not rephrase it. */
+export function registerProject(path: string): Promise<number> {
+	return invoke<number>('register_project', { path });
+}
+
+/** Soft-delete a registered project (ADR-005 single "Remove project"
+ * affordance, `project-registry-003`). The `tile_positions` row is preserved
+ * for the 30-day retention window; re-adding via `registerProject` revives the
+ * tile at its old spot. The core fires `ProjectRemoved`; the canvas drops the
+ * tile through its `project_removed` event handler. */
+export function removeProject(projectId: number): Promise<void> {
+	return invoke('remove_project', { projectId });
+}
+
 /** Persist a project tile's position after a drag (ADR-004). Takes
  * `projectId` explicitly — the registry no longer rides on the core's
  * `AppState` (`project-registry-001`). */

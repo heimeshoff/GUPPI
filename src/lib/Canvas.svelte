@@ -33,6 +33,7 @@
 
 	import { onMount } from 'svelte';
 	import { Application, Container, Graphics, Text } from 'pixi.js';
+	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { Camera } from './camera.svelte';
 	import {
 		getProject,
@@ -40,6 +41,8 @@
 		loadCamera,
 		loadTilePosition,
 		onDomainEvent,
+		registerProject,
+		removeProject,
 		saveCamera,
 		saveTilePosition,
 		logToCore
@@ -51,11 +54,71 @@
 		color,
 		typography,
 		shape,
+		spacing,
 		motion,
 		statusColor,
 		statusGlyph,
 		type TaskState
 	} from './design/tokens';
+
+	// --- Right-click context menu (canvas-005a) -----------------------
+	// An items-array shape so canvas-005b can append "Scan folder for
+	// projects…" and "Manage scan roots…" to the empty-canvas menu without
+	// touching this component's menu rendering. `hidden` is reserved for
+	// 005b's "Manage scan roots…" (hidden when the scan-roots list is empty).
+	interface MenuItem {
+		label: string;
+		onClick: () => void;
+		hidden?: boolean;
+	}
+	interface MenuState {
+		x: number;
+		y: number;
+		items: MenuItem[];
+	}
+	let menu = $state<MenuState | null>(null);
+
+	// --- Error toast (canvas-005a) -----------------------------------
+	// One toast at a time; a new toast replaces the current one rather than
+	// stacking. Used for the `register_project` rejection path
+	// ("not an Agentheim project"). Auto-dismisses after 3000ms.
+	let toastMessage = $state<string | null>(null);
+	let toastTimer: ReturnType<typeof setTimeout> | null = null;
+	function showToast(message: string) {
+		if (toastTimer) clearTimeout(toastTimer);
+		toastMessage = message;
+		toastTimer = setTimeout(() => {
+			toastMessage = null;
+			toastTimer = null;
+		}, 3000);
+	}
+
+	// Menu DOM ref + clamped position (canvas-005a). The menu opens at the
+	// raw click coords, then an `$effect` measures and clamps so the menu
+	// stays fully within the viewport (the simplest viable: `top + height <=
+	// viewport.height`, `left + width <= viewport.width`). Initial paint at
+	// the raw click is briefly possible; in practice the effect lands on the
+	// next microtask before the user sees mis-clipping.
+	let menuEl = $state<HTMLDivElement | null>(null);
+	let menuLeft = $state(0);
+	let menuTop = $state(0);
+	$effect(() => {
+		if (!menu) return;
+		const x = menu.x;
+		const y = menu.y;
+		// First paint at the raw coords; measure-and-clamp follows in the
+		// post-effect microtask once the DOM node is attached.
+		menuLeft = x;
+		menuTop = y;
+		queueMicrotask(() => {
+			if (!menuEl) return;
+			const rect = menuEl.getBoundingClientRect();
+			const vw = window.innerWidth;
+			const vh = window.innerHeight;
+			menuLeft = Math.max(0, Math.min(x, vw - rect.width));
+			menuTop = Math.max(0, Math.min(y, vh - rect.height));
+		});
+	});
 
 	let host: HTMLDivElement;
 	const camera = new Camera();
@@ -223,6 +286,13 @@
 						);
 					});
 
+					// Missing-tile rendering (canvas-005a): a registry row whose
+					// `.agentheim/` is gone on disk renders dim, with the
+					// `statusMissing` border and a `✕` corner glyph. The
+					// snapshot's `bcs: []` is already empty so no BC nodes
+					// loop for it above. The tile is NOT filtered out — the
+					// missing visual is the affordance.
+					const isMissing = entry.snapshot.missing;
 					const tile = makeNode({
 						key: `project:${entry.id}`,
 						screenX: projScreen.x,
@@ -231,7 +301,7 @@
 						h: shape.tileHeight * z,
 						radius: shape.radiusTile * z,
 						fill: color.tileFill,
-						border: color.tileBorder,
+						border: isMissing ? color.statusMissing : color.tileBorder,
 						titleColor: color.tileText,
 						subtitleColor: color.tileTextMuted,
 						title: entry.snapshot.name,
@@ -239,6 +309,12 @@
 						statusState: null,
 						z
 					});
+					if (isMissing) {
+						tile.alpha = 0.5;
+						tile.addChild(
+							makeMissingGlyph(projScreen, shape.tileWidth * z, z)
+						);
+					}
 					attachTileDrag(tile, entry.id, projScreen, z);
 					world.addChild(tile);
 				}
@@ -255,13 +331,29 @@
 			let lastY = 0;
 
 			app.canvas.addEventListener('pointerdown', (e) => {
+				// Right-button on empty canvas = open the empty-canvas context
+				// menu at the click coordinates (canvas-005a). It is the only
+				// way to start the "Add project…" flow. The window-level
+				// capture-phase dismisser will have already nulled any
+				// currently-open menu before this listener runs, so opening a
+				// new one here works cleanly.
+				if (e.button === 2) {
+					e.preventDefault();
+					openEmptyCanvasMenu(e.clientX, e.clientY);
+					return;
+				}
 				// Tile dragging is handled by each tile's own hit area; a
 				// pointerdown that reaches the canvas is empty-space = pan.
 				panning = true;
 				lastX = e.clientX;
 				lastY = e.clientY;
 				cameraTarget = null; // a manual gesture cancels any eased transition
+				// `menu` was already cleared by the capture-phase listener
+				// above; no need to repeat it here.
 			});
+			// Suppress the browser's native context menu so our overlay can
+			// own the right-click affordance.
+			app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 			// One shared window-level pointermove for both camera-pan and
 			// active tile drag — canvas-002's shared drag controller.
@@ -310,6 +402,10 @@
 					const rect = host.getBoundingClientRect();
 					camera.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
 					cameraTarget = null;
+					// Any zoom gesture dismisses an open context menu — the menu
+					// is screen-space-anchored to a click point and would lose
+					// its semantic anchor under the moving canvas.
+					menu = null;
 					renderScene();
 					void saveCamera(camera.snapshot());
 				},
@@ -318,10 +414,36 @@
 
 			// --- camera affordance: zoom-to-fit on "f" --------------------
 			window.addEventListener('keydown', (e) => {
+				if (e.key === 'Escape' && menu) {
+					// Escape dismisses any open context menu (canvas-005a).
+					menu = null;
+					return;
+				}
 				if (e.key === 'f' || e.key === 'F') {
 					beginZoomToFit();
 				}
 			});
+
+			// --- outside-click dismissal for the context menu (canvas-005a) -
+			// Capture-phase so it runs BEFORE the canvas/tile pointerdown
+			// that may itself open a new menu (right-click). Sequence:
+			// dismiss → handler optionally opens a new one. "Last click wins"
+			// (right-clicking on a tile while the empty-canvas menu is open
+			// swaps to the tile menu) falls out for free.
+			window.addEventListener(
+				'pointerdown',
+				(e) => {
+					if (!menu) return;
+					if (
+						menuEl &&
+						e.target instanceof Node &&
+						menuEl.contains(e.target)
+					)
+						return;
+					menu = null;
+				},
+				true
+			);
 
 			// --- initial fetch + live updates (ADR-009) -------------------
 			await refresh();
@@ -347,12 +469,36 @@
 						// canvas does not break when this fires; it renders
 						// nothing different.
 						return;
-					case 'project_removed':
-						// `project-registry-003` ships the event; canvas-005b
-						// ships the tile-drop behaviour (with the right-click
-						// "Remove project" affordance). For this task we only
-						// tolerate the event — no crash, no model change yet.
+					case 'project_removed': {
+						// THE canonical `project_removed` handler (canvas-005a).
+						// Both code paths in `project-registry-003` fire the
+						// same event variant: the user-initiated single
+						// `remove_project` (this task's "Remove project"
+						// affordance) and `remove_scan_root`'s cascade fan-out
+						// (canvas-005b territory). canvas-005b MUST NOT
+						// duplicate this listener — one event variant, one
+						// listener.
+						//
+						// Drop the entry from `projects`. The backend has
+						// already torn down the watcher; `tile_positions` is
+						// either preserved (soft-delete via `remove_project`,
+						// the 30-day undo window) or hard-deleted (cascade via
+						// `remove_scan_root`'s `ON DELETE CASCADE`). The
+						// canvas does not need to distinguish — the position
+						// either revives on re-add (single-remove) or stays
+						// gone (cascade), both correct.
+						const idx = projects.findIndex(
+							(p) => p.id === event.project_id
+						);
+						if (idx === -1) return;
+						projects = projects.filter((p) => p.id !== event.project_id);
+						if (hoveredKey?.startsWith(`project:${event.project_id}`)) {
+							hoveredKey = null;
+						}
+						status = `${projects.length} project${projects.length === 1 ? '' : 's'} · press F to fit`;
+						renderScene();
 						return;
+					}
 					case 'resync_required': {
 						// The bridge lagged and lost events it cannot
 						// reconstruct — the one full re-fetch path (ADR-009).
@@ -577,6 +723,101 @@
 			}
 		}
 
+		// --- Context-menu openers (canvas-005a) ----------------------
+		// `menu` is a `$state` MenuState | null. Opening a new menu simply
+		// reassigns; "last click wins" falls out for free, so right-clicking
+		// on the empty canvas while a tile menu is open swaps to the
+		// empty-canvas menu (acceptance criterion).
+
+		/** Open the empty-canvas context menu at viewport coords `(x, y)`.
+		 * canvas-005a contributes a single item: "Add project…". canvas-005b
+		 * will append two more to the same items-array shape. */
+		function openEmptyCanvasMenu(x: number, y: number) {
+			menu = {
+				x,
+				y,
+				items: [
+					{
+						label: 'Add project…',
+						onClick: () => void runAddProjectFlow()
+					}
+				]
+			};
+		}
+
+		/** Open the tile context menu at viewport coords `(x, y)` for the
+		 * project with `projectId`. canvas-005a contributes a single item:
+		 * "Remove project". A missing tile uses the same menu, by design —
+		 * removing a missing project is the supported recovery affordance. */
+		function openTileMenu(x: number, y: number, projectId: number) {
+			menu = {
+				x,
+				y,
+				items: [
+					{
+						label: 'Remove project',
+						onClick: () => void runRemoveProjectFlow(projectId)
+					}
+				]
+			};
+		}
+
+		/** "Add project…" flow (canvas-005a). Opens a Tauri-native folder
+		 * picker, invokes `registerProject` on a chosen path, and routes the
+		 * three terminal states:
+		 *
+		 *   - cancelled picker  → silent close, no toast
+		 *   - register success  → backend fires `ProjectAdded`; the live-add
+		 *                         chain renders the tile (no UI side-effect
+		 *                         here)
+		 *   - "not an Agentheim project" → error toast for 3000ms
+		 *
+		 * Any other unexpected error is also routed through the toast so the
+		 * user sees something — silent failure on a user-initiated affordance
+		 * is the worst UX outcome. */
+		async function runAddProjectFlow() {
+			menu = null;
+			let picked: string | string[] | null = null;
+			try {
+				picked = await openDialog({ directory: true, multiple: false });
+			} catch (e) {
+				logToCore('error', `open dialog failed: ${e}`);
+				showToast(`could not open folder picker: ${e}`);
+				return;
+			}
+			if (picked === null) return; // user cancelled — silent
+			const path = Array.isArray(picked) ? picked[0] : picked;
+			if (!path) return;
+			try {
+				await registerProject(path);
+				// Success path is silent here — the backend's `ProjectAdded`
+				// flows through `onDomainEvent` → `enqueueLiveAdd` → tile.
+			} catch (e) {
+				const msg = String(e);
+				// The IPC contract: `register_project` rejects with the
+				// exact string "not an Agentheim project". Surface it
+				// verbatim (it is the message the user needs to see).
+				showToast(msg);
+				logToCore('warn', `register_project rejected: ${msg}`);
+			}
+		}
+
+		/** "Remove project" flow (canvas-005a). No confirmation step — ADR-005's
+		 * 30-day undo window (re-add via `register_project` restores the tile
+		 * in place from the preserved `tile_positions` row) is the safety net.
+		 * The actual tile-drop happens through the `project_removed` event
+		 * handler in `onDomainEvent`, not here. */
+		async function runRemoveProjectFlow(projectId: number) {
+			menu = null;
+			try {
+				await removeProject(projectId);
+			} catch (e) {
+				const msg = String(e);
+				showToast(`could not remove project: ${msg}`);
+				logToCore('error', `remove_project failed for ${projectId}: ${msg}`);
+			}
+		}
+
 		// World-space position of BC node `i` of `count`, radiating around
 		// the supplied tile origin so edges fan out cleanly. canvas-002 added
 		// the `origin` parameter so each tile has its own ring of BCs rather
@@ -723,6 +964,36 @@
 			return badge;
 		}
 
+		// Missing-tile corner glyph (canvas-005a). A `✕` in the tile's
+		// top-right corner, `statusMissing` colour, glyph size driven by
+		// `spacing.lg` (16px world-space) so it scales with the camera. Paired
+		// with the dimmed tile body + magenta border, this is the styleguide's
+		// "missing" state applied to project tiles (status palette is colour +
+		// glyph, not colour alone).
+		function makeMissingGlyph(
+			nodeScreen: Point,
+			nodeW: number,
+			z: number
+		): Container {
+			const c = new Container();
+			const glyph = new Text({
+				text: statusGlyph.missing,
+				style: {
+					fill: color.statusMissing,
+					fontFamily: typography.fontFamily,
+					fontSize: Math.max(8, spacing.lg * z),
+					fontWeight: String(typography.weightBold) as '700'
+				}
+			});
+			glyph.anchor.set(1, 0);
+			glyph.position.set(
+				nodeScreen.x + nodeW - spacing.sm * z,
+				nodeScreen.y + spacing.sm * z
+			);
+			c.addChild(glyph);
+			return c;
+		}
+
 		// The ambient voice-state indicator — a small glyph + dot pinned to the
 		// bottom-right of the viewport. Screen-space (not world-space) so it
 		// does not move when the canvas pans. This is the styleguide's voice
@@ -782,6 +1053,15 @@
 
 			tile.on('pointerdown', (e) => {
 				e.stopPropagation(); // do not let this start a camera pan
+				// Right-button on a tile = open the tile context menu at the
+				// click coordinates (canvas-005a). The window-level
+				// capture-phase dismisser has already nulled any previous
+				// menu, so this reassignment effectively swaps menus when the
+				// user right-clicks elsewhere while a menu is open.
+				if (e.button === 2) {
+					openTileMenu(e.global.x, e.global.y, id);
+					return;
+				}
 				cameraTarget = null;
 				dragProjectId = id;
 				dragOriginX = e.global.x;
@@ -800,6 +1080,60 @@
 <div class="canvas-host" bind:this={host}></div>
 <div class="status">{status}</div>
 
+<!--
+	Right-click context menu (canvas-005a). A screen-space HTML overlay (ADR-003
+	overlay layer) positioned absolutely at the click coordinates and styled
+	from the design tokens. Items array is the seam canvas-005b extends; the
+	component otherwise stays put.
+-->
+{#if menu}
+	{@const visibleItems = menu.items.filter((it) => !it.hidden)}
+	<div
+		class="context-menu"
+		role="menu"
+		tabindex="-1"
+		bind:this={menuEl}
+		style="left: {menuLeft}px; top: {menuTop}px;"
+		onpointerdown={(e) => e.stopPropagation()}
+		oncontextmenu={(e) => e.preventDefault()}
+	>
+		{#each visibleItems as item (item.label)}
+			<button
+				type="button"
+				class="context-menu-item"
+				role="menuitem"
+				onclick={() => {
+					item.onClick();
+				}}
+			>
+				{item.label}
+			</button>
+		{/each}
+	</div>
+{/if}
+
+<!--
+	Error toast (canvas-005a). One toast at a time; new toast replaces the
+	current one. Pinned to top-center of the viewport. Used for the
+	`register_project` rejection path.
+-->
+{#if toastMessage}
+	<div class="error-toast" role="status" aria-live="polite">
+		{toastMessage}
+	</div>
+{/if}
+
+<!--
+	Outside-click dismissal for the context menu (canvas-005a). The handler
+	must run in the capture phase — before the canvas/tile pointerdown that
+	may itself want to open a new menu. The sequence "user clicks elsewhere
+	while a menu is open" therefore becomes (1) dismiss the current menu, (2)
+	the canvas/tile handler optionally opens a new one (right-click) or just
+	starts a pan/drag (left/middle-click). The capture-phase listener is
+	added imperatively in `onMount`; Svelte's `<svelte:window>` is bubble-only.
+-->
+
+
 <style>
 	/* The HTML chrome layer reads the design tokens (ADR-003 overlay layer). */
 	@import './design/tokens.css';
@@ -817,6 +1151,63 @@
 		font-family: var(--guppi-font-family-mono);
 		font-size: var(--guppi-size-caption);
 		color: var(--guppi-bc-text-muted);
+		pointer-events: none;
+	}
+
+	/*
+	 * Context menu — a screen-space overlay (ADR-003) positioned at click
+	 * coordinates. Tokens drive every value (canvas-005a inlines the styling
+	 * contract pending a possible follow-up STYLEGUIDE entry).
+	 */
+	.context-menu {
+		position: absolute;
+		min-width: 160px;
+		background: var(--guppi-tile-fill);
+		border: 1px solid var(--guppi-tile-border);
+		border-radius: var(--guppi-radius-tile);
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-body);
+		color: var(--guppi-tile-text);
+		padding: var(--guppi-space-xs) 0;
+		z-index: 10;
+		user-select: none;
+	}
+	.context-menu-item {
+		display: block;
+		width: 100%;
+		background: transparent;
+		border: 0;
+		text-align: left;
+		padding: var(--guppi-space-sm) var(--guppi-space-md);
+		font-family: inherit;
+		font-size: inherit;
+		color: inherit;
+		cursor: pointer;
+	}
+	.context-menu-item:hover,
+	.context-menu-item:focus {
+		background: var(--guppi-canvas-bg-raised);
+		outline: none;
+	}
+
+	/*
+	 * Error toast (canvas-005a). Pinned to top-center, `statusMissing` border
+	 * to signal refusal (not failure). Auto-dismisses after 3s — the JS timer
+	 * just clears `toastMessage`.
+	 */
+	.error-toast {
+		position: absolute;
+		top: var(--guppi-space-lg);
+		left: 50%;
+		transform: translateX(-50%);
+		background: var(--guppi-tile-fill);
+		border: 1px solid var(--guppi-status-missing);
+		border-radius: var(--guppi-radius-tile);
+		color: var(--guppi-tile-text);
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-body);
+		padding: var(--guppi-space-md) var(--guppi-space-lg);
+		z-index: 11;
 		pointer-events: none;
 	}
 </style>

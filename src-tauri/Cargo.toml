@@ -16,6 +16,11 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# ADR-005 / canvas-005a: the "Add project…" affordance opens a native folder
+# picker. The dialog plugin is wired here on the Rust side; the matching
+# frontend wrapper is `@tauri-apps/plugin-dialog`, capability granted in
+# `capabilities/default.json`.
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }

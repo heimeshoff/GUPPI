@@ -758,6 +758,11 @@ pub fn run() {
     let bus = EventBus::new();
 
     tauri::Builder::default()
+        // ADR-005 / canvas-005a: the canvas's "Add project…" affordance opens
+        // a Tauri-native folder picker via the dialog plugin. Registered here
+        // so `@tauri-apps/plugin-dialog`'s `open({ directory: true })` resolves
+        // through the matching `dialog:` capability.
+        .plugin(tauri_plugin_dialog::init())
         .manage(bus.clone())
         .setup(move |app| {
             // GUPPI anchors its state under `<os-config-dir>/guppi/` per

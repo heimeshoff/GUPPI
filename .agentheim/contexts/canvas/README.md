@@ -30,6 +30,9 @@ The styleguide was signed off in person by Marco on 2026-05-14, so the gate is o
 - **Markdown pane** — the renderer for `vision.md`, `research/*.md`, ADRs, BC READMEs in the detail view.
 - **Targeted update** — patching the client-side `ProjectSnapshot` in place from a fine-grained filesystem event (`task_moved` / `task_added` / `task_removed` / `bc_appeared` / `bc_disappeared`) instead of re-fetching the whole snapshot. A tile's task counts tick, a BC node appears/disappears, without a `get_project` round-trip (`canvas-001`).
 - **Resync** — the one remaining full `get_project` re-fetch, triggered only by the `resync_required` domain event. The Rust core's event bridge emits it when its broadcast receiver lags and loses events it cannot reconstruct (ADR-009 lag-resync strategy).
+- **Context menu** — a screen-space HTML overlay (ADR-003 overlay layer) opened by right-click. The empty-canvas menu and tile menu share one items-array shape (`{ label, onClick, hidden? }`) so future menu items append cleanly. canvas-005a contributes "Add project…" (empty canvas) and "Remove project" (tile); canvas-005b will append "Scan folder for projects…" and "Manage scan roots…" to the empty-canvas menu. Dismissed on item click, pointer-down outside, `Escape`, or any pan/zoom gesture (a window-level capture-phase pointerdown listener owns outside-click dismissal). Viewport-clamped after first paint.
+- **Error toast** — a screen-space HTML overlay pinned top-center, `statusMissing` border (refusal, not failure). Auto-dismisses after 3000ms; one toast at a time. canvas-005a uses it for the `register_project` rejection path ("not an Agentheim project"), which is the exact IPC contract string and must surface verbatim.
+- **Missing tile** — the canvas visual for a registered-but-unwatched project (`ProjectSnapshot.missing: true`). Tile body at 50% opacity, border swapped from `tileBorder` to `statusMissing`, `✕` glyph at `spacing.lg` in the top-right corner. `bcs: []` on the snapshot keeps the orbit empty; the tile is NOT filtered out of the per-project collection (the missing visual is the affordance). Right-click still offers "Remove project".
 
 ## How the canvas stays live
 
@@ -70,6 +73,25 @@ to last-write-wins; the colliding `saveTilePosition` rows also reach SQLite
 before the array catches up. Treat "N concurrent arrivals" as the default test
 stance for any future change to this handler, not the single-arrival case.
 Zoom-to-fit (`f`) frames the union of every tile and its BCs.
+
+## Discovery affordances
+
+The canvas owns the user-facing affordances ADR-005 names. Single-shot
+"Add project…" and "Remove project" (canvas-005a) live in two right-click
+context menus — one on the empty canvas background, one on a tile.
+"Add project…" opens a Tauri-native folder picker
+(`@tauri-apps/plugin-dialog`), invokes `registerProject(path)`, and routes
+the rejection string `"not an Agentheim project"` to an **error toast**;
+the success path is silent and rides the existing `project_added` →
+`enqueueLiveAdd` chain. "Remove project" invokes `removeProject(project_id)`
+with **no confirmation step** — ADR-005's 30-day undo window (re-add
+restores the tile via the preserved `tile_positions` row) is the safety
+net. The frontend's `project_removed` handler is THE canonical listener —
+canvas-005b reuses it for the scan-root cascade fan-out without
+duplication (one event variant, two emitters in the project-registry).
+A `ProjectSnapshot.missing` tile renders as a **missing tile** (above);
+its right-click menu still surfaces "Remove project" so the user can
+recover.
 
 ## Upstream dependencies
 
