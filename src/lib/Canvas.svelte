@@ -1355,6 +1355,13 @@
 				// menu, so this reassignment effectively swaps menus when the
 				// user right-clicks elsewhere while a menu is open.
 				if (e.button === 2) {
+					// Pixi's federated stopPropagation doesn't reach the DOM,
+					// so the canvas-level pointerdown listener would otherwise
+					// fire next and overwrite our tile menu with the empty-
+					// canvas menu. Halt the underlying DOM event.
+					if (e.nativeEvent && 'stopImmediatePropagation' in e.nativeEvent) {
+						e.nativeEvent.stopImmediatePropagation();
+					}
 					openTileMenu(e.global.x, e.global.y, id);
 					return;
 				}
