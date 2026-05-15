@@ -60,11 +60,10 @@ const HARDCODED_PROJECT_PATH: &str = r"C:\src\heimeshoff\agentic\guppi";
 struct AppState {
     db: Arc<Db>,
     /// The central per-project watcher orchestrator (ADR-008). Cheap to clone;
-    /// every clone shares the same map. Field is held to keep the supervisor
-    /// (and therefore every project's watcher) alive for the process lifetime;
-    /// `project-registry-002` lands the IPC affordances that *call* it
-    /// (`add_project`, `import_scanned_projects`, `remove_project`).
-    #[allow(dead_code)]
+    /// every clone shares the same map. Held to keep the supervisor (and every
+    /// project's watcher) alive for the process lifetime, and called by the
+    /// `002b` cascade IPC (`import_scanned_projects.supervisor.add` per pick,
+    /// `remove_scan_root.supervisor.remove` per cascaded child).
     supervisor: WatcherSupervisor,
     /// ADR-009 event bus, shared so spike commands can hand it to a
     /// `ClaudeSession` actor's read loop.
@@ -245,6 +244,204 @@ fn list_scan_roots(state: tauri::State<'_, AppState>) -> Result<Vec<ScanRootRow>
         tracing::error!(error = %e, "list_scan_roots: db query failed");
         e.to_string()
     })
+}
+
+/// IPC command — import the user's checklist picks from a scan root's walk
+/// into the registry (`project-registry-002b`, ADR-013). For each picked path:
+///
+/// 1. The path is re-verified against a *fresh* walk of the root's current
+///    subtree — the frontend's set is not trusted, since the filesystem may
+///    have shifted between `add_scan_root` and the user's tick-and-confirm.
+///    A path outside the freshly-computed candidate set is rejected (skipped
+///    + logged); not silently registered.
+/// 2. `Db::upsert_scanned_project` stamps the discovering `scan_root_id` so
+///    the cascade-deregister (`remove_scan_root`) can find it later.
+/// 3. `WatcherSupervisor::add` arms the `.agentheim/` watcher for the new
+///    project_id (ADR-008). Missing `.agentheim/` is *not* fatal — the project
+///    stays registered-but-unwatched per ADR-005 and the supervisor's existing
+///    contract.
+///
+/// Returns the imported project ids in input order — minus any that were
+/// rejected as out-of-set, so callers can diff against the request to see
+/// what was skipped.
+///
+/// Importing the same path twice is harmless: `upsert_scanned_project` is
+/// idempotent on the canonical path; the supervisor's `add` is idempotent on
+/// the project id.
+#[tauri::command]
+fn import_scanned_projects(
+    state: tauri::State<'_, AppState>,
+    scan_root_id: i64,
+    paths: Vec<String>,
+) -> Result<Vec<i64>, String> {
+    // Look up the root first — an unknown id is a clean IPC error, never a
+    // panic; mirrors `rescan_scan_root`'s shape.
+    let root = state
+        .db
+        .get_scan_root(scan_root_id)
+        .map_err(|e| {
+            tracing::error!(error = %e, scan_root_id, "import_scanned_projects: db lookup failed");
+            e.to_string()
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(scan_root_id, "import_scanned_projects: unknown scan_root_id");
+            format!("unknown scan_root_id: {scan_root_id}")
+        })?;
+
+    // Re-walk the root NOW. The frontend's set is advisory; the source of
+    // truth is the live filesystem. Out-of-set paths are skipped, not
+    // silently imported — the acceptance criterion is explicit about this.
+    let known = state.db.list_project_paths().map_err(|e| {
+        tracing::error!(error = %e, "import_scanned_projects: list_project_paths failed");
+        e.to_string()
+    })?;
+    let known_set: HashSet<String> = known.into_iter().collect();
+    let candidates = scan::walk_scan_root(
+        std::path::Path::new(&root.path),
+        root.depth_cap,
+        &known_set,
+    );
+    let candidate_paths: HashSet<&str> =
+        candidates.iter().map(|c| c.path.as_str()).collect();
+
+    let mut imported = Vec::with_capacity(paths.len());
+    for path in &paths {
+        if !candidate_paths.contains(path.as_str()) {
+            tracing::warn!(
+                scan_root_id,
+                path = %path,
+                "import_scanned_projects: path not in candidate set; skipping"
+            );
+            continue;
+        }
+
+        // Nickname: the candidate's `nickname_suggestion`, which is the
+        // folder name (matches the scan walker's contract).
+        let nickname = candidates
+            .iter()
+            .find(|c| c.path == *path)
+            .map(|c| c.nickname_suggestion.clone())
+            .unwrap_or_else(|| path.clone());
+
+        let project_id = state
+            .db
+            .upsert_scanned_project(path, &nickname, scan_root_id)
+            .map_err(|e| {
+                tracing::error!(
+                    error = %e,
+                    path = %path,
+                    scan_root_id,
+                    "import_scanned_projects: db upsert failed"
+                );
+                e.to_string()
+            })?;
+
+        // Arm the watcher. Missing `.agentheim/` is the registered-but-
+        // unwatched state (ADR-005); log and continue rather than abort the
+        // whole batch.
+        if let Err(e) = state
+            .supervisor
+            .add(project_id, std::path::Path::new(path))
+        {
+            tracing::warn!(
+                error = %e,
+                project_id,
+                path = %path,
+                "import_scanned_projects: supervisor.add failed; project stays registered-but-unwatched"
+            );
+        }
+        imported.push(project_id);
+    }
+
+    tracing::info!(
+        scan_root_id,
+        requested = paths.len(),
+        imported = imported.len(),
+        "import_scanned_projects: complete"
+    );
+    Ok(imported)
+}
+
+/// IPC command — remove a scan root, **cascade-deregistering** every project
+/// discovered under it (`project-registry-002b`, ADR-013). The cascade is
+/// app-driven, not DB-level, because tearing down each project's
+/// `WatcherSupervisor` entry must happen in application code (the `notify`
+/// watcher cannot be torn down by SQLite). The DB's `ON DELETE RESTRICT` FK
+/// makes the ordering a checked invariant: if any child still references the
+/// root, the final `delete_scan_root` will fail loud rather than orphan rows.
+///
+/// Order:
+///   1. Enumerate child project ids (`scan_root_id = ?`).
+///   2. Per child: `supervisor.remove(id)` then `db.remove_project(id)`.
+///   3. Delete the `scan_roots` row last.
+///
+/// **Cascade hard-deletes** — ADR-005's 30-day tile-state retention is scoped
+/// to the user-initiated single "Remove project" affordance (`canvas-005`),
+/// *not* to scan-root cascade-deregister. Manually-added projects (NULL
+/// `scan_root_id`) are NEVER touched.
+///
+/// Unknown `scan_root_id` is a clean error, never a panic.
+#[tauri::command]
+fn remove_scan_root(
+    state: tauri::State<'_, AppState>,
+    scan_root_id: i64,
+) -> Result<(), String> {
+    // Verify the root exists before tearing anything down — an unknown id is
+    // a clean IPC error, not a silent no-op (the user picked it from the UI;
+    // a non-existent id is a bug, not an idempotent re-remove).
+    if state
+        .db
+        .get_scan_root(scan_root_id)
+        .map_err(|e| {
+            tracing::error!(error = %e, scan_root_id, "remove_scan_root: db lookup failed");
+            e.to_string()
+        })?
+        .is_none()
+    {
+        tracing::warn!(scan_root_id, "remove_scan_root: unknown scan_root_id");
+        return Err(format!("unknown scan_root_id: {scan_root_id}"));
+    }
+
+    let children = state
+        .db
+        .list_projects_by_scan_root(scan_root_id)
+        .map_err(|e| {
+            tracing::error!(error = %e, scan_root_id, "remove_scan_root: enumerate children failed");
+            e.to_string()
+        })?;
+
+    // Tear down each child: supervisor first, then DB row. The supervisor's
+    // `remove` is a silent no-op for unknown ids, so a child that was
+    // registered-but-unwatched (ADR-005 "missing" state) is fine.
+    for project_id in &children {
+        state.supervisor.remove(*project_id);
+        if let Err(e) = state.db.remove_project(*project_id) {
+            tracing::error!(
+                error = %e,
+                project_id,
+                scan_root_id,
+                "remove_scan_root: child remove_project failed; aborting cascade"
+            );
+            return Err(e.to_string());
+        }
+    }
+
+    // All children gone — the RESTRICT FK no longer blocks the root delete.
+    state.db.delete_scan_root(scan_root_id).map_err(|e| {
+        tracing::error!(
+            error = %e,
+            scan_root_id,
+            "remove_scan_root: delete_scan_root failed after children cleared"
+        );
+        e.to_string()
+    })?;
+
+    tracing::info!(
+        scan_root_id,
+        cascaded = children.len(),
+        "remove_scan_root: cascade-deregister complete"
+    );
+    Ok(())
 }
 
 /// IPC command — persist a project tile's position on drag (ADR-004). Takes
@@ -504,6 +701,8 @@ pub fn run() {
             add_scan_root,
             rescan_scan_root,
             list_scan_roots,
+            import_scanned_projects,
+            remove_scan_root,
             save_tile_position,
             load_tile_position,
             save_camera,

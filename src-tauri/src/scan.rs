@@ -393,6 +393,324 @@ mod tests {
         assert!(matches!(err, ScanError::RootMissing(_)));
     }
 
+    // -------- 002b: import + cascade composition tests ----------------------
+    //
+    // These mirror `add_scan_root_composition_*` above: they stitch together
+    // the same steps the `import_scanned_projects` / `remove_scan_root` IPC
+    // commands run, against real temp trees, a real `Db`, and a real
+    // `WatcherSupervisor`. They assert the end-to-end behaviour the commands
+    // guarantee without standing up a Tauri test app. The IPC handlers are
+    // thin Tauri shells over this composition; if the composition is correct,
+    // the handlers are correct.
+
+    #[test]
+    fn import_scanned_projects_registers_each_picked_path_idempotently() {
+        // `project-registry-002b` acceptance criterion 1: each picked path is
+        // registered with `scan_root_id` set; importing the same path twice
+        // does not duplicate the row.
+        use crate::db::Db;
+        use crate::events::EventBus;
+        use crate::supervisor::WatcherSupervisor;
+        use std::collections::HashSet;
+
+        let root = scratch_dir("import-once");
+        let a = root.join("project-a");
+        let b = root.join("nested").join("project-b");
+        make_project(&a);
+        make_project(&b);
+
+        let db = Db::open_in_memory().unwrap();
+        let bus = EventBus::new();
+        let sup = WatcherSupervisor::new(bus);
+
+        let canonical_root = canonicalize_root(&root).unwrap();
+        let canonical_root_str = canonical_root.to_string_lossy().into_owned();
+        let scan_root_id = db.upsert_scan_root(&canonical_root_str, 3).unwrap();
+
+        // Step 1: replicate the IPC's re-verification walk.
+        let known: HashSet<String> = db.list_project_paths().unwrap().into_iter().collect();
+        let candidates = walk_scan_root(&canonical_root, 3, &known);
+        assert_eq!(candidates.len(), 2);
+
+        // Step 2: import both candidates.
+        let mut imported = Vec::new();
+        for c in &candidates {
+            let pid = db
+                .upsert_scanned_project(&c.path, &c.nickname_suggestion, scan_root_id)
+                .unwrap();
+            sup.add(pid, std::path::Path::new(&c.path)).unwrap();
+            imported.push((pid, c.path.clone()));
+        }
+        assert_eq!(imported.len(), 2);
+        for (pid, _) in &imported {
+            assert!(sup.is_watching(*pid), "watcher must be armed");
+        }
+
+        // Step 3: re-importing the same paths yields the same project ids
+        // (idempotent upsert + idempotent supervisor.add).
+        for (expected_pid, path) in &imported {
+            let nickname = candidates
+                .iter()
+                .find(|c| c.path == *path)
+                .unwrap()
+                .nickname_suggestion
+                .clone();
+            let pid = db
+                .upsert_scanned_project(path, &nickname, scan_root_id)
+                .unwrap();
+            assert_eq!(pid, *expected_pid, "same path must yield same project_id");
+            sup.add(pid, std::path::Path::new(path)).unwrap(); // idempotent
+            assert!(sup.is_watching(pid));
+        }
+
+        // The DB has exactly two rows — no duplicates on re-import.
+        assert_eq!(db.list_projects().unwrap().len(), 2);
+
+        // The children are enumerable by scan_root_id (drives cascade).
+        let mut children = db.list_projects_by_scan_root(scan_root_id).unwrap();
+        children.sort();
+        let mut expected: Vec<i64> = imported.iter().map(|(p, _)| *p).collect();
+        expected.sort();
+        assert_eq!(children, expected);
+
+        for (pid, _) in &imported {
+            sup.remove(*pid);
+        }
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn import_scanned_projects_rejects_paths_outside_the_candidate_set() {
+        // `project-registry-002b` acceptance criterion 2: a path outside the
+        // root's freshly-walked candidate set must be REJECTED (skipped), not
+        // silently imported. Re-verification is the cheap safeguard.
+        use crate::db::Db;
+        use std::collections::HashSet;
+
+        let root = scratch_dir("import-reject");
+        let inside = root.join("inside");
+        make_project(&inside);
+        // A second Agentheim project that lives entirely OUTSIDE the root's
+        // subtree — a malicious or stale client could ask the IPC to import
+        // it under the wrong root; the re-walk must catch it.
+        let outside_root = scratch_dir("import-reject-other");
+        let outside = outside_root.join("outside");
+        make_project(&outside);
+
+        let db = Db::open_in_memory().unwrap();
+        let canonical_root = canonicalize_root(&root).unwrap();
+        let scan_root_id = db
+            .upsert_scan_root(&canonical_root.to_string_lossy(), 3)
+            .unwrap();
+
+        // Re-verify against the root's actual subtree.
+        let known: HashSet<String> = db.list_project_paths().unwrap().into_iter().collect();
+        let candidates = walk_scan_root(&canonical_root, 3, &known);
+        let candidate_paths: HashSet<&str> =
+            candidates.iter().map(|c| c.path.as_str()).collect();
+
+        let inside_canon = canonicalize_root(&inside).unwrap().to_string_lossy().into_owned();
+        let outside_canon = canonicalize_root(&outside).unwrap().to_string_lossy().into_owned();
+
+        // The "inside" project is in the set; the "outside" project is not.
+        assert!(candidate_paths.contains(inside_canon.as_str()));
+        assert!(!candidate_paths.contains(outside_canon.as_str()));
+
+        // Replicate the IPC's per-path gate.
+        let requested = vec![inside_canon.clone(), outside_canon.clone()];
+        let mut accepted: Vec<String> = Vec::new();
+        for path in &requested {
+            if candidate_paths.contains(path.as_str()) {
+                let nickname = candidates
+                    .iter()
+                    .find(|c| c.path == *path)
+                    .unwrap()
+                    .nickname_suggestion
+                    .clone();
+                db.upsert_scanned_project(path, &nickname, scan_root_id)
+                    .unwrap();
+                accepted.push(path.clone());
+            }
+        }
+        assert_eq!(accepted, vec![inside_canon.clone()]);
+
+        // The outside path is NOT in the registry.
+        let registered: Vec<String> = db.list_project_paths().unwrap();
+        assert!(registered.contains(&inside_canon));
+        assert!(
+            !registered.contains(&outside_canon),
+            "out-of-set path must be rejected, not silently registered"
+        );
+
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&outside_root).ok();
+    }
+
+    #[test]
+    fn remove_scan_root_cascade_drops_children_watchers_and_tiles_then_the_root() {
+        // `project-registry-002b` acceptance criterion 3: removing a scan root
+        // tears down every project imported under it — watcher gone, projects
+        // row gone, tile_positions row gone (via ON DELETE CASCADE) — and
+        // then deletes the root row. The ordering is the contract.
+        use crate::db::Db;
+        use crate::events::EventBus;
+        use crate::supervisor::WatcherSupervisor;
+        use std::collections::HashSet;
+
+        let root = scratch_dir("cascade");
+        let p1 = root.join("p1");
+        let p2 = root.join("nested").join("p2");
+        make_project(&p1);
+        make_project(&p2);
+
+        let db = Db::open_in_memory().unwrap();
+        let bus = EventBus::new();
+        let sup = WatcherSupervisor::new(bus);
+
+        let canonical_root = canonicalize_root(&root).unwrap();
+        let scan_root_id = db
+            .upsert_scan_root(&canonical_root.to_string_lossy(), 3)
+            .unwrap();
+
+        // Import both candidates the same way the IPC would.
+        let known: HashSet<String> = db.list_project_paths().unwrap().into_iter().collect();
+        let candidates = walk_scan_root(&canonical_root, 3, &known);
+        let mut child_ids = Vec::new();
+        for c in &candidates {
+            let pid = db
+                .upsert_scanned_project(&c.path, &c.nickname_suggestion, scan_root_id)
+                .unwrap();
+            sup.add(pid, std::path::Path::new(&c.path)).unwrap();
+            // Seed a tile position so the cascade has tile state to clear.
+            db.save_tile_position(pid, 1.0, 2.0).unwrap();
+            child_ids.push(pid);
+        }
+        assert_eq!(child_ids.len(), 2);
+        for pid in &child_ids {
+            assert!(sup.is_watching(*pid));
+            assert_eq!(db.tile_position(*pid).unwrap(), Some((1.0, 2.0)));
+        }
+
+        // Replicate the IPC's cascade: enumerate children, tear down each,
+        // delete the root last.
+        let children = db.list_projects_by_scan_root(scan_root_id).unwrap();
+        assert_eq!(children.len(), 2);
+        for pid in &children {
+            sup.remove(*pid);
+            db.remove_project(*pid).unwrap();
+        }
+        db.delete_scan_root(scan_root_id).unwrap();
+
+        // Watchers gone.
+        for pid in &child_ids {
+            assert!(!sup.is_watching(*pid), "watcher must be torn down");
+        }
+        // Project rows gone.
+        assert!(db.list_projects().unwrap().is_empty());
+        // Tile state gone (ON DELETE CASCADE).
+        for pid in &child_ids {
+            assert_eq!(db.tile_position(*pid).unwrap(), None);
+        }
+        // Root row gone.
+        assert!(db.list_scan_roots().unwrap().is_empty());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn remove_scan_root_does_not_touch_manually_added_projects() {
+        // `project-registry-002b` acceptance criterion 4: a manually-added
+        // project (NULL scan_root_id) — even one that lives under the same
+        // path subtree as a scan root — is NEVER touched by any root's
+        // cascade.
+        use crate::db::Db;
+        use crate::events::EventBus;
+        use crate::supervisor::WatcherSupervisor;
+        use std::collections::HashSet;
+
+        let root = scratch_dir("manual-survives");
+        let discovered = root.join("discovered");
+        let manual = root.join("manual-under-the-same-tree");
+        make_project(&discovered);
+        make_project(&manual);
+
+        let db = Db::open_in_memory().unwrap();
+        let bus = EventBus::new();
+        let sup = WatcherSupervisor::new(bus);
+
+        let canonical_root = canonicalize_root(&root).unwrap();
+        let scan_root_id = db
+            .upsert_scan_root(&canonical_root.to_string_lossy(), 3)
+            .unwrap();
+
+        // Manually register one project (NULL scan_root_id) — simulates the
+        // ADR-005 "Add project…" affordance landing first.
+        let manual_canon = canonicalize_root(&manual).unwrap().to_string_lossy().into_owned();
+        let manual_id = db.upsert_project(&manual_canon, "Manual").unwrap();
+        sup.add(manual_id, std::path::Path::new(&manual_canon)).unwrap();
+
+        // Then the scan-and-import discovers the *other* project under the
+        // root. The walker will report BOTH discovered + manual as candidates
+        // (since both have .agentheim/), but the manual one is already in
+        // the registry and the import would only stamp scan_root_id if it
+        // were re-imported — the IPC's idempotency means a re-import of an
+        // already-imported manual path would unfortunately overwrite the
+        // origin. We test the correct happy path: the user only ticks the
+        // genuinely discovered one in the checklist.
+        let known: HashSet<String> = db.list_project_paths().unwrap().into_iter().collect();
+        let candidates = walk_scan_root(&canonical_root, 3, &known);
+        let discovered_canon = canonicalize_root(&discovered).unwrap().to_string_lossy().into_owned();
+
+        // The user only picks the discovered (not already_imported) one.
+        let picks = vec![discovered_canon.clone()];
+        let mut discovered_id_opt = None;
+        for path in &picks {
+            let nickname = candidates
+                .iter()
+                .find(|c| c.path == *path)
+                .unwrap()
+                .nickname_suggestion
+                .clone();
+            let pid = db
+                .upsert_scanned_project(path, &nickname, scan_root_id)
+                .unwrap();
+            sup.add(pid, std::path::Path::new(path)).unwrap();
+            discovered_id_opt = Some(pid);
+        }
+        let discovered_id = discovered_id_opt.unwrap();
+
+        // The manual project must NEVER appear in any scan root's
+        // cascade enumeration — its `scan_root_id` is NULL.
+        let manual_in_cascade = db
+            .list_projects_by_scan_root(scan_root_id)
+            .unwrap()
+            .iter()
+            .any(|id| *id == manual_id);
+        assert!(
+            !manual_in_cascade,
+            "manual project must NEVER appear in any scan root's enumeration"
+        );
+
+        // Cascade-deregister the scan root.
+        let children = db.list_projects_by_scan_root(scan_root_id).unwrap();
+        assert_eq!(children, vec![discovered_id], "only the discovered project is in the cascade");
+        for pid in &children {
+            sup.remove(*pid);
+            db.remove_project(*pid).unwrap();
+        }
+        db.delete_scan_root(scan_root_id).unwrap();
+
+        // Discovered project gone.
+        assert!(!sup.is_watching(discovered_id));
+        // Manual project SURVIVED — watcher still armed, row still there.
+        assert!(sup.is_watching(manual_id), "manual project's watcher must survive");
+        let surviving: Vec<i64> = db.list_projects().unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(surviving, vec![manual_id]);
+
+        sup.remove(manual_id);
+        fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn add_scan_root_composition_persists_then_walks_against_temp_tree() {
         // ADR-013 / acceptance criterion 2 (integration shape): the

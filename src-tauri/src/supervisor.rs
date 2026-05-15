@@ -124,11 +124,10 @@ impl WatcherSupervisor {
         }
     }
 
-    /// Stop watching `project_id`. No-op if the id is not in the map — the
-    /// watcher-lifecycle surface for `project-registry-002`'s removal, which
-    /// will pair this with the actual `projects` row delete. Exercised by
-    /// unit tests; no IPC caller yet (hence the `dead_code` allow).
-    #[allow(dead_code)]
+    /// Stop watching `project_id`. No-op if the id is not in the map —
+    /// the watcher-lifecycle surface paired with `Db::remove_project` by
+    /// `project-registry-002b`'s `remove_scan_root` cascade and (eventually)
+    /// `canvas-005`'s single "Remove project" affordance.
     pub fn remove(&self, project_id: i64) {
         let mut guard = self.inner.watchers.lock().unwrap();
         if guard.remove(&project_id).is_some() {

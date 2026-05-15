@@ -1,7 +1,8 @@
 ---
 id: project-registry-002b-import-and-cascade-deregister
 type: feature
-status: todo
+status: done
+completed: 2026-05-15
 scope: bc
 depends_on:
   - project-registry-002a-scan-roots-and-walk
@@ -102,3 +103,53 @@ BC seam: the *scan/import capability* is project-registry. The *UI* (folder
 picker, checklist modal, "Remove project") is canvas BC per ADR-005 — captured
 as `canvas-005-project-discovery-affordances` (`depends_on: this task,
 design-system-001`).
+
+## Outcome
+
+Landed the v1 mutation layer atop `002a`'s persisted scan roots + walker.
+
+**`Db` surface (`src-tauri/src/db.rs`):**
+- `upsert_scanned_project(path, nickname, scan_root_id) -> i64` — idempotent
+  on canonical path; stamps the discovering root for cascade-deregister.
+- `remove_project(project_id) -> Result<(), DbError>` — single-row DELETE;
+  `tile_positions` follows via the schema-v1 `ON DELETE CASCADE`; unknown id
+  is a clean no-op.
+- `list_projects_by_scan_root(scan_root_id) -> Vec<i64>` — drives the cascade
+  enumeration; manually-added projects (NULL) never appear.
+- `delete_scan_root(scan_root_id) -> Result<(), DbError>` — guarded by the
+  ADR-013 `ON DELETE RESTRICT` FK: a stray child still referencing the root
+  causes the delete to fail loud rather than orphan rows.
+
+**IPC commands (`src-tauri/src/lib.rs`):**
+- `import_scanned_projects(scan_root_id, paths) -> Vec<i64>` — re-walks the
+  root to verify each pick, stamps `scan_root_id` on survivors, arms each
+  watcher via `supervisor.add`. Out-of-set paths are skipped+logged, not
+  silently registered. Missing `.agentheim/` is the registered-but-unwatched
+  state (ADR-005), not a fatal error.
+- `remove_scan_root(scan_root_id)` — app-driven cascade: enumerate children
+  → `supervisor.remove` + `db.remove_project` each → `delete_scan_root` last.
+  Hard-delete (ADR-013); manually-added projects untouched.
+
+Tightened the dead-code allow on the `AppState.supervisor` field and
+`WatcherSupervisor::remove` — both are now called by the cascade IPC.
+
+**Tests added (13 new, 73/73 cargo tests green):**
+- 8 `db::tests` — `upsert_scanned_project` stamps + idempotency,
+  `remove_project` cascades + no-op on unknown id, `list_projects_by_scan_root`
+  filters to that root only, `delete_scan_root` succeeds after cleanup +
+  rejected by `RESTRICT` when children remain + no-op on unknown id.
+- 4 `scan::tests` — composition tests that stitch `Db` + walker +
+  `WatcherSupervisor` against real temp trees, mirroring the IPC handlers
+  end-to-end without a Tauri test app. Cover: idempotent import + paths
+  outside-candidate-set rejection + full cascade tear-down + manually-added
+  survival.
+
+**README:** added "Import (scanned-projects import)" and "Cascade-deregister"
+to the BC ubiquitous-language section.
+
+**Key files:** `src-tauri/src/db.rs`, `src-tauri/src/lib.rs`,
+`src-tauri/src/scan.rs`, `src-tauri/src/supervisor.rs`,
+`.agentheim/contexts/project-registry/README.md`.
+
+No new ADR — ADR-013 already specified the cascade semantics; the
+implementation matches.

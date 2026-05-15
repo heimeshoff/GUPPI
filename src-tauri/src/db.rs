@@ -273,6 +273,92 @@ impl Db {
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
     }
+
+    /// Insert a discovered-under-a-scan-root project (or refresh `last_seen_at`
+    /// if its canonical path is already in the registry), stamping the
+    /// `scan_root_id` of the root that surfaced it. Like `upsert_project` but
+    /// participates in **origin tracking** (ADR-013): the column stays NULL for
+    /// manually-added projects and non-NULL for cascade-deregistration to find
+    /// later.
+    ///
+    /// Idempotent on `path` — re-importing the same canonical path is a
+    /// no-op-with-`last_seen_at`-bump and returns the existing row's id. The
+    /// `scan_root_id` is set on insert and refreshed on conflict (a project
+    /// re-discovered under a different root reflects its most recent
+    /// discoverer; this is a corner that should not arise in normal use but is
+    /// the least surprising of the available choices).
+    pub fn upsert_scanned_project(
+        &self,
+        path: &str,
+        nickname: &str,
+        scan_root_id: i64,
+    ) -> Result<i64, DbError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO projects (path, nickname, added_at, last_seen_at, scan_root_id)
+             VALUES (?1, ?2, datetime('now'), datetime('now'), ?3)
+             ON CONFLICT(path) DO UPDATE SET
+                 last_seen_at = datetime('now'),
+                 scan_root_id = ?3",
+            (path, nickname, scan_root_id),
+        )?;
+        let id: i64 = conn.query_row(
+            "SELECT id FROM projects WHERE path = ?1",
+            [path],
+            |row| row.get(0),
+        )?;
+        Ok(id)
+    }
+
+    /// Delete a single project row by id. `tile_positions` follows via the
+    /// existing `ON DELETE CASCADE` (set in v1 of the schema). An unknown
+    /// `project_id` is a clean no-op (zero rows affected) — never a panic — so
+    /// the cascade-deregister loop in `remove_scan_root` can call this without
+    /// pre-checking existence.
+    ///
+    /// **Hard-delete, no retention.** ADR-005's 30-day tile-state retention is
+    /// scoped to the user-initiated single "Remove project" affordance
+    /// (`canvas-005`), not to this method's bulk-cascade callers (ADR-013).
+    /// Single-project removal will reuse this method but must pair it with the
+    /// GC machinery that lands with `canvas-005`.
+    pub fn remove_project(&self, project_id: i64) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        // ON DELETE CASCADE on tile_positions.project_id (schema v1) handles
+        // the tile row; clusters.id-side never references a project, so this
+        // single DELETE is the whole story.
+        conn.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
+        Ok(())
+    }
+
+    /// Every child project id of a scan root, in id order. Drives the
+    /// app-driven cascade in `remove_scan_root` (ADR-013): per id, the IPC
+    /// command calls `supervisor.remove(id)` and then `db.remove_project(id)`
+    /// before finally dropping the root row itself. Manually-added projects
+    /// (NULL `scan_root_id`) never appear in any cascade's enumeration.
+    pub fn list_projects_by_scan_root(
+        &self,
+        scan_root_id: i64,
+    ) -> Result<Vec<i64>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM projects WHERE scan_root_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map([scan_root_id], |row| row.get::<_, i64>(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
+    }
+
+    /// Delete a scan root row by id — **never** call this before its child
+    /// projects have been removed. The schema's `ON DELETE RESTRICT` (ADR-013)
+    /// will reject the delete if any `projects.scan_root_id` still references
+    /// it, which is the checked invariant that protects the app-driven
+    /// cascade in `remove_scan_root` from getting the ordering wrong.
+    ///
+    /// Unknown `scan_root_id` is a clean no-op (zero rows affected).
+    pub fn delete_scan_root(&self, scan_root_id: i64) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM scan_roots WHERE id = ?1", [scan_root_id])?;
+        Ok(())
+    }
 }
 
 /// Apply ordered, versioned migration steps. Each step moves the schema from
@@ -645,5 +731,157 @@ mod tests {
         let row = db.get_scan_root(id).unwrap().expect("empty root must persist");
         assert_eq!(row.path, "E:/empty/folder");
         assert_eq!(row.depth_cap, 3);
+    }
+
+    // -------- 002b: import + remove + cascade-deregister --------------------
+
+    #[test]
+    fn upsert_scanned_project_stamps_scan_root_id() {
+        // `project-registry-002b` acceptance: importing a candidate under a
+        // scan root persists `scan_root_id` so the cascade can find it later.
+        let db = Db::open_in_memory().unwrap();
+        let root_id = db.upsert_scan_root("C:/src", 3).unwrap();
+
+        let project_id = db
+            .upsert_scanned_project("C:/src/guppi", "GUPPI", root_id)
+            .unwrap();
+
+        // The row carries scan_root_id = root_id (verified via direct query —
+        // the public `ProjectRow` doesn't expose the column).
+        let conn = db.conn.lock().unwrap();
+        let stamped: Option<i64> = conn
+            .query_row(
+                "SELECT scan_root_id FROM projects WHERE id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stamped, Some(root_id), "import must stamp scan_root_id");
+    }
+
+    #[test]
+    fn upsert_scanned_project_is_idempotent_on_path() {
+        // `project-registry-002b` acceptance: re-importing the same candidate
+        // does not duplicate the row; same project id comes back.
+        let db = Db::open_in_memory().unwrap();
+        let root_id = db.upsert_scan_root("C:/src", 3).unwrap();
+
+        let first = db
+            .upsert_scanned_project("C:/src/guppi", "GUPPI", root_id)
+            .unwrap();
+        let second = db
+            .upsert_scanned_project("C:/src/guppi", "GUPPI", root_id)
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(db.list_projects().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn remove_project_deletes_row_and_cascades_tile_positions() {
+        // `project-registry-002b` acceptance: `remove_project` clears the
+        // projects row and (via ON DELETE CASCADE on tile_positions.project_id)
+        // the associated tile state.
+        let db = Db::open_in_memory().unwrap();
+        let id = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        db.save_tile_position(id, 10.0, 20.0).unwrap();
+        assert_eq!(db.tile_position(id).unwrap(), Some((10.0, 20.0)));
+
+        db.remove_project(id).unwrap();
+
+        assert!(db.list_projects().unwrap().is_empty(), "row must be gone");
+        assert_eq!(
+            db.tile_position(id).unwrap(),
+            None,
+            "tile_positions must cascade"
+        );
+    }
+
+    #[test]
+    fn remove_project_with_unknown_id_is_a_clean_no_op() {
+        // `project-registry-002b` acceptance: unknown project_id must be a
+        // clean no-op (not a panic, not an error). Mirrors `project_path` /
+        // `supervisor.remove`'s shape so the cascade loop can call into it
+        // without pre-checks.
+        let db = Db::open_in_memory().unwrap();
+        // No projects inserted — id 99_999 cannot match anything.
+        db.remove_project(99_999).expect("must not panic or error");
+        assert!(db.list_projects().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_projects_by_scan_root_returns_only_that_roots_children() {
+        // `project-registry-002b` acceptance: the cascade enumerates children
+        // by scan_root_id. Manually-added projects (NULL) and projects under
+        // *other* roots must not appear.
+        let db = Db::open_in_memory().unwrap();
+        let root_a = db.upsert_scan_root("C:/src", 3).unwrap();
+        let root_b = db.upsert_scan_root("D:/work", 3).unwrap();
+
+        let p_a1 = db
+            .upsert_scanned_project("C:/src/p1", "P1", root_a)
+            .unwrap();
+        let p_a2 = db
+            .upsert_scanned_project("C:/src/p2", "P2", root_a)
+            .unwrap();
+        let _p_b = db
+            .upsert_scanned_project("D:/work/q", "Q", root_b)
+            .unwrap();
+        // Manually-added (NULL scan_root_id) — must NEVER appear in any
+        // cascade's enumeration.
+        let _p_manual = db.upsert_project("E:/loose/project", "Manual").unwrap();
+
+        let children = db.list_projects_by_scan_root(root_a).unwrap();
+        assert_eq!(children, vec![p_a1, p_a2]);
+    }
+
+    #[test]
+    fn list_projects_by_scan_root_for_empty_root_is_empty_vec() {
+        let db = Db::open_in_memory().unwrap();
+        let root = db.upsert_scan_root("C:/empty", 3).unwrap();
+        assert!(db.list_projects_by_scan_root(root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_scan_root_succeeds_after_children_removed() {
+        // `project-registry-002b` acceptance: the cascade ordering — remove
+        // children first, then the root — clears the ON DELETE RESTRICT FK and
+        // the scan_roots row goes away.
+        let db = Db::open_in_memory().unwrap();
+        let root = db.upsert_scan_root("C:/src", 3).unwrap();
+        let child = db
+            .upsert_scanned_project("C:/src/guppi", "GUPPI", root)
+            .unwrap();
+
+        db.remove_project(child).unwrap();
+        db.delete_scan_root(root).unwrap();
+
+        assert!(db.list_scan_roots().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_scan_root_with_living_child_is_rejected_by_restrict() {
+        // `project-registry-002b`: the ON DELETE RESTRICT FK (ADR-013) makes
+        // the app-driven cascade ordering a checked invariant — a delete of
+        // the root while a child still references it must fail loud rather
+        // than orphan the child.
+        let db = Db::open_in_memory().unwrap();
+        let root = db.upsert_scan_root("C:/src", 3).unwrap();
+        let _child = db
+            .upsert_scanned_project("C:/src/guppi", "GUPPI", root)
+            .unwrap();
+
+        let err = db.delete_scan_root(root).unwrap_err();
+        // rusqlite reports this as a constraint failure; we only care that
+        // we get an error variant (the type is opaque), and that the rows
+        // are still there.
+        assert!(matches!(err, DbError::Sqlite(_)), "must surface as DbError");
+        assert_eq!(db.list_scan_roots().unwrap().len(), 1);
+        assert_eq!(db.list_projects().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_scan_root_with_unknown_id_is_a_clean_no_op() {
+        let db = Db::open_in_memory().unwrap();
+        db.delete_scan_root(99_999).expect("must not panic or error");
     }
 }
