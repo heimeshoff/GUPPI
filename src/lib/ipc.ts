@@ -10,19 +10,33 @@ import type { CameraState, DomainEvent, ProjectSnapshot, Point } from './types';
 /** The single Tauri event name the core's frontend bridge emits on (ADR-009). */
 const FRONTEND_EVENT = 'guppi://event';
 
-/** Fetch the hard-coded project's snapshot from the core (ADR-005). */
-export function getProject(): Promise<ProjectSnapshot> {
-	return invoke<ProjectSnapshot>('get_project');
+/** Fetch every registered project's snapshot from the core
+ * (`project-registry-001`). A row whose `.agentheim/` is missing is skipped
+ * by the core, not returned as an error. Called on mount and on
+ * `resync_required` (ADR-009 lag escape hatch). */
+export function listProjects(): Promise<ProjectSnapshot[]> {
+	return invoke<ProjectSnapshot[]>('list_projects');
 }
 
-/** Persist the project tile's position after a drag (ADR-004). */
-export function saveTilePosition(pos: Point): Promise<void> {
-	return invoke('save_tile_position', { x: pos.x, y: pos.y });
+/** Fetch one registered project's snapshot by id (`project-registry-001`).
+ * Used for the per-project resync path (`resync_required { project_id }`) so
+ * the canvas does not re-fetch every tile when only one was affected. */
+export function getProject(projectId: number): Promise<ProjectSnapshot> {
+	return invoke<ProjectSnapshot>('get_project', { projectId });
 }
 
-/** Read back the persisted tile position, if any. */
-export async function loadTilePosition(): Promise<Point | null> {
-	const result = await invoke<[number, number] | null>('load_tile_position');
+/** Persist a project tile's position after a drag (ADR-004). Takes
+ * `projectId` explicitly — the registry no longer rides on the core's
+ * `AppState` (`project-registry-001`). */
+export function saveTilePosition(projectId: number, pos: Point): Promise<void> {
+	return invoke('save_tile_position', { projectId, x: pos.x, y: pos.y });
+}
+
+/** Read back a project's persisted tile position, if any. */
+export async function loadTilePosition(projectId: number): Promise<Point | null> {
+	const result = await invoke<[number, number] | null>('load_tile_position', {
+		projectId
+	});
 	return result ? { x: result[0], y: result[1] } : null;
 }
 

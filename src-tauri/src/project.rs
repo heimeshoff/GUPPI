@@ -44,8 +44,14 @@ pub struct BcSnapshot {
 }
 
 /// Everything the frontend needs to render a project tile and its BC children.
+///
+/// The `id` is the registry's project id (`projects.id` — ADR-005). Carrying
+/// it on the snapshot is the load-bearing change for `canvas-002`: the
+/// canvas needs the id to key its per-project state and to route fine-grained
+/// domain events back to the right tile (`project-registry-001`).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProjectSnapshot {
+    pub id: i64,
     pub name: String,
     pub path: String,
     pub bcs: Vec<BcSnapshot>,
@@ -56,7 +62,11 @@ pub struct ProjectSnapshot {
 /// Fails only if `.agentheim/` is absent — a missing `vision.md` or an empty
 /// `contexts/` directory degrades gracefully (the project name falls back to
 /// the folder name; `bcs` is simply empty).
-pub fn get_project(project_path: &Path) -> Result<ProjectSnapshot, ProjectError> {
+///
+/// `project_id` is supplied by the caller (resolved from the registry); the
+/// pure reader does not consult the database, it just stamps the id on the
+/// snapshot so it crosses IPC with the rest of the data.
+pub fn get_project(project_id: i64, project_path: &Path) -> Result<ProjectSnapshot, ProjectError> {
     let agentheim = project_path.join(".agentheim");
     if !agentheim.is_dir() {
         return Err(ProjectError::NotAnAgentheimProject(project_path.to_path_buf()));
@@ -66,6 +76,7 @@ pub fn get_project(project_path: &Path) -> Result<ProjectSnapshot, ProjectError>
     let bcs = read_bounded_contexts(&agentheim)?;
 
     Ok(ProjectSnapshot {
+        id: project_id,
         name,
         path: project_path.to_string_lossy().into_owned(),
         bcs,
@@ -169,7 +180,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let err = get_project(&dir).unwrap_err();
+        let err = get_project(1, &dir).unwrap_err();
         assert!(matches!(err, ProjectError::NotAnAgentheimProject(_)));
 
         fs::remove_dir_all(&dir).ok();
@@ -184,7 +195,7 @@ mod tests {
         )
         .unwrap();
 
-        let snap = get_project(&dir).unwrap();
+        let snap = get_project(1, &dir).unwrap();
         assert_eq!(snap.name, "Vision: GUPPI");
 
         fs::remove_dir_all(&dir).ok();
@@ -195,8 +206,22 @@ mod tests {
         let dir = scratch_project();
         fs::write(dir.join(".agentheim/vision.md"), "# Empty\n").unwrap();
 
-        let snap = get_project(&dir).unwrap();
+        let snap = get_project(1, &dir).unwrap();
         assert!(snap.bcs.is_empty(), "no BCs is a valid snapshot");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn snapshot_carries_the_project_id_supplied_by_the_caller() {
+        // `project-registry-001` / `canvas-002` coordination: the snapshot
+        // must stamp the supplied id so it can flow with the data to the
+        // frontend (the canvas keys per-project state on it).
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Stamping\n").unwrap();
+
+        let snap = get_project(42, &dir).unwrap();
+        assert_eq!(snap.id, 42);
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -217,7 +242,7 @@ mod tests {
         // A non-md file must not be counted.
         fs::write(bc.join("done/notes.txt"), "x").unwrap();
 
-        let snap = get_project(&dir).unwrap();
+        let snap = get_project(1, &dir).unwrap();
         assert_eq!(snap.bcs.len(), 1);
         assert_eq!(
             snap.bcs[0].task_counts,
@@ -243,13 +268,13 @@ mod tests {
         fs::create_dir_all(bc.join("doing")).unwrap();
         fs::write(bc.join("backlog/x.md"), "x").unwrap();
 
-        let before = get_project(&dir).unwrap();
+        let before = get_project(1, &dir).unwrap();
         assert_eq!(before.bcs[0].task_counts.backlog, 1);
         assert_eq!(before.bcs[0].task_counts.doing, 0);
 
         fs::rename(bc.join("backlog/x.md"), bc.join("doing/x.md")).unwrap();
 
-        let after = get_project(&dir).unwrap();
+        let after = get_project(1, &dir).unwrap();
         assert_eq!(after.bcs[0].task_counts.backlog, 0);
         assert_eq!(after.bcs[0].task_counts.doing, 1);
 

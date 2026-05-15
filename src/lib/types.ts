@@ -16,8 +16,15 @@ export interface BcSnapshot {
 	task_counts: TaskCounts;
 }
 
-/** Everything needed to render a project tile and its BC children. */
+/** Everything needed to render a project tile and its BC children.
+ *
+ * `id` is the registry's project id (`projects.id` in GUPPI's SQLite DB —
+ * ADR-005). Carrying it on the snapshot is the load-bearing change for
+ * `canvas-002`: the canvas keys per-project state on it, and uses it to
+ * route fine-grained domain events back to the right tile
+ * (`project-registry-001`). */
 export interface ProjectSnapshot {
+	id: number;
 	name: string;
 	path: string;
 	bcs: BcSnapshot[];

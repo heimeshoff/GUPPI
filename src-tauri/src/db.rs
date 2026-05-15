@@ -10,8 +10,18 @@
 //! single-row `schema_version` table.
 
 use rusqlite::Connection;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// One row of the `projects` table — the registry's view of a project
+/// (ADR-005). The shape the multi-project snapshot model
+/// (`project-registry-001`) reads back when serving `list_projects()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectRow {
+    pub id: i64,
+    pub path: String,
+    pub nickname: String,
+}
 
 /// The schema version this build expects. Bump it and add a migration step in
 /// `migrate` whenever the schema changes.
@@ -81,6 +91,40 @@ impl Db {
             |row| row.get(0),
         )?;
         Ok(id)
+    }
+
+    /// Every registered project, ordered by `id` so the canvas sees a stable
+    /// order across calls (`project-registry-001`). Empty list if nothing has
+    /// been registered yet — not an error.
+    pub fn list_projects(&self) -> Result<Vec<ProjectRow>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, path, nickname FROM projects ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                nickname: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
+    }
+
+    /// The filesystem path registered for a project, by id. `Ok(None)` if the
+    /// id is unknown — callers turn that into a clean IPC error rather than a
+    /// panic (`project-registry-001` acceptance criterion).
+    pub fn project_path(&self, project_id: i64) -> Result<Option<PathBuf>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT path FROM projects WHERE id = ?1")?;
+        let mut rows = stmt.query([project_id])?;
+        match rows.next()? {
+            Some(row) => {
+                let path: String = row.get(0)?;
+                Ok(Some(PathBuf::from(path)))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Persist a tile's position for a project. There is at most one tile row
@@ -220,6 +264,51 @@ mod tests {
         // Dragging again overwrites in place.
         db.save_tile_position(pid, 99.0, 1.0).unwrap();
         assert_eq!(db.tile_position(pid).unwrap(), Some((99.0, 1.0)));
+    }
+
+    #[test]
+    fn list_projects_returns_every_registered_row() {
+        // `project-registry-001` acceptance criterion: with N >= 2 projects in
+        // the table, `list_projects()` returns one row per project, in stable
+        // (id) order.
+        let db = Db::open_in_memory().unwrap();
+        let id_a = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        let id_b = db.upsert_project("D:/work/other", "Other").unwrap();
+
+        let rows = db.list_projects().unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, id_a);
+        assert_eq!(rows[0].path, "C:/src/guppi");
+        assert_eq!(rows[0].nickname, "GUPPI");
+        assert_eq!(rows[1].id, id_b);
+        assert_eq!(rows[1].path, "D:/work/other");
+        assert_eq!(rows[1].nickname, "Other");
+    }
+
+    #[test]
+    fn list_projects_on_an_empty_registry_is_an_empty_vec_not_an_error() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(db.list_projects().unwrap().is_empty());
+    }
+
+    #[test]
+    fn project_path_resolves_an_id_back_to_the_registered_path() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        assert_eq!(
+            db.project_path(id).unwrap(),
+            Some(PathBuf::from("C:/src/guppi"))
+        );
+    }
+
+    #[test]
+    fn project_path_for_an_unknown_id_is_none_not_an_error() {
+        // Underpins the `get_project(project_id)` acceptance criterion:
+        // an unknown id must produce a clean error, not a panic, so this
+        // method must distinguish "not found" from "I/O failure".
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.project_path(99_999).unwrap(), None);
     }
 
     #[test]

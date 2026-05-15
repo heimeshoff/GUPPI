@@ -20,6 +20,12 @@ In v1 this BC is read-only-plus-create: it observes existing projects and create
 - **Discovery** — the act of scanning the filesystem for Agentheim projects.
 - **New-project flow** — the sequence: create folder → `git init` → invoke `brainstorm`.
 - **Vision file** — `.agentheim/vision.md`, the canonical "this project exists" marker (alongside the `.agentheim/` directory itself).
+- **Registry** — GUPPI's own SQLite `projects` table (ADR-004 / ADR-005) — the canonical list of known projects, keyed by canonical absolute path.
+- **Project id** — `projects.id` in the registry. Stamped on every `ProjectSnapshot` and on every fine-grained domain event so the canvas can route updates to the right tile.
+- **Project snapshot** — `{ id, name, path, bcs[] }`, the read-model the registry hands the canvas. Produced by `get_project(project_id)` for one project and by `list_projects()` for the full set.
+- **Registered-but-unwatched** — a project whose row exists in the registry but whose `.agentheim/` directory is missing on disk. The supervisor leaves no watcher; the tile is shown in the ADR-005 "missing" state.
+- **WatcherSupervisor** — the central per-project watcher orchestrator (ADR-008). Owns a `project_id → AgentheimWatcher` map. `add` starts a watcher and publishes `ProjectAdded`; `remove` tears one down. Idempotent on `project_id`.
+- **Seed project** — the one hard-coded project (`HARDCODED_PROJECT_PATH` in `lib.rs`) registered at startup so the canvas is not stranded at zero projects before `project-registry-002` lands a real "add" / "scan" affordance.
 
 ## Upstream / downstream
 

@@ -1,7 +1,8 @@
 ---
 id: project-registry-001-multi-project-snapshot-model
 type: feature
-status: todo
+status: done
+completed: 2026-05-15
 scope: bc
 depends_on: []
 related_adrs:
@@ -140,3 +141,59 @@ Decisions made during refinement (2026-05-14, with Marco):
 - `list_projects()` is a cold disk read each call — no cached model (canvas-001
   patches the frontend in place from fine-grained events; `list_projects()` runs
   only on mount + `ResyncRequired`).
+
+## Outcome
+
+Multi-project data-layer foundation landed. The skeleton's path-implicit
+single-project core is gone; every per-project IPC command takes `project_id`
+explicitly and resolves the path through the registry.
+
+**Key files**
+- `src-tauri/src/db.rs` — new `ProjectRow`, `Db::list_projects()`,
+  `Db::project_path(project_id)`. Four new unit tests cover the multi-row
+  listing, empty registry, id→path resolution, and unknown-id-as-`None`.
+- `src-tauri/src/project.rs` — `ProjectSnapshot` gains `id: i64`;
+  `get_project(project_id, &path)` stamps it on the snapshot. One new test
+  (`snapshot_carries_the_project_id_supplied_by_the_caller`); existing tests
+  updated to pass an id.
+- `src-tauri/src/supervisor.rs` — **new module.** `WatcherSupervisor` owns
+  the `project_id → AgentheimWatcher` map behind `Arc<Mutex<…>>`. `add` is
+  idempotent on `project_id`, publishes `ProjectAdded` on first add, returns
+  `SupervisorError::AgentheimMissing` on missing `.agentheim/` without
+  unwinding the caller. `remove` tears down the watcher. Five new tests,
+  including a real-FS integration test seating two projects and asserting
+  fine-grained events carry the correct `project_id` on the shared bus.
+- `src-tauri/src/lib.rs` — `AppState` drops `project_id`/`project_path`,
+  gains `supervisor: WatcherSupervisor`. New `list_projects` IPC command;
+  `get_project`/`save_tile_position`/`load_tile_position`/`pty_spawn_claude`
+  now take `project_id` explicitly. `setup()` seeds the hard-coded project
+  through `supervisor.add(...)` (which also publishes `ProjectAdded` —
+  `setup()` no longer publishes it itself).
+- `src/lib/types.ts` — `ProjectSnapshot` gains `id: number`.
+- `src/lib/ipc.ts` — new `listProjects()`; `getProject(projectId)`,
+  `saveTilePosition(projectId, pos)`, `loadTilePosition(projectId)`.
+- `src/lib/Canvas.svelte` — on mount calls `listProjects()`, renders the
+  first project, persists per-id tile position. `resync_required` re-fetches
+  via `getProject(id)`. Single-tile rendering preserved; `canvas-002` will
+  generalise to a per-id tile map.
+- `.agentheim/contexts/project-registry/README.md` — extended ubiquitous
+  language: registry, project id, project snapshot, registered-but-unwatched,
+  WatcherSupervisor, seed project.
+
+**Tests**: 41/41 Rust unit + integration tests pass (`cargo test --lib`),
+10 of which are new for this task. Frontend `pnpm check` clean.
+
+**Acceptance criteria — all met**:
+1. `Db::list_projects()` covered by `list_projects_returns_every_registered_row`.
+2. `list_projects` command skip-and-logs unreadable rows (lib.rs, inline).
+3. `get_project(project_id)` returns a clean `unknown project_id: N` error
+   for unknown ids (lib.rs).
+4. `supervisor.add` publishes `ProjectAdded` + is idempotent — two tests.
+5. `supervisor.add` on missing `.agentheim/` returns error, seats no entry —
+   one test.
+6. `supervisor.remove` drops the entry — one test.
+7. With two projects, fine-grained events carry the correct `project_id` —
+   `two_projects_emit_events_carrying_their_own_project_id`.
+8. `AppState` has no `project_id`/`project_path`; build is clean; skeleton
+   single-project path is preserved (`setup()` → `supervisor.add` →
+   `listProjects()` on the frontend).

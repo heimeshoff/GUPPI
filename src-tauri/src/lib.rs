@@ -1,25 +1,32 @@
-//! GUPPI's Rust core — the walking skeleton (`infrastructure-012`).
+//! GUPPI's Rust core — the walking skeleton (`infrastructure-012`), generalised
+//! to the multi-project model by `project-registry-001`.
 //!
-//! This module wires the pieces the eleven foundation ADRs settled into one
-//! running Tauri 2 app:
+//! This module wires the pieces the foundation ADRs settled into one running
+//! Tauri 2 app:
 //!
 //! - **ADR-001** Tauri 2, Rust core / web frontend, IPC via `invoke`/`emit`.
 //! - **ADR-004** SQLite state in the OS user-config dir (`db`).
-//! - **ADR-005** the one hard-coded project is `upsert`ed into the registry.
-//! - **ADR-008** one debounced `.agentheim/` watcher (`watcher`).
+//! - **ADR-005** every project is a row in the `projects` table; the
+//!   hard-coded skeleton project is seeded on startup so the canvas has
+//!   something to draw before `project-registry-002` lands.
+//! - **ADR-008** one debounced `.agentheim/` watcher *per project*, owned by
+//!   the central `WatcherSupervisor` (`supervisor`). The single-project
+//!   primitive lives in `watcher`.
 //! - **ADR-009** in-core `EventBus` + a single frontend-bridge task that is
 //!   the *only* place Tauri's `emit` is called for domain events (`events`).
 //! - **ADR-010** `tracing` to rotating local files (`logging`).
 //!
-//! Out of skeleton scope by the task contract: PTY (ADR-006), voice (ADR-007),
-//! multi-project / registry UI, packaging mechanics (ADR-011 — `tauri build`
-//! config lives in `tauri.conf.json`, exercised separately).
+//! `AppState` no longer carries a single `project_id`/`project_path`: those
+//! were the walking-skeleton's hard-coded shape. The multi-project IPC commands
+//! take `project_id` explicitly and resolve the path through the registry
+//! (`Db::project_path`).
 
 mod db;
 mod events;
 mod logging;
 mod project;
 mod pty;
+mod supervisor;
 mod watcher;
 
 use db::Db;
@@ -28,8 +35,8 @@ use project::ProjectSnapshot;
 use pty::ClaudeSession;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use supervisor::WatcherSupervisor;
 use tauri::{Emitter, Manager};
-use watcher::AgentheimWatcher;
 
 /// The Tauri event name the frontend listens on (ADR-009: a single event name
 /// with a JSON payload).
@@ -42,10 +49,20 @@ const FRONTEND_EVENT: &str = "guppi://event";
 const HARDCODED_PROJECT_PATH: &str = r"C:\src\heimeshoff\agentic\guppi";
 
 /// Application state shared with Tauri commands as managed state.
+///
+/// `project-registry-001` reshaped this: the skeleton's `project_id` /
+/// `project_path` fields were the one-project assumption made flesh. They are
+/// gone. Per-project IPC commands now take `project_id` explicitly and resolve
+/// the path through the registry (`Db::project_path`).
 struct AppState {
     db: Arc<Db>,
-    project_id: i64,
-    project_path: PathBuf,
+    /// The central per-project watcher orchestrator (ADR-008). Cheap to clone;
+    /// every clone shares the same map. Field is held to keep the supervisor
+    /// (and therefore every project's watcher) alive for the process lifetime;
+    /// `project-registry-002` lands the IPC affordances that *call* it
+    /// (`add_project`, `import_scanned_projects`, `remove_project`).
+    #[allow(dead_code)]
+    supervisor: WatcherSupervisor,
     /// ADR-009 event bus, shared so spike commands can hand it to a
     /// `ClaudeSession` actor's read loop.
     bus: EventBus,
@@ -57,40 +74,96 @@ struct AppState {
     claude_session: Mutex<Option<ClaudeSession>>,
 }
 
-/// IPC command — ADR-005's `get_project`. Reads the hard-coded project off
-/// disk into a `ProjectSnapshot` for the canvas.
+/// IPC command — read every registered project into snapshots
+/// (`project-registry-001`). A row whose `.agentheim/` is missing is skipped
+/// and logged rather than aborting the call: a single broken project must not
+/// strand the canvas. The frontend calls this on mount and on
+/// `resync_required` (ADR-009 lag escape hatch — `canvas-001`).
 #[tauri::command]
-fn get_project(state: tauri::State<'_, AppState>) -> Result<ProjectSnapshot, String> {
-    project::get_project(&state.project_path).map_err(|e| {
-        tracing::error!(error = %e, "get_project failed");
+fn list_projects(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ProjectSnapshot>, String> {
+    let rows = state.db.list_projects().map_err(|e| {
+        tracing::error!(error = %e, "list_projects: db query failed");
+        e.to_string()
+    })?;
+
+    let mut snapshots = Vec::with_capacity(rows.len());
+    for row in rows {
+        let path = PathBuf::from(&row.path);
+        match project::get_project(row.id, &path) {
+            Ok(snapshot) => snapshots.push(snapshot),
+            Err(e) => {
+                // Skip-and-log: a missing .agentheim/ for one project must not
+                // abort the whole list. Logged as `warn` so it shows up in the
+                // tracing file (ADR-010) — the registered-but-unwatched
+                // (ADR-005 "missing") state is the operational signal.
+                tracing::warn!(
+                    project_id = row.id,
+                    path = %row.path,
+                    error = %e,
+                    "list_projects: skipping unreadable project"
+                );
+            }
+        }
+    }
+    Ok(snapshots)
+}
+
+/// IPC command — read exactly one registered project's snapshot
+/// (`project-registry-001`). The frontend invokes this for per-project resync
+/// (a `ResyncRequired { project_id }` event re-fetches one project, not all).
+/// An unknown `project_id` is a clean error, never a panic.
+#[tauri::command]
+fn get_project(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+) -> Result<ProjectSnapshot, String> {
+    let path = state
+        .db
+        .project_path(project_id)
+        .map_err(|e| {
+            tracing::error!(error = %e, project_id, "get_project: db lookup failed");
+            e.to_string()
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(project_id, "get_project: unknown project_id");
+            format!("unknown project_id: {project_id}")
+        })?;
+
+    project::get_project(project_id, &path).map_err(|e| {
+        tracing::error!(error = %e, project_id, "get_project failed");
         e.to_string()
     })
 }
 
-/// IPC command — persist the project tile's position on drag (ADR-004).
+/// IPC command — persist a project tile's position on drag (ADR-004). Takes
+/// `project_id` explicitly: the registry no longer rides on `AppState`.
 #[tauri::command]
 fn save_tile_position(
     state: tauri::State<'_, AppState>,
+    project_id: i64,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
     state
         .db
-        .save_tile_position(state.project_id, x, y)
+        .save_tile_position(project_id, x, y)
         .map_err(|e| {
-            tracing::error!(error = %e, "save_tile_position failed");
+            tracing::error!(error = %e, project_id, "save_tile_position failed");
             e.to_string()
         })
 }
 
-/// IPC command — read back the persisted tile position, if any.
+/// IPC command — read back a project's persisted tile position, if any.
 #[tauri::command]
 fn load_tile_position(
     state: tauri::State<'_, AppState>,
+    project_id: i64,
 ) -> Result<Option<(f64, f64)>, String> {
     state
         .db
-        .tile_position(state.project_id)
+        .tile_position(project_id)
         .map_err(|e| e.to_string())
 }
 
@@ -118,21 +191,31 @@ fn load_camera(state: tauri::State<'_, AppState>) -> Result<Option<String>, Stri
 // are proven by `pty.rs`'s tests; these commands expose the same actor so
 // Marco can confirm the hands-on criteria against the real `claude.exe`.
 
-/// Spawn `claude.exe` in the hard-coded project's folder, wrapped in a Windows
+/// Spawn `claude.exe` in the given project's folder, wrapped in a Windows
 /// Job Object, with its read loop streaming `SessionOutput` onto the bus.
-/// Replaces any existing spike session.
+/// Replaces any existing spike session. `project-registry-001`: the cwd is
+/// resolved through the registry (`Db::project_path`) rather than being read
+/// off `AppState`.
 #[tauri::command]
-fn pty_spawn_claude(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+fn pty_spawn_claude(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+) -> Result<i64, String> {
+    let project_path = state
+        .db
+        .project_path(project_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("unknown project_id: {project_id}"))?;
     let session_id = 1;
     let session = ClaudeSession::spawn(
         session_id,
         "claude.exe",
         &[],
-        &state.project_path,
+        &project_path,
         state.bus.clone(),
     )
     .map_err(|e| {
-        tracing::error!(error = %e, "pty_spawn_claude failed");
+        tracing::error!(error = %e, project_id, "pty_spawn_claude failed");
         e.to_string()
     })?;
     // Dropping the previous session (if any) runs its ADR-006 cleanup path.
@@ -227,9 +310,16 @@ pub fn run() {
             tracing::info!(db = %db_path.display(), "state database ready");
 
             // --- ADR-005: register the one hard-coded project ----------
+            // `project-registry-001`: the seed stays so the app is not
+            // stranded at zero projects before `project-registry-002` lands.
+            // It is now routed through `WatcherSupervisor::add`, which also
+            // publishes `ProjectAdded` — `setup()` no longer publishes it
+            // itself.
             let project_path = PathBuf::from(HARDCODED_PROJECT_PATH);
-            // Verify `.agentheim/` exists before going further — the skeleton
-            // task's scope step 4 requires this check on startup.
+            // Verify `.agentheim/` exists before going further — the
+            // skeleton's startup check; the supervisor would also reject it
+            // but a missing seed at startup is an outright bootstrap failure
+            // worth surfacing early.
             if !project_path.join(".agentheim").is_dir() {
                 return Err(format!(
                     "hard-coded project has no .agentheim directory: {}",
@@ -243,15 +333,12 @@ pub fn run() {
                     "GUPPI",
                 )
                 .map_err(|e| format!("could not register project: {e}"))?;
-            bus.publish(DomainEvent::ProjectAdded {
-                project_id,
-                path: project_path.to_string_lossy().into_owned(),
-            });
+
+            let supervisor = WatcherSupervisor::new(bus.clone());
 
             app.manage(AppState {
                 db: db.clone(),
-                project_id,
-                project_path: project_path.clone(),
+                supervisor: supervisor.clone(),
                 bus: bus.clone(),
                 claude_session: Mutex::new(None),
             });
@@ -291,18 +378,18 @@ pub fn run() {
                 }
             });
 
-            // --- ADR-008: one debounced .agentheim watcher -------------
-            match AgentheimWatcher::start(project_id, &project_path, bus.clone()) {
-                // Keep the watcher alive for the process lifetime.
-                Ok(w) => {
-                    app.manage(w);
-                }
-                Err(e) => tracing::error!(error = %e, "could not start filesystem watcher"),
+            // --- ADR-008: one debounced .agentheim watcher per project,
+            // mediated by the `WatcherSupervisor` (project-registry-001) ----
+            // The supervisor publishes `ProjectAdded` on a successful add — no
+            // separate publish here.
+            if let Err(e) = supervisor.add(project_id, &project_path) {
+                tracing::error!(error = %e, "could not start filesystem watcher for seed project");
             }
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            list_projects,
             get_project,
             save_tile_position,
             load_tile_position,

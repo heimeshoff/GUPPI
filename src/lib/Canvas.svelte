@@ -27,6 +27,7 @@
 	import { Camera } from './camera.svelte';
 	import {
 		getProject,
+		listProjects,
 		loadCamera,
 		loadTilePosition,
 		onDomainEvent,
@@ -55,10 +56,16 @@
 	let snapshot = $state<ProjectSnapshot | null>(null);
 	let status = $state('starting…');
 
-	// The id of the loaded project. The skeleton has one hard-coded project;
-	// the frontend learns its id from the `project_added` event the core emits
-	// on startup, and ignores any later domain event whose `project_id` does
-	// not match (ADR-009 — `canvas-001` `project_id` filtering).
+	// The id of the loaded project. The skeleton renders one project; the id
+	// flows in two ways:
+	//   1. Directly on the `ProjectSnapshot` returned by `listProjects()` /
+	//      `getProject(projectId)` (`project-registry-001` adds this field).
+	//   2. On the `project_added` domain event, for live registration after
+	//      mount (the `add project…` flow `project-registry-002` will add).
+	// Either way the canvas keeps this single id so it can filter fine-grained
+	// domain events (`canvas-001` `project_id` filtering) and pass it to the
+	// per-project IPC commands (`saveTilePosition`, etc.). `canvas-002` will
+	// generalise this to a per-id map of tiles.
 	let projectId = $state<number | null>(null);
 
 	// Voice-state affordance — a single ambient indicator. The voice BC will
@@ -118,14 +125,15 @@
 			host.appendChild(app.canvas);
 			app.stage.addChild(world);
 
-			// --- restore persisted camera + tile position (ADR-004) ------
+			// --- restore persisted camera (ADR-004) ----------------------
+			// Tile position restore moves into `refresh()` — it needs the
+			// project id from `listProjects()`, which `project-registry-001`
+			// made the load-bearing fetch.
 			try {
 				const savedCamera = await loadCamera();
 				if (savedCamera) camera.restore(savedCamera);
-				const savedTile = await loadTilePosition();
-				if (savedTile) tilePos = savedTile;
 			} catch (e) {
-				logToCore('warn', `could not restore persisted view: ${e}`);
+				logToCore('warn', `could not restore persisted camera: ${e}`);
 			}
 
 			// --- the render pass: project world -> screen via the camera --
@@ -271,17 +279,26 @@
 			unlistenEvent = await onDomainEvent((event) => {
 				switch (event.kind) {
 					case 'project_added':
-						// Learn the loaded project's id so later events can be
-						// filtered by `project_id`.
-						projectId = event.project_id;
+						// The skeleton sees this for the seed project at
+						// startup (supervisor.add publishes it) and would see
+						// it again for any live-added project. We already
+						// learn the seed id from `listProjects()` in
+						// `refresh()`, so this is harmless re-confirmation;
+						// `canvas-002` extends it to maintain a per-id tile
+						// map for live-add tiles.
+						if (projectId === null) {
+							projectId = event.project_id;
+						}
 						return;
 					case 'project_missing':
 						return;
 					case 'resync_required':
 						// The bridge lagged and lost events it cannot
 						// reconstruct — the one full re-fetch path (ADR-009).
-						if (projectId === null || event.project_id === projectId) {
-							void refresh();
+						// Per-project resync: re-fetch exactly the affected
+						// project's snapshot, not the whole list.
+						if (projectId !== null && event.project_id === projectId) {
+							void refreshOne(event.project_id);
 						}
 						return;
 					default: {
@@ -362,13 +379,49 @@
 		}
 
 		async function refresh() {
+			// `project-registry-001`: the canvas now learns the project set
+			// from `listProjects()` rather than a path-implicit `getProject()`.
+			// The skeleton renders the first project; `canvas-002` will render
+			// a tile per snapshot in the returned list.
 			try {
-				snapshot = await getProject();
+				const projects = await listProjects();
+				if (projects.length === 0) {
+					status = 'no projects registered yet';
+					snapshot = null;
+					return;
+				}
+				const first = projects[0];
+				projectId = first.id;
+				snapshot = first;
+				// Now that we know the id, restore this project's persisted
+				// tile position (ADR-004).
+				try {
+					const savedTile = await loadTilePosition(first.id);
+					if (savedTile) tilePos = savedTile;
+				} catch (e) {
+					logToCore('warn', `could not restore tile position: ${e}`);
+				}
 				status = `${snapshot.bcs.length} bounded contexts · press F to fit`;
 				renderScene();
 			} catch (e) {
 				status = `error: ${e}`;
-				logToCore('error', `get_project failed: ${e}`);
+				logToCore('error', `list_projects failed: ${e}`);
+			}
+		}
+
+		/** Re-fetch exactly one project's snapshot (the `resync_required`
+		 * lag-recovery path — ADR-009). Keyed by id so a multi-project canvas
+		 * does not redraw the world for one tile's resync. */
+		async function refreshOne(id: number) {
+			try {
+				const fresh = await getProject(id);
+				// Single-project skeleton: replace the snapshot wholesale.
+				// `canvas-002` patches the per-id entry in its tile map.
+				snapshot = fresh;
+				status = `${snapshot.bcs.length} bounded contexts · press F to fit`;
+				renderScene();
+			} catch (e) {
+				logToCore('error', `get_project failed for ${id}: ${e}`);
 			}
 		}
 
@@ -593,7 +646,13 @@
 			window.addEventListener('pointerup', () => {
 				if (dragging) {
 					dragging = false;
-					void saveTilePosition(tilePos);
+					// `project-registry-001`: per-project tile position requires
+					// passing the project id explicitly. Skipped if the id is
+					// not yet known (only possible mid-bootstrap, before
+					// `refresh()` resolves).
+					if (projectId !== null) {
+						void saveTilePosition(projectId, tilePos);
+					}
 				}
 			});
 		}
