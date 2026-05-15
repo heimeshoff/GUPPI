@@ -1,7 +1,8 @@
 ---
 id: project-registry-002a-scan-roots-and-walk
 type: feature
-status: todo
+status: done
+completed: 2026-05-15
 scope: bc
 depends_on:
   - project-registry-001-multi-project-snapshot-model
@@ -119,3 +120,70 @@ Consumes `project-registry-001`'s surface (`Db`, `AppState` shape). The
 Sibling: `project-registry-002b-import-and-cascade-deregister` builds the
 mutation layer (import picked candidates, `remove_scan_root` cascade,
 `Db::remove_project`) on this foundation.
+
+## Outcome
+
+Landed the scan-root storage + discovery foundation per ADR-013.
+
+**Schema (v1 → v2):**
+- New `scan_roots(id, path UNIQUE, depth_cap, added_at)` table.
+- New nullable `projects.scan_root_id` column with `REFERENCES scan_roots(id)
+  ON DELETE RESTRICT`. NULL = manually-added (ADR-005); non-NULL = discovered
+  under that root. `RESTRICT` makes the `002b` app-driven cascade ordering a
+  checked invariant.
+- `CURRENT_SCHEMA_VERSION` bumped to `2`. Migration applies `ALTER TABLE
+  projects ADD COLUMN scan_root_id …` — additive over v1, no data loss.
+
+**New module `src-tauri/src/scan.rs`:**
+- `SKIP_DIRS` const list (`node_modules`, `.git`, `target`, `.svn`, `.hg`,
+  `dist`, `build`, `.venv`) — pruned by directory-name match before descent.
+- `canonicalize_root(path)` — resolves, collapses symlinks, strips the
+  Windows `\\?\` UNC prefix at the module boundary so the DB only ever stores
+  ordinary `C:\…` form (ADR-005 canonicalisation guarantee).
+- `walk_scan_root(root, depth_cap, known_paths) -> Vec<ScanCandidate>` —
+  remaining-depth counter, junk-dir pruning, does NOT descend into a
+  directory once it is identified as an Agentheim project (no nested
+  projects in v1). Sorted output for determinism.
+- `ScanCandidate { path, nickname_suggestion, already_imported }` — `Serialize`
+  so it crosses IPC; `already_imported` is `HashSet` membership against
+  `projects.path`.
+
+**`Db` methods:** `upsert_scan_root` (idempotent on canonical path),
+`list_scan_roots`, `get_scan_root`, `list_project_paths` (drives
+`already_imported`). `ScanRootRow` is `Serialize` for IPC.
+
+**IPC commands (lib.rs):**
+- `add_scan_root(path, depth_cap?) -> { scan_root_id, candidates }` —
+  canonicalises and persists FIRST so an empty subtree still leaves a
+  rescannable root, then walks.
+- `rescan_scan_root(scan_root_id) -> Vec<ScanCandidate>`.
+- `list_scan_roots() -> Vec<ScanRootRow>`.
+
+**Tests:** 19 new tests (60/60 total cargo tests green):
+- Db: `fresh_db_is_at_schema_version_two`, `v1_db_migrates_to_v2_without_data_loss`
+  (hand-rolled v1 db round-trip), scan-root CRUD idempotency / listing /
+  lookup, `list_project_paths`, cross-restart persistence, empty-root
+  persistence.
+- Scan: empty-root, finds-at-each-depth, depth-cap exclusion, no-nested-descent,
+  junk-pruning, `already_imported` flag, nickname suggestion, UNC-prefix
+  stripping, missing-path error, plus a `add_scan_root`-shaped integration
+  test that composes canonicalise → upsert → list-known → walk against a real
+  temp tree.
+
+**Key files:**
+- `src-tauri/src/db.rs` — schema v2 migration, scan-root CRUD, `ScanRootRow`,
+  `DEFAULT_SCAN_DEPTH_CAP`.
+- `src-tauri/src/scan.rs` — new module; the walker.
+- `src-tauri/src/lib.rs` — three new IPC commands, registered in
+  `invoke_handler`.
+- `.agentheim/contexts/project-registry/README.md` — ubiquitous-language entries
+  for *scan root*, *scan candidate*, *origin tracking*; resolved the
+  "where does GUPPI look for projects?" open question.
+
+**Frontend untouched** (canvas-002 owns `src/lib/*` in parallel). IPC
+contracts are additive — no existing commands changed.
+
+**`scan_root_id` column** is written by `002b`'s `upsert_scanned_project`;
+this task only adds the column and leaves it NULL on the seed-project upsert
+path. Clippy clean for new code (one pre-existing warning in
+`supervisor.rs` left untouched, out of scope).

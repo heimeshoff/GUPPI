@@ -26,13 +26,16 @@ mod events;
 mod logging;
 mod project;
 mod pty;
+mod scan;
 mod supervisor;
 mod watcher;
 
-use db::Db;
+use db::{Db, ScanRootRow, DEFAULT_SCAN_DEPTH_CAP};
 use events::{DomainEvent, EventBus};
 use project::ProjectSnapshot;
 use pty::ClaudeSession;
+use scan::ScanCandidate;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use supervisor::WatcherSupervisor;
@@ -133,6 +136,113 @@ fn get_project(
 
     project::get_project(project_id, &path).map_err(|e| {
         tracing::error!(error = %e, project_id, "get_project failed");
+        e.to_string()
+    })
+}
+
+/// The payload `add_scan_root` returns: the persisted root's id plus the
+/// candidate checklist from walking its subtree.
+#[derive(Debug, serde::Serialize)]
+struct AddScanRootResult {
+    scan_root_id: i64,
+    candidates: Vec<ScanCandidate>,
+}
+
+/// IPC command — register a folder as a scan root (ADR-013) and walk it for
+/// candidate Agentheim projects. The root is canonicalised + persisted FIRST,
+/// so an empty subtree still leaves a rescannable root behind. `depth_cap` is
+/// optional; `None` uses the ADR-005 / ADR-013 default of 3.
+///
+/// Importing the picked candidates is `project-registry-002b`'s job; this
+/// command never touches `projects`.
+#[tauri::command]
+fn add_scan_root(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    depth_cap: Option<u32>,
+) -> Result<AddScanRootResult, String> {
+    let depth = depth_cap.unwrap_or(DEFAULT_SCAN_DEPTH_CAP);
+
+    let canonical = scan::canonicalize_root(std::path::Path::new(&path)).map_err(|e| {
+        tracing::warn!(error = %e, path = %path, "add_scan_root: canonicalisation failed");
+        e.to_string()
+    })?;
+    let canonical_str = canonical.to_string_lossy().into_owned();
+
+    let scan_root_id = state
+        .db
+        .upsert_scan_root(&canonical_str, depth)
+        .map_err(|e| {
+            tracing::error!(error = %e, path = %canonical_str, "add_scan_root: db insert failed");
+            e.to_string()
+        })?;
+
+    let known = state.db.list_project_paths().map_err(|e| {
+        tracing::error!(error = %e, "add_scan_root: list_project_paths failed");
+        e.to_string()
+    })?;
+    let known_set: HashSet<String> = known.into_iter().collect();
+
+    let candidates = scan::walk_scan_root(&canonical, depth, &known_set);
+    tracing::info!(
+        scan_root_id,
+        path = %canonical_str,
+        candidate_count = candidates.len(),
+        "add_scan_root: walk complete"
+    );
+
+    Ok(AddScanRootResult {
+        scan_root_id,
+        candidates,
+    })
+}
+
+/// IPC command — re-walk an already-registered scan root (ADR-013). Returns a
+/// fresh candidate checklist; previously-imported candidates are flagged via
+/// `already_imported` so the UI can grey them out and surface only the new
+/// arrivals.
+#[tauri::command]
+fn rescan_scan_root(
+    state: tauri::State<'_, AppState>,
+    scan_root_id: i64,
+) -> Result<Vec<ScanCandidate>, String> {
+    let row = state
+        .db
+        .get_scan_root(scan_root_id)
+        .map_err(|e| {
+            tracing::error!(error = %e, scan_root_id, "rescan_scan_root: db lookup failed");
+            e.to_string()
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(scan_root_id, "rescan_scan_root: unknown scan_root_id");
+            format!("unknown scan_root_id: {scan_root_id}")
+        })?;
+
+    let known = state.db.list_project_paths().map_err(|e| {
+        tracing::error!(error = %e, "rescan_scan_root: list_project_paths failed");
+        e.to_string()
+    })?;
+    let known_set: HashSet<String> = known.into_iter().collect();
+
+    let candidates = scan::walk_scan_root(
+        std::path::Path::new(&row.path),
+        row.depth_cap,
+        &known_set,
+    );
+    tracing::info!(
+        scan_root_id,
+        candidate_count = candidates.len(),
+        "rescan_scan_root: walk complete"
+    );
+    Ok(candidates)
+}
+
+/// IPC command — list every registered scan root (ADR-013). Empty list is
+/// valid; the UI shows the empty state.
+#[tauri::command]
+fn list_scan_roots(state: tauri::State<'_, AppState>) -> Result<Vec<ScanRootRow>, String> {
+    state.db.list_scan_roots().map_err(|e| {
+        tracing::error!(error = %e, "list_scan_roots: db query failed");
         e.to_string()
     })
 }
@@ -391,6 +501,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_projects,
             get_project,
+            add_scan_root,
+            rescan_scan_root,
+            list_scan_roots,
             save_tile_position,
             load_tile_position,
             save_camera,

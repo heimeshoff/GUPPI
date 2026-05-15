@@ -25,7 +25,10 @@ In v1 this BC is read-only-plus-create: it observes existing projects and create
 - **Project snapshot** — `{ id, name, path, bcs[] }`, the read-model the registry hands the canvas. Produced by `get_project(project_id)` for one project and by `list_projects()` for the full set.
 - **Registered-but-unwatched** — a project whose row exists in the registry but whose `.agentheim/` directory is missing on disk. The supervisor leaves no watcher; the tile is shown in the ADR-005 "missing" state.
 - **WatcherSupervisor** — the central per-project watcher orchestrator (ADR-008). Owns a `project_id → AgentheimWatcher` map. `add` starts a watcher and publishes `ProjectAdded`; `remove` tears one down. Idempotent on `project_id`.
-- **Seed project** — the one hard-coded project (`HARDCODED_PROJECT_PATH` in `lib.rs`) registered at startup so the canvas is not stranded at zero projects before `project-registry-002` lands a real "add" / "scan" affordance.
+- **Seed project** — the one hard-coded project (`HARDCODED_PROJECT_PATH` in `lib.rs`) registered at startup so the canvas is not stranded at zero projects before the user adds their first scan root (`project-registry-002a`/`002b`).
+- **Scan root** — a folder the user has registered as a rescannable parent for project discovery (ADR-013). One row in the `scan_roots` table, with a per-root `depth_cap` (default 3). Adding or rescanning a root walks the subtree and returns a candidate checklist; the root itself is persisted FIRST so an empty subtree still leaves a rescannable root behind.
+- **Scan candidate** — one row in the checklist `add_scan_root` / `rescan_scan_root` returns: `{ path, nickname_suggestion, already_imported }`. The walk reports every `.agentheim/`-bearing directory under the root (depth-capped, junk-pruned, never descending into an identified project). `already_imported = true` for candidates whose canonical path is already in `projects`.
+- **Origin tracking** — every project row carries a nullable `scan_root_id` FK to its discovering scan root (ADR-013). NULL = manually added (ADR-005 "Add project…"); non-NULL = discovered under that root. `ON DELETE RESTRICT` makes the app-driven cascade-deregister (`project-registry-002b`) a checked invariant rather than a convention.
 
 ## Upstream / downstream
 
@@ -35,4 +38,7 @@ In v1 this BC is read-only-plus-create: it observes existing projects and create
 ## Open questions
 
 - Is the filesystem watcher shared with `agent-awareness` (one watcher, two consumers via the infrastructure event bus) or independent? Foundation pass.
-- Where does GUPPI look for projects? Configured roots? Recent-projects list? User-added? Foundation/UX decision.
+
+## Resolved
+
+- *Where does GUPPI look for projects?* — Settled by ADR-013 (`project-registry-002a`): the user registers **scan roots** once; GUPPI walks each on demand and presents a candidate checklist. Manually-added projects (ADR-005 "Add project…") coexist with discovered ones via the nullable `projects.scan_root_id` FK.
