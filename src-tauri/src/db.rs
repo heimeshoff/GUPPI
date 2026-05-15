@@ -305,9 +305,15 @@ impl Db {
     /// the scan walker to mark candidates as `already_imported`. Returned as a
     /// `Vec<String>` (the caller wraps it in a `HashSet`); SQLite ordering is
     /// not relied on.
+    ///
+    /// **Soft-deleted rows are excluded** (mirrors `list_projects`). A
+    /// previously-removed path must scan as fresh so the user can re-tick it;
+    /// `upsert_scanned_project` then revives the row in place via its
+    /// `deleted_at = NULL` clause, preserving the `tile_positions` row.
     pub fn list_project_paths(&self) -> Result<Vec<String>, DbError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT path FROM projects")?;
+        let mut stmt =
+            conn.prepare("SELECT path FROM projects WHERE deleted_at IS NULL")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
     }
@@ -822,6 +828,23 @@ mod tests {
         let mut paths = db.list_project_paths().unwrap();
         paths.sort();
         assert_eq!(paths, vec!["C:/src/guppi".to_string(), "D:/work/other".to_string()]);
+    }
+
+    #[test]
+    fn list_project_paths_excludes_soft_deleted_so_rescan_can_re_import() {
+        // A removed (soft-deleted) project must scan as fresh — otherwise the
+        // scan-folder checklist pre-ticks and greys out the row and the user
+        // cannot re-import their just-removed project.
+        let db = Db::open_in_memory().unwrap();
+        let live = db.upsert_project("C:/src/live", "Live").unwrap();
+        let removed = db.upsert_project("C:/src/removed", "Removed").unwrap();
+        db.soft_delete_project(removed).unwrap();
+
+        let paths = db.list_project_paths().unwrap();
+        assert_eq!(paths, vec!["C:/src/live".to_string()]);
+        // Sanity: the row is still resolvable per-id (sweep/cascade need it).
+        assert!(db.project_path(removed).unwrap().is_some());
+        let _ = live;
     }
 
     #[test]
