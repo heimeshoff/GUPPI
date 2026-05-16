@@ -11,7 +11,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
-*(None yet.)*
+- [design-system-005-document-modal-backdrop-token](backlog/design-system-005-document-modal-backdrop-token.md) — `type: feature`. Documentation-only follow-up from canvas-008. Add `modalBackdrop` / `--guppi-modal-backdrop` to `STYLEGUIDE.md` §2.1 colour table (theme-invariant qualifier explicit), optionally a §3 `Modal` row pointing at `src/lib/Modal.svelte`. Source value: `rgba(10, 10, 14, 0.62)` per the 2026-05-16 design's §5 modal-scrim footnote.
 <!-- backlog-list:end -->
 
 ## Todo

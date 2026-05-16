@@ -284,6 +284,18 @@ export const glowLight: GlowPalette = {
 export const glow: GlowPalette = { ...glowDark };
 
 /* ------------------------------------------------------------------ */
+/* Modal backdrop — the theme-invariant scrim behind a modal dialog.   */
+/* RGBA string, mirrors `--guppi-modal-backdrop` in `tokens.css`. The  */
+/* only consumer today is the CSS overlay layer (`src/lib/Modal.svelte`*/
+/* — ADR-003 overlay surface); kept here for the styleguide rule      */
+/* "every visual value has a tokens home" even though PixiJS does not  */
+/* render modals. Theme-invariant per the 2026-05-16 design reference  */
+/* (canvas-008 — see `tokens.css` comment for the audit story).        */
+/* ------------------------------------------------------------------ */
+
+export const modalBackdrop = 'rgba(10, 10, 14, 0.62)';
+
+/* ------------------------------------------------------------------ */
 /* Typography — one family, three sizes (per the task scope).          */
 /* ------------------------------------------------------------------ */
 

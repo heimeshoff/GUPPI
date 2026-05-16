@@ -85,15 +85,16 @@
 	@import './design/tokens.css';
 
 	/*
-	 * The backdrop is a fixed full-viewport surface at 70% of
-	 * `--guppi-canvas-bg`'s colour, so the modal body itself can sit at
-	 * full opacity and stay legible. Token literal `#16161c` is
-	 * `--guppi-canvas-bg`; if that token shifts, this RGB must move too.
+	 * The backdrop is a fixed full-viewport scrim — a theme-invariant deep
+	 * dim per `--guppi-modal-backdrop` (added in canvas-008 when the
+	 * design-system-004 audit surfaced the previous inline literal as a
+	 * stale dark-theme assumption). The dialog body sits at full opacity
+	 * above it and stays legible in either theme.
 	 */
 	.modal-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgb(22 22 28 / 70%);
+		background: var(--guppi-modal-backdrop);
 		display: flex;
 		align-items: center;
 		justify-content: center;

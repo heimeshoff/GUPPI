@@ -95,6 +95,18 @@
 	--guppi-voice-listening: #25abfe;
 	--guppi-voice-muted: #6e6e80;
 
+	/* --- Colour: modal backdrop (theme-invariant) --------------------- */
+	/* The full-viewport scrim behind a modal. Theme-invariant deep dim
+	   per the 2026-05-16 design reference ("modal scrim ·
+	   rgba(10,10,14,0.62) over canvas" — GUPPI.html §5). Keeping this
+	   single-valued across light + dark themes means the modal always
+	   reads as "scrimmed", and the dialog above stays distinctly framed
+	   regardless of the canvas backdrop's lightness. Consumed by
+	   `src/lib/Modal.svelte`. Added in canvas-008-apply-revised-tokens
+	   when the light-mode audit surfaced the previously-inline
+	   `rgb(22 22 28 / 70%)` literal as a stale dark-theme assumption. */
+	--guppi-modal-backdrop: rgba(10, 10, 14, 0.62);
+
 	/* --- Typography --------------------------------------------------- */
 	--guppi-font-family: 'Inter', 'Segoe UI', system-ui, -apple-system,
 		'Helvetica Neue', Arial, sans-serif;
