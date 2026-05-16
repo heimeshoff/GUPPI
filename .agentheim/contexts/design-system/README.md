@@ -14,7 +14,7 @@ Frontend infrastructure: the visual language GUPPI uses on its canvas and detail
 
 ## Styleguide
 
-The styleguide is **code-complete** (`design-system-001-styleguide` — orbit baseline; `design-system-002-project-frame-vocabulary` — project-as-frame additions). Both pending Marco's in-person sign-off and his design-skill refinement pass.
+The styleguide is **code-complete** (`design-system-001-styleguide` — orbit baseline; `design-system-002-project-frame-vocabulary` — project-as-frame additions; `design-system-003-brand-colors-and-status-revision` — Marco's `claude.ai/design` refinement landing brand orange `#ff8b00` + brand blue `#25abfe`, revised status palette, and v1 dimensional refinements). Light theme follows in `design-system-004`; canvas re-validation against the revised tokens follows in `canvas-008`.
 
 - **The styleguide document:** `STYLEGUIDE.md` (this directory) — tokens, component states, patterns, and the resolved open-question defaults. §3.1–3.5 = orbit baseline; §3.6–3.8 = project frame, BC bubble (inside frame), intra-project edges.
 - **Tokens (source of truth):** `src/lib/design/tokens.ts` (PixiJS-ready numeric values) and `src/lib/design/tokens.css` (CSS custom properties for the HTML overlay layer). The TS object is canonical; the CSS file mirrors it.
@@ -57,6 +57,6 @@ Structurally analogous to `infrastructure` — both own globally-true foundation
 
 ## Open questions
 
-- Light mode is optional per the architect's draft styleguide note — confirm with Marco during the styleguide task.
-- Tile visual hierarchy (project vs BC) — TBD in styleguide.
-- Status palette — must be colorblind-friendly per architect; confirm Marco's preference.
+- Light mode — landing in `design-system-004` (no longer deferred; SQLite-persisted preference per ADR-004).
+- Tile visual hierarchy (project vs BC) — **resolved** in STYLEGUIDE.md §3.1/§3.2: warm brand-orange tile/frame, cool brand-blue BC.
+- Status palette — **resolved** in STYLEGUIDE.md §2.2: four states with brand-coherent hues (`idle` grey, `running` brand blue, `blocked` red, `missing` brand orange), each paired with a distinct glyph; colourblind-safe by geometry.

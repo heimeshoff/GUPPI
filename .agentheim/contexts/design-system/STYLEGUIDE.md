@@ -47,36 +47,52 @@ hex strings.
 | Surface | `canvasBg` | `#16161c` | Canvas backdrop (PixiJS `Application` background) |
 | Surface | `canvasBgRaised` | `#1e1e26` | Optional faint world grid / vignette |
 | Project tile | `tileFill` | `#262636` | Project tile body — warm, high-weight |
-| Project tile | `tileBorder` | `#8a8ad0` | Project tile border — periwinkle |
+| Project tile | `tileBorder` | `#ff8b00` | Project tile border — **brand orange** (design-system-003) |
 | Project tile | `tileText` / `tileTextMuted` | `#f2f2f7` / `#b9b9c8` | Title / subtitle |
 | BC node | `bcFill` | `#20242b` | BC node body — calmer, cooler |
-| BC node | `bcBorder` | `#3c8b8e` | BC node border — teal |
+| BC node | `bcBorder` | `#25abfe` | BC node border — **brand blue** (design-system-003) |
 | BC node | `bcText` / `bcTextMuted` | `#e6e6ec` / `#9a9aa6` | Title / subtitle |
 | Edge | `edge` | `#4a4a58` | Project → BC connectors (legacy / orbit baseline) |
-| Edge | `edgeHighlight` | `#8a8ad0` | Connector when its endpoint is focused |
-| Edge | `edgeUpstream` / `edgeMutual` / `edgeACL` / `edgeConformist` | `#6e6e80` | Intra-project edges — single neutral palette, geometry distinguishes types (see §3.8) |
-| Edge | `fgMuted` | `#6e6e80` | The underlying neutral hue all four intra-project edges resolve to |
-| Frame | `frameFill` / `frameBorder` / `frameHeaderFill` / `frameHeaderDivider` | `#1a1a22` / `#8a8ad0` / `#262636` / `#8a8ad0` | Project frame body, border, header bar (see §3.6) |
+| Edge | `edgeHighlight` | `#ff8b00` | Connector when its endpoint is focused — brand orange |
+| Edge | `edgeUpstream` / `edgeMutual` / `edgeACL` / `edgeConformist` | `#3a3b46` | Intra-project edges — single neutral palette, geometry distinguishes types (see §3.8). Resolves to `hairlineStrong` (design-system-003; was `fgMuted`). |
+| Hairline | `hairlineStrong` | `#3a3b46` | Edge / divider hue (design-system-003). Distinct from `fgMuted` (muted *text*); used for structural lines. |
+| Edge | `fgMuted` | `#6e6e80` | Muted foreground for placeholder copy and disabled labels (no longer the edge hue) |
+| Frame | `frameFill` / `frameBorder` / `frameHeaderFill` / `frameHeaderDivider` | `#1a1a22` / `#ff8b00` / `#262636` / `#2a2b35` | Project frame body, border (brand orange), header bar, header underline hairline (see §3.6) |
 | Frame | `frameTitleText` / `frameTitleTextMuted` / `frameEmptyText` | `#f2f2f7` / `#b9b9c8` / `#6e6e80` | Header text + empty-frame placeholder |
-| BC bubble (inside frame) | `bcInsideFill` / `bcInsideBorder` / `bcInsideText` / `bcInsideTextMuted` / `bcInsidePillFill` | `#20242b` / `#3c8b8e` / `#e6e6ec` / `#9a9aa6` / `#2a2f38` | Inside-frame BC bubble + task-counts pill (see §3.7) |
-| Affordance | `focusRing` | `#c8c8ff` | Ring drawn around a hovered/focused node |
+| BC bubble (inside frame) | `bcInsideFill` / `bcInsideBorder` / `bcInsideText` / `bcInsideTextMuted` / `bcInsidePillFill` | `#20242b` / `#25abfe` / `#e6e6ec` / `#9a9aa6` / `#2a2f38` | Inside-frame BC bubble (brand-blue border) + task-counts pill (see §3.7) |
+| Affordance | `focusRing` | `#ffb05a` | Ring drawn around a hovered/focused node — warm tint matches `frameBorder` |
 
 ### 2.2 Status palette — colourblind-friendly
 
 Four discrete states. The palette is built so it survives deuteranopia and
 protanopia: the states differ in **hue *and* lightness**, and **each pairs
-with a distinct glyph** — colour is never the only signal.
+with a distinct glyph** — colour is never the only signal. Revised in
+`design-system-003` to lock in Marco's brand hues (blue + orange) — these
+two are reused as accents on `bcBorder` and `frameBorder`, so the status
+palette and the brand palette read as one system.
 
 | State | Token | Colour | Glyph | Meaning |
 |---|---|---|---|---|
-| `idle` | `statusIdle` | `#6f7585` grey-blue | `○` hollow circle | At rest — nothing in flight |
-| `running` | `statusRunning` | `#2f9fe0` bright blue | `▶` play | Work in progress |
-| `blocked` | `statusBlocked` | `#e6a020` amber | `◆` diamond | Blocked on a question |
-| `missing` | `statusMissing` | `#d05a8a` magenta-pink | `✕` cross | Expected but absent |
+| `idle` | `statusIdle` | `#7b7c8a` grey | `○` hollow circle | At rest — nothing in flight |
+| `running` | `statusRunning` | `#25abfe` brand blue | `▶` play | Work in progress |
+| `blocked` | `statusBlocked` | `#e85454` red | `◆` diamond | Blocked on a question |
+| `missing` | `statusMissing` | `#ff8b00` brand orange | `✕` cross | Expected but absent |
 
 `statusText` (`#10131a`) is the dark text/glyph colour that sits *on top* of a
 status fill (badges). `statusColor`, `statusGlyph`, `statusLabel` maps in
 `tokens.ts` keep the mapping in one place — consume those, don't re-derive.
+
+**Status glow tokens (design-system-003).** Each status has an
+accompanying RGBA halo used by the `running`-pulse keyframe and any
+ambient badge glow. These are RGBA strings — see §5 "Glow capture" for
+why this token group is strings rather than Pixi numerics.
+
+| State | Glow token (CSS) | Glow token (TS) | Value |
+|---|---|---|---|
+| `idle` | `--guppi-status-idle-glow` | `glow.statusIdle` | `rgba(123,124,138,.18)` |
+| `running` | `--guppi-status-running-glow` | `glow.statusRunning` | `rgba(37,171,254,.22)` |
+| `blocked` | `--guppi-status-blocked-glow` | `glow.statusBlocked` | `rgba(232,84,84,.22)` |
+| `missing` | `--guppi-status-missing-glow` | `glow.statusMissing` | `rgba(255,139,0,.22)` |
 
 ### 2.3 Typography — one family, three sizes
 
@@ -108,9 +124,9 @@ zoom 1). Use the scale; don't invent intermediate values.
 | `borderWidth` / `borderWidthFocus` | `2 / 3` | Border weights |
 | `badgeHeight` / `badgeMinWidth` | `18 / 18` | Status badge pill |
 | `radiusFrame` / `borderWidthFrame` | `12 / 1` | Project frame corner + border (see §3.6) |
-| `frameHeaderHeight` / `framePadding` | `24 / 16` | Header bar height + inner body padding |
+| `frameHeaderHeight` / `framePadding` | `36 / 16` | Header bar height + inner body padding (height bumped from 24 → 36 in design-system-003) |
 | `frameMinInnerWidth` / `frameMinInnerHeight` | `320 / 200` | Floor for auto-fit frame sizing |
-| `bcInsideWidth` × `bcInsideHeight` | `160 × 56` | BC bubble inside a frame (denser than orbit BC node) |
+| `bcInsideWidth` × `bcInsideHeight` | `188 × 60` | BC bubble inside a frame — denser than orbit BC node; revised from 160×56 in design-system-003 |
 | `radiusBcInside` | `8` | BC bubble corner radius (rounded rectangle, denser than orbit) |
 | `bcInsidePillHeight` / `bcInsidePillMinWidth` / `bcInsidePillRadius` | `16 / 32 / 8` | Task-counts pill inline with the BC name |
 | `edgeWeight` / `edgeWeightConformist` | `2 / 1` | Intra-project edge line weights |
@@ -141,8 +157,8 @@ is downstream BC work.
 
 ### 3.1 Project tile — *implemented*
 
-The canvas anchor. Primary hierarchy: larger geometry, warm `tileBorder`,
-`fontFamily` bold title + mono path subtitle.
+The canvas anchor. Primary hierarchy: larger geometry, warm `tileBorder`
+(`#ff8b00` brand orange), `fontFamily` bold title + mono path subtitle.
 
 | State | Visual |
 |---|---|
@@ -154,9 +170,9 @@ The project tile carries **no status badge** — status is a per-BC concept.
 
 ### 3.2 BC node — *implemented*
 
-Secondary hierarchy: smaller geometry, cool `bcBorder`, same type scale at
-lower weight. Carries a **status badge** (top-right corner) derived from task
-counts.
+Secondary hierarchy: smaller geometry, cool `bcBorder` (`#25abfe` brand
+blue), same type scale at lower weight. Carries a **status badge** (top-right
+corner) derived from task counts.
 
 | State | Visual |
 |---|---|
@@ -191,8 +207,8 @@ canvas pans). Non-intrusive by design — one glyph, no chrome.
 | State | Token | Visual |
 |---|---|---|
 | `idle` | `voiceIdle` `#5a5a68` | mic available, not listening — "mic" |
-| `listening` | `voiceListening` `#2f9fe0` | actively listening (matches `running` blue) — "mic" |
-| `muted` | `voiceMuted` `#d05a8a` | mic unavailable / muted — "muted" |
+| `listening` | `voiceListening` `#25abfe` | actively listening (matches `running` brand blue) — "mic" |
+| `muted` | `voiceMuted` `#6e6e80` | mic unavailable / muted — slash glyph on the neutral `fgMuted` hue (design-system-003 revision; the earlier magenta-pink read as "alarm") |
 
 The baseline renders the `idle` state. The **voice BC** wires real mic state
 into `voiceState` later; this establishes the visual contract and the token
@@ -215,18 +231,19 @@ inside and the `frameMin*` floors below — no user-resize at v1.
 
 | State | Visual |
 |---|---|
-| Default | `frameFill` body, `frameBorder` 1px border, `radiusFrame` 12px corners, header bar in `frameHeaderFill` divided from the body by `frameHeaderDivider` 1px |
+| Default | `frameFill` body, `frameBorder` 1px brand-orange border (`#ff8b00`), `radiusFrame` 12px corners, header bar in `frameHeaderFill` divided from the body by `frameHeaderDivider` 1px hairline (`#2a2b35` — quiet, not the brand accent) |
 | Hover (over body) | no change — frame is a region, not an interactive node; hover affordance applies to the header bar only |
 | Hover (header bar) | `focusRing` 3px halo around the header bar edges — "click here for project-level actions" |
 | Dragging (header bar) | same as hover; the whole frame (header + body + interior BCs) follows the pointer. World position persists on pointer-up (ADR-004). |
 
-**Header bar.** Height = `frameHeaderHeight` (24). Carries, left to right:
-project name in `frameTitleText` at `sizeBody` `weightMedium`, then the
-status badges (one badge per status state that has count > 0; same
-`statusColor` / `statusGlyph` palette as a BC node), then the task-counts
-row right-aligned in `frameTitleTextMuted` at `sizeCaption` `fontFamilyMono`.
-Right-clicking the header bar opens the existing tile context menu
-(`Remove project`, etc. — same surface as today's tile right-click).
+**Header bar.** Height = `frameHeaderHeight` (36 — design-system-003;
+was 24). The taller bar fits, left to right: drag-handle dots, project
+name in `frameTitleText` at `sizeBody` `weightMedium`, the status badges
+(one badge per status state that has count > 0; same `statusColor` /
+`statusGlyph` palette as a BC node), and the task-counts row right-aligned
+in `frameTitleTextMuted` at `sizeCaption` `fontFamilyMono`. Right-clicking
+the header bar opens the existing tile context menu (`Remove project`,
+etc. — same surface as today's tile right-click).
 
 **Empty-frame state.** A project with zero BCs is still a frame — but
 rendering an empty box reads as "broken". The body shows a single
@@ -267,8 +284,9 @@ zoom, lower height — because many BCs share a frame and the eye needs to
 read the relationship graph between them, not each bubble's chrome.
 
 Shape: a rounded rectangle (`radiusBcInside` 8), `bcInsideWidth × bcInsideHeight`
-(160 × 56), `bcInsideFill` body, `bcInsideBorder` 2px stroke. Inside, in
-one row at default zoom:
+(188 × 60 — design-system-003 revision; was 160 × 56), `bcInsideFill` body,
+`bcInsideBorder` 2px brand-blue stroke (`#25abfe`). Inside, in one row at
+default zoom:
 
 - BC name — `bcInsideText`, `sizeBody`, `weightMedium`, left-aligned.
 - Task-counts pill — right-aligned, `bcInsidePillFill` rounded rect
@@ -297,11 +315,14 @@ Four edge variants, one per context-map relationship type from
 **retires**; containment (BC inside frame) replaces it.
 
 **Resolved default: single neutral palette.** All four variants use the
-same `fgMuted` hue (the named tokens — `edgeUpstream`, `edgeMutual`,
-`edgeACL`, `edgeConformist` — resolve to the same value). **Geometry**
-— arrowhead presence, notch glyph, line weight — carries the type
-distinction. The reasoning matches the "restrained" motion budget: a
-dense canvas reads cleanest when colour is consistent and shape varies.
+same `hairlineStrong` hue `#3a3b46` (revised in design-system-003 — the
+named tokens `edgeUpstream`, `edgeMutual`, `edgeACL`, `edgeConformist`
+all resolve to this value; previously they resolved to `fgMuted` `#6e6e80`,
+but `fgMuted` is muted *text* and edges deserve their own structural
+hairline). **Geometry** — arrowhead presence, notch glyph, line weight —
+carries the type distinction. The reasoning matches the "restrained"
+motion budget: a dense canvas reads cleanest when colour is consistent
+and shape varies.
 
 | Relationship | Token | Weight | Arrowhead | Notch | Direction |
 |---|---|---|---|---|---|
@@ -342,7 +363,7 @@ instant, matching the restrained budget).
 
 ```
 function drawEdge(g, a, b, kind) {
-  const colour = edgeColour[kind];          // all four → fgMuted today
+  const colour = edgeColour[kind];          // all four → hairlineStrong today
   const weight = kind === 'conformist' ? edgeWeightConformist : edgeWeight;
   g.lineStyle(weight, colour);
 
@@ -444,11 +465,59 @@ default is **overridable**.
 | Q5 | Header bar — integrated (one-piece) or attached (above)? | **integrated**, divided from body by `frameHeaderDivider` 1px | drop the divider line and detach the header geometry |
 | Q6 | BC bubble shape — circle (like orbit) or rounded rectangle? | **rounded rectangle**, `radiusBcInside` 8, denser than orbit | change `radiusBcInside` to half of `bcInsideHeight` for a pill / capsule |
 | Q7 | ACL notch — triangle on the line, zig-zag, or hover-only label? | **filled triangle at midpoint**, `aclNotchSize` 10, pointing toward upstream | swap `drawNotchTriangle` for a zig-zag polyline or remove and gate on hover |
-| Q8 | Edge colour — single neutral, or per-type hues? | **single neutral `fgMuted`**, geometry distinguishes types | change `edgeUpstream` / `edgeMutual` / `edgeACL` / `edgeConformist` to distinct hues; consumers already reference the named tokens |
+| Q8 | Edge colour — single neutral, or per-type hues? | **single neutral `hairlineStrong`** (`#3a3b46` — was `fgMuted` until design-system-003), geometry distinguishes types | change `edgeUpstream` / `edgeMutual` / `edgeACL` / `edgeConformist` to distinct hues; consumers already reference the named tokens |
 
 **Hover-on-edge highlight** (extra deferred question): until Marco
 decides, edges have no hover state. The `edgeHighlight` token is in
 place if the decision goes "yes".
+
+### Q9 — Brand-accent palette → **brand orange `#ff8b00` (warm) + brand blue `#25abfe` (cool)**
+
+Decided by Marco on 2026-05-16 in the `claude.ai/design` session; the
+full handoff bundle sits at `references/claude-design-2026-05-16/`
+(chat transcript at `chats/chat1.md`, design tokens at
+`project/guppi-tokens.css`).
+
+**Reasoning.** The orbit-baseline placeholder pair (periwinkle `#8a8ad0`
+for the project tile, teal `#3c8b8e` for the BC node) shipped without
+brand identity attached — they were chosen for legibility, not signal.
+Marco's design session locked in:
+- **Brand orange `#ff8b00`** — warm anchor; project frame border,
+  project tile border, edge highlight, the `missing` status hue, and the
+  `focusRing` (`#ffb05a`, a warm tint of the same family).
+- **Brand blue `#25abfe`** — cool secondary; BC borders (both orbit and
+  inside-frame), the `running` status hue, `voiceListening`.
+
+The two hues pair: warm/cool, orange/blue at near-complementary angles
+on the wheel. The status palette folds into the brand palette (running
+= brand blue, missing = brand orange) so the canvas reads as one
+coherent system rather than two parallel ones.
+
+**Override path.** Swap the four hue tokens (`tileBorder`, `bcBorder`,
+`frameBorder`, `bcInsideBorder`) and the two status tokens
+(`statusRunning`, `statusMissing`) plus the matching glow strings.
+Everything else cascades. There is **no styleguide ADR** for this — the
+prior styleguide ADRs concern structural choices (TS-canonical + CSS
+mirror; status-palette colourblind contract; restrained-motion budget),
+and Marco's hue selection doesn't conflict with any of them; this §5
+entry is the durable record (matching the `design-system-002` pattern
+where Q4–Q8 also live as §5 entries, not as ADRs).
+
+### Q10 — Status-glow capture → **RGBA strings, top-level `glow` group**
+
+Each status has a matching halo used by the `running`-pulse keyframe and
+any ambient badge glow. Two capture options were available: extend each
+`statusX` Pixi-numeric colour with a paired numeric + alpha, or capture
+the four halos as RGBA strings under a new top-level token group.
+**Resolved default: RGBA strings under `export const glow`.** The CSS
+overlay layer is the primary consumer (the `g-pulse-running` keyframe
+reads `var(--guppi-status-running-glow)` directly as a `box-shadow`
+colour), and a 1:1 string copy from `tokens.ts` to `tokens.css` keeps
+the dual-file contract trivial. If a PixiJS draw call ever needs the
+glow, it can parse the RGBA string at the call site (small cost, one
+helper) or — preferred — receive a numeric + alpha pair derived from
+the same RGBA source. **Override path:** add a numeric+alpha variant
+to the `glow` group when the first PixiJS consumer lands.
 
 ---
 

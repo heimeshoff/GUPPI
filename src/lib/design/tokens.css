@@ -18,61 +18,82 @@
 	--guppi-canvas-bg-raised: #1e1e26;
 
 	/* --- Colour: project tile ----------------------------------------- */
+	/* Brand orange — warm anchor for the project hierarchy
+	   (design-system-003). */
 	--guppi-tile-fill: #262636;
-	--guppi-tile-border: #8a8ad0;
+	--guppi-tile-border: #ff8b00;
 	--guppi-tile-text: #f2f2f7;
 	--guppi-tile-text-muted: #b9b9c8;
 
 	/* --- Colour: bounded-context node --------------------------------- */
+	/* Brand blue — cool secondary (design-system-003). */
 	--guppi-bc-fill: #20242b;
-	--guppi-bc-border: #3c8b8e;
+	--guppi-bc-border: #25abfe;
 	--guppi-bc-text: #e6e6ec;
 	--guppi-bc-text-muted: #9a9aa6;
 
 	/* --- Colour: edges + affordances ---------------------------------- */
 	--guppi-edge: #4a4a58;
-	--guppi-edge-highlight: #8a8ad0;
-	--guppi-focus-ring: #c8c8ff;
+	--guppi-edge-highlight: #ff8b00;
+	--guppi-focus-ring: #ffb05a;
 
 	/* --- Colour: neutral muted foreground ----------------------------- */
-	/* Single hue used by all four intra-project edge types
-	   (design-system-002). Geometry distinguishes the types; colour stays
-	   uniform so dense canvases scan cleanly. */
+	/* Used for muted *text* (placeholder copy, disabled labels). The
+	   four intra-project edge variants no longer resolve here; they
+	   resolve to `--guppi-hairline-strong` (design-system-003). */
 	--guppi-fg-muted: #6e6e80;
 
-	/* --- Colour: project frame (design-system-002) -------------------- */
+	/* --- Colour: hairline-strong (design-system-003) ------------------ */
+	/* Dedicated edge / divider hue. Distinct from `--guppi-fg-muted`
+	   (muted text) so structural lines and table dividers don't compete
+	   with body copy. */
+	--guppi-hairline-strong: #3a3b46;
+
+	/* --- Colour: project frame (design-system-002, revised -003) ----- */
 	--guppi-frame-fill: #1a1a22;
-	--guppi-frame-border: #8a8ad0;
+	--guppi-frame-border: #ff8b00;
 	--guppi-frame-header-fill: #262636;
-	--guppi-frame-header-divider: #8a8ad0;
+	--guppi-frame-header-divider: #2a2b35;
 	--guppi-frame-title-text: #f2f2f7;
 	--guppi-frame-title-text-muted: #b9b9c8;
 	--guppi-frame-empty-text: #6e6e80;
 
 	/* --- Colour: BC bubble (inside-frame variant) --------------------- */
 	--guppi-bc-inside-fill: #20242b;
-	--guppi-bc-inside-border: #3c8b8e;
+	--guppi-bc-inside-border: #25abfe;
 	--guppi-bc-inside-text: #e6e6ec;
 	--guppi-bc-inside-text-muted: #9a9aa6;
 	--guppi-bc-inside-pill-fill: #2a2f38;
 
 	/* --- Colour: intra-project edge variants (named aliases) ---------- */
-	--guppi-edge-upstream: #6e6e80;
-	--guppi-edge-mutual: #6e6e80;
-	--guppi-edge-acl: #6e6e80;
-	--guppi-edge-conformist: #6e6e80;
+	/* All four resolve to `--guppi-hairline-strong` since design-system-003;
+	   geometry — arrowhead presence, notch glyph, line weight — carries
+	   the type distinction. */
+	--guppi-edge-upstream: #3a3b46;
+	--guppi-edge-mutual: #3a3b46;
+	--guppi-edge-acl: #3a3b46;
+	--guppi-edge-conformist: #3a3b46;
 
-	/* --- Colour: status palette (colourblind-friendly) ---------------- */
-	--guppi-status-idle: #6f7585;
-	--guppi-status-running: #2f9fe0;
-	--guppi-status-blocked: #e6a020;
-	--guppi-status-missing: #d05a8a;
+	/* --- Colour: status palette (colourblind-friendly, revised -003) -- */
+	--guppi-status-idle: #7b7c8a;
+	--guppi-status-running: #25abfe;
+	--guppi-status-blocked: #e85454;
+	--guppi-status-missing: #ff8b00;
 	--guppi-status-text: #10131a;
+
+	/* --- Colour: status glow (RGBA halos for badge pulse) ------------- */
+	/* Consumed by the `g-pulse-running` keyframe and badge halos. RGBA
+	   strings — captured verbatim so the CSS layer can read them as
+	   shadow / glow values. (design-system-003) */
+	--guppi-status-idle-glow: rgba(123, 124, 138, 0.18);
+	--guppi-status-running-glow: rgba(37, 171, 254, 0.22);
+	--guppi-status-blocked-glow: rgba(232, 84, 84, 0.22);
+	--guppi-status-missing-glow: rgba(255, 139, 0, 0.22);
 
 	/* --- Colour: voice-state indicator -------------------------------- */
 	--guppi-voice-idle: #5a5a68;
-	--guppi-voice-listening: #2f9fe0;
-	--guppi-voice-muted: #d05a8a;
+	--guppi-voice-listening: #25abfe;
+	--guppi-voice-muted: #6e6e80;
 
 	/* --- Typography --------------------------------------------------- */
 	--guppi-font-family: 'Inter', 'Segoe UI', system-ui, -apple-system,
@@ -101,17 +122,21 @@
 	--guppi-border-width: 2px;
 	--guppi-border-width-focus: 3px;
 
-	/* --- Shape: project frame (design-system-002) --------------------- */
+	/* --- Shape: project frame (design-system-002, revised -003) ------ */
 	--guppi-radius-frame: 12px;
 	--guppi-border-width-frame: 1px;
-	--guppi-frame-header-height: 24px;
+	/* Header bar bumped from 24px → 36px in design-system-003: fits
+	   drag-handle dots + project name + per-state mini badges + a
+	   task-count row without crowding. */
+	--guppi-frame-header-height: 36px;
 	--guppi-frame-padding: 16px;
 	--guppi-frame-min-inner-width: 320px;
 	--guppi-frame-min-inner-height: 200px;
 
-	/* --- Shape: BC bubble (inside-frame variant) ---------------------- */
-	--guppi-bc-inside-width: 160px;
-	--guppi-bc-inside-height: 56px;
+	/* --- Shape: BC bubble (inside-frame variant, revised -003) ------- */
+	/* 160×56 → 188×60 — more breathing room for the title + pill row. */
+	--guppi-bc-inside-width: 188px;
+	--guppi-bc-inside-height: 60px;
 	--guppi-radius-bc-inside: 8px;
 	--guppi-bc-inside-pill-height: 16px;
 	--guppi-bc-inside-pill-min-width: 32px;
