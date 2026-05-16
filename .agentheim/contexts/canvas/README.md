@@ -33,12 +33,15 @@ The styleguide was signed off in person by Marco on 2026-05-14, so the gate is o
 ## Ubiquitous language (seed)
 
 - **Canvas** — the infinite surface itself.
-- **Tile** — visual representation of a project (large node).
-- **Node** — visual representation of a bounded context (small node, child of a project tile).
-- **Connection** — the line between a tile and its BC nodes.
+- **Frame** — the surrounding visual region drawn around a project (`canvas-007`). Replaces the orbit-baseline single-bubble tile: project name, status badges, and task counts ride a header bar across the top edge; the frame body contains the project's bounded contexts as interior bubbles. The header bar is the project's drag handle and right-click target.
+- **Bubble** — visual representation of a bounded context, drawn INSIDE its project frame (§3.7 inside-frame variant of the BC node). Denser than the orbit-baseline BC node: title + counts pill in one row at default zoom, status badge slot retained for `agent-awareness`.
+- **Tile** — pre-`canvas-007` term for a project's visual (single bubble + orbiting BCs). Retired; "frame" replaces it. Some IPC names still carry the legacy term (`tile_positions`, `saveTilePosition`, `loadTilePosition`) — those persist a project's frame-origin position and are read as "frame position" semantically.
+- **Intra-project edge** — a line between two BC bubbles inside one project frame, drawn by the BC↔BC relationship type declared in each BC's README YAML frontmatter (ADR-014). Four variants share the single-neutral `fgMuted` palette; geometry distinguishes them. `customer-supplier` and `conformist` are directional (arrowhead at the downstream end; `conformist` at a lighter weight); `shared-kernel` and `partnership` are non-directional; `anticorruption-layer` is directional with a midpoint triangle notch pointing upstream.
+- **Connection** — pre-`canvas-007` term for the line between a tile and its BC nodes (project→BC). Retired; containment (BC inside frame) replaces it. The line vocabulary now applies only to BC↔BC intra-project edges.
 - **Viewport** — the currently visible window onto the canvas (pan position + zoom level).
-- **Focus** — a "zoom to" operation that frames a specific tile or node.
-- **Layout** — positions of tiles/nodes on the canvas (persisted in GUPPI's own state directory, not in the target project's `.agentheim/`).
+- **Focus** — a "zoom to" operation that frames a specific project frame or BC bubble.
+- **Layout** — positions of frames/bubbles on the canvas (persisted in GUPPI's own state directory, not in the target project's `.agentheim/`). Frame positions ride `tile_positions`; per-BC manual-drag positions inside a frame ride `bc_positions` (`project-registry-004`, schema v4).
+- **BC layout** — the deterministic force-directed (`canvas-007`) one-shot computation that places BC bubbles inside their frame. Driven by the relationship graph (related BCs cluster visually). Same input → same output; a never-dragged BC lands in the same spot across restarts. Manual drag positions pin a BC and re-run only fires on BC add / remove / relationship-change (`bc_appeared` / `bc_disappeared` / `bc_relationships_changed` events). No `requestAnimationFrame` loop. Implementation: pure `src/lib/bc-layout.ts` alongside `tile-layout.ts`.
 - **Status badge** — the per-BC visual indicator (running / idle / blocked-on-question dot), driven by `agent-awareness`.
 - **Detail view** — the project-detail pane that renders markdown documents from a project.
 - **Markdown pane** — the renderer for `vision.md`, `research/*.md`, ADRs, BC READMEs in the detail view.
@@ -50,7 +53,7 @@ The styleguide was signed off in person by Marco on 2026-05-14, so the gate is o
 - **Scan-roots management** — the modal that lists every row from `listScanRoots()` with its per-row child-project count, plus a Rescan button (re-runs the walk + opens the checklist) and a Remove button (opens the cascade-remove confirmation). The per-row count comes from a thin `list_projects_by_scan_root` IPC wrapper (`canvas-005b`) over the existing `Db::list_projects_by_scan_root`; the frontend takes `.length` of the returned `Vec<i64>` because we never need the ids themselves at v1 — only the count. The empty state never renders because the menu item is hidden when zero roots exist.
 - **Cascade-remove confirmation** — the small two-button dialog opened from the management modal's "Remove" button. Names the scan-root path AND the child-project count and explicitly states that tile state will not be retained — ADR-013 makes the cascade hard-delete, NOT subject to ADR-005's 30-day window. Confirming invokes `removeScanRoot(scanRootId)`; the backend fires `ProjectRemoved` per child BEFORE tearing watchers down, and the canvas-005a `project_removed` handler drops the tiles (one event variant, one listener — canvas-005b does NOT re-subscribe). After the cascade resolves, the management modal refreshes via `listScanRoots()` + per-row counts; if zero roots remain, it closes and the "Manage scan roots…" menu item hides on the next right-click.
 - **Error toast** — a screen-space HTML overlay pinned top-center, `statusMissing` border (refusal, not failure). Auto-dismisses after 3000ms; one toast at a time. canvas-005a uses it for the `register_project` rejection path ("not an Agentheim project"), which is the exact IPC contract string and must surface verbatim.
-- **Missing tile** — the canvas visual for a registered-but-unwatched project (`ProjectSnapshot.missing: true`). Tile body at 50% opacity, border swapped from `tileBorder` to `statusMissing`, `✕` glyph at `spacing.lg` in the top-right corner. `bcs: []` on the snapshot keeps the orbit empty; the tile is NOT filtered out of the per-project collection (the missing visual is the affordance). Right-click still offers "Remove project".
+- **Missing tile** — the canvas visual for a registered-but-unwatched project (`ProjectSnapshot.missing: true`). Frame body at 50% opacity, border swapped from `frameBorder` to `statusMissing`, `✕` glyph at `spacing.lg` in the top-right corner of the header bar. `bcs: []` on the snapshot keeps the frame empty (the empty-frame placeholder is suppressed in this state); the frame is NOT filtered out of the per-project collection (the missing visual is the affordance). Right-click on the header bar still offers "Remove project".
 
 ## How the canvas stays live
 
@@ -58,58 +61,94 @@ The canvas does not poll. The Rust core watches each project's `.agentheim/`
 and emits fine-grained domain events; the frontend applies them to its
 in-memory model as **targeted updates** (see `src/lib/snapshot-patch.ts`).
 Robustness rules baked into the patching: a `task_*` event for a BC not yet in
-the model lazily creates a zero-count node (filesystem events can arrive before
-the `bc_appeared` for the same batch); a delta that would push a count below
-zero is clamped at 0 and logged (the client model has drifted from disk); and
-every event is routed by `project_id` to the matching tile in the canvas's
-per-project collection (events for a `project_id` not in the collection are
-ignored). A full re-fetch of a single project happens only on **resync**
+the model lazily creates a zero-count BC (filesystem events can arrive before
+the `bc_appeared` for the same batch, and the lazy-create initialises
+`relationships: []` so the new BC participates in the next layout pass
+edge-less until its README's frontmatter is read); a delta that would push a
+count below zero is clamped at 0 and logged (the client model has drifted
+from disk); and every event is routed by `project_id` to the matching frame
+in the canvas's per-project collection (events for a `project_id` not in the
+collection are ignored).
+
+`bc_relationships_changed { project_id, bc_name }` (`project-registry-004`'s
+fine-grained README frontmatter event) is the one filesystem-observation
+event that the pure patcher cannot fully apply — the event payload is a
+scoped "go refresh" signal, not the new relationship set itself. The canvas
+handles it as a per-project `refreshOne(project_id)` followed by a one-shot
+`computeBcLayout` recompute against the fresh `BoundedContext[]`; pinned-by-
+saved-position BCs stay where the user dragged them, the rest re-flow.
+This keeps the `canvas-001` targeted-update invariant intact (no full
+`list_projects` re-fetch, only the one affected project re-pulls). A full
+re-fetch of a single project happens only on **resync**
 (`resync_required { project_id }`).
 
 ## Rendering N projects
 
-The canvas holds a keyed collection of project entries (`{ id, snapshot, pos }`
-per project, keyed off `ProjectSnapshot.id`); `Canvas.svelte`'s `renderScene`
-iterates and draws one tile + its orbiting BC nodes + edges per entry. Per-tile
-state — saved position, drag target, fine-grained event routing — is all keyed
-by id; no single-valued `projectId` scalar exists. A **shared drag controller**
-owns the one set of `window` `pointermove`/`pointerup` listeners; tiles claim
-the active drag via their own `pointerdown`. **Auto-placement** for projects
-with no saved position is a deterministic outward spiral from world origin
-(`src/lib/tile-layout.ts` — a pure, no-Svelte/Pixi module, the verification
-surface alongside `snapshot-patch.ts`); each auto-placed position is persisted
-immediately, so a never-dragged tile lands in the same spot across restarts.
-A `project_added` for a new id triggers `get_project` + auto-place + persist +
-render with no manual refresh; a `project_added` for an already-rendered id
-(the startup seed double-add) is a no-op. Live-adds are **serialised through a
-single promise chain** (`canvas-006`) so a burst of N `project_added` events —
-the normal shape of `import_scanned_projects` announcing N picks back-to-back
-on the event bus — processes strictly sequentially. Without that chain, the
-concurrent closures all read the same `projects.length` for the spiral-index
-step and the `projects = [...projects, entry]` reassignment loses every loser
-to last-write-wins; the colliding `saveTilePosition` rows also reach SQLite
-before the array catches up. Treat "N concurrent arrivals" as the default test
-stance for any future change to this handler, not the single-arrival case.
-Zoom-to-fit (`f`) frames the union of every tile and its BCs.
+The canvas holds a keyed collection of project entries
+(`{ id, snapshot, pos, bcLayout, bcPositions }` per project, keyed off
+`ProjectSnapshot.id`); `Canvas.svelte`'s `renderScene` iterates and draws one
+project frame per entry — frame border + header bar + interior BC bubbles +
+intra-project BC↔BC edges. Per-frame state — saved frame position, persisted
+per-BC drag positions, the deterministic BC layout output, drag target,
+fine-grained event routing — is all keyed by id; no single-valued `projectId`
+scalar exists. A **shared drag controller** owns the one set of `window`
+`pointermove`/`pointerup` listeners; two drag kinds claim the active drag —
+frame drag (claimed by the frame header bar's `pointerdown`, persisted via
+`saveTilePosition`) and BC drag (claimed by a BC bubble's `pointerdown`,
+persisted via `saveBcPosition`). The frame body region is pass-through so
+empty regions inside a frame don't swallow the camera pan, and BC bubbles
+inside the frame can be dragged independently of the frame.
+
+**Auto-placement** for projects with no saved frame position is a
+deterministic outward spiral from world origin (`src/lib/tile-layout.ts` —
+a pure, no-Svelte/Pixi module, the verification surface alongside
+`snapshot-patch.ts`); each auto-placed position is persisted immediately, so a
+never-dragged frame lands in the same spot across restarts. **BC layout**
+inside the frame is a deterministic one-shot force-directed (spring-electrical)
+computation (`src/lib/bc-layout.ts` — pure, also alongside `snapshot-patch.ts`);
+same input → same output, so a never-dragged BC lands in the same spot too.
+Re-layout runs only on BC add / remove / relationship-change (the `bc_appeared`
+/ `bc_disappeared` / `bc_relationships_changed` events), never as an animated
+loop. Manual BC drag positions are sticky: each dragged BC is pinned in the
+next re-layout so other BCs flow around it.
+
+A `project_added` for a new id triggers `get_project` + auto-place + persist
++ batch `loadBcPositions` + initial BC layout + render with no manual refresh;
+a `project_added` for an already-rendered id (the startup seed double-add) is
+a no-op. Live-adds are **serialised through a single promise chain**
+(`canvas-006`) so a burst of N `project_added` events — the normal shape of
+`import_scanned_projects` announcing N picks back-to-back on the event bus —
+processes strictly sequentially. Without that chain, the concurrent closures
+all read the same `projects.length` for the spiral-index step and the
+`projects = [...projects, entry]` reassignment loses every loser to
+last-write-wins; the colliding `saveTilePosition` rows also reach SQLite
+before the array catches up. Treat "N concurrent arrivals" as the default
+test stance for any future change to this handler, not the single-arrival
+case. Zoom-to-fit (`f`) frames the union of every project frame in the
+collection (each frame auto-fits to its interior BCs, so the union already
+covers them).
 
 ## Discovery affordances
 
 The canvas owns the user-facing affordances ADR-005 names. Single-shot
 "Add project…" and "Remove project" (canvas-005a) live in two right-click
-context menus — one on the empty canvas background, one on a tile.
-"Add project…" opens a Tauri-native folder picker
-(`@tauri-apps/plugin-dialog`), invokes `registerProject(path)`, and routes
-the rejection string `"not an Agentheim project"` to an **error toast**;
-the success path is silent and rides the existing `project_added` →
-`enqueueLiveAdd` chain. "Remove project" invokes `removeProject(project_id)`
-with **no confirmation step** — ADR-005's 30-day undo window (re-add
-restores the tile via the preserved `tile_positions` row) is the safety
-net. The frontend's `project_removed` handler is THE canonical listener —
-canvas-005b reuses it for the scan-root cascade fan-out without
-duplication (one event variant, two emitters in the project-registry).
-A `ProjectSnapshot.missing` tile renders as a **missing tile** (above);
-its right-click menu still surfaces "Remove project" so the user can
-recover.
+context menus — one on the empty canvas background, one on the frame
+header bar (`canvas-007` retired the tile body as the right-click target;
+the header bar replaces it). "Add project…" opens a Tauri-native folder
+picker (`@tauri-apps/plugin-dialog`), invokes `registerProject(path)`, and
+routes the rejection string `"not an Agentheim project"` to an **error
+toast**; the success path is silent and rides the existing
+`project_added` → `enqueueLiveAdd` chain. "Remove project" invokes
+`removeProject(project_id)` with **no confirmation step** — ADR-005's
+30-day undo window (re-add restores the frame via the preserved
+`tile_positions` row) is the safety net. The frontend's `project_removed`
+handler is THE canonical listener — canvas-005b reuses it for the scan-
+root cascade fan-out without duplication (one event variant, two emitters
+in the project-registry). A `ProjectSnapshot.missing` frame renders as a
+**missing tile** (above); its right-click menu still surfaces "Remove
+project" so the user can recover. The frame BODY is pass-through (not a
+right-click target) so the empty canvas's right-click menu still opens
+when the user clicks an empty region inside a frame.
 
 The **scan-folder flow** and the **scan-root management surface**
 (canvas-005b) ride the same right-click empty-canvas menu. "Scan folder

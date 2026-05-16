@@ -13,7 +13,7 @@
 // picked up on the next ticker frame). Keeping it pure also keeps it reviewable
 // and unit-testable in isolation.
 
-import type { AgentheimState, BcSnapshot, DomainEvent, ProjectSnapshot } from './types';
+import type { AgentheimState, BoundedContext, DomainEvent, ProjectSnapshot } from './types';
 
 /** A sink for the count-clamping warnings — `logToCore` in production, a spy
  * in tests. Kept as a parameter so this module imports no IPC. */
@@ -26,10 +26,10 @@ export type WarnFn = (message: string) => void;
  * task files in it yields `task_added` *before* `bc_appeared`. A `task_*` event
  * for a BC not yet in the model must therefore not be dropped — it creates the
  * node, then applies the delta. `bc_appeared` is consequently idempotent. */
-function bcNode(snapshot: ProjectSnapshot, name: string): BcSnapshot {
+function bcNode(snapshot: ProjectSnapshot, name: string): BoundedContext {
 	const existing = snapshot.bcs.find((b) => b.name === name);
 	if (existing) return existing;
-	const created: BcSnapshot = {
+	const created: BoundedContext = {
 		name,
 		task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
 		// `project-registry-004`: lazily-created BC nodes start with no
@@ -47,7 +47,7 @@ function bcNode(snapshot: ProjectSnapshot, name: string): BcSnapshot {
 }
 
 /** Apply a +1 to a BC's count for `state`. */
-function increment(bc: BcSnapshot, state: AgentheimState): void {
+function increment(bc: BoundedContext, state: AgentheimState): void {
 	bc.task_counts[state] += 1;
 }
 
@@ -57,7 +57,7 @@ function increment(bc: BcSnapshot, state: AgentheimState): void {
  * drifted from disk (an event was missed, or applied twice). The robustness
  * contract: clamp at 0, warn, never render a negative count, never throw. */
 function decrement(
-	bc: BcSnapshot,
+	bc: BoundedContext,
 	state: AgentheimState,
 	warn: WarnFn
 ): void {
@@ -115,6 +115,20 @@ export function applyDomainEvent(
 			const idx = snapshot.bcs.findIndex((b) => b.name === event.bc);
 			if (idx !== -1) snapshot.bcs.splice(idx, 1);
 			return true;
+		}
+		case 'bc_relationships_changed': {
+			// `canvas-007`: a BC's README YAML frontmatter changed and its
+			// parsed relationship set differs from what we have. The event
+			// payload does NOT carry the new relationships (the watcher
+			// emits it as a "go refresh" signal), so the pure patcher
+			// cannot fully patch in place. We ensure the BC node exists
+			// (the same lazy-create contract as `task_*` / `bc_appeared`)
+			// and signal the caller that a per-project re-fetch is
+			// required by returning `false` — `Canvas.svelte` listens for
+			// this event explicitly and runs `refreshOne(project_id)`
+			// followed by a one-shot BC layout recompute for that project.
+			bcNode(snapshot, event.bc);
+			return false;
 		}
 		default:
 			// `project_added`, `project_missing`, `resync_required` — not a

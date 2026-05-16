@@ -55,12 +55,6 @@ export interface BoundedContext {
 	relationships: Relationship[];
 }
 
-/** Legacy alias for `BoundedContext` — kept so the canvas frontend
- * (`Canvas.svelte`, `snapshot-patch.ts`) continues to compile without an
- * invasive rename. `canvas-007` is the consumer that will switch over to
- * `BoundedContext` directly. */
-export type BcSnapshot = BoundedContext;
-
 /** Everything needed to render a project tile and its BC children.
  *
  * `id` is the registry's project id (`projects.id` in GUPPI's SQLite DB —

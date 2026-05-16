@@ -43,6 +43,7 @@
 		listProjects,
 		listProjectsByScanRoot,
 		listScanRoots,
+		loadBcPositions,
 		loadCamera,
 		loadTilePosition,
 		onDomainEvent,
@@ -50,20 +51,23 @@
 		removeProject,
 		removeScanRoot,
 		rescanScanRoot,
+		saveBcPosition,
 		saveCamera,
 		saveTilePosition,
 		logToCore
 	} from './ipc';
 	import type {
-		BcSnapshot,
+		BoundedContext,
 		CameraState,
 		Point,
 		ProjectSnapshot,
+		Relationship,
 		ScanCandidate,
 		ScanRootRow
 	} from './types';
 	import { applyDomainEvent } from './snapshot-patch';
 	import { spiralPosition } from './tile-layout';
+	import { computeBcLayout, type BcFrameLayout, type BcPositionMap } from './bc-layout';
 	import {
 		color,
 		typography,
@@ -404,10 +408,27 @@
 	// `snapshot` is deeply reactive Svelte 5 `$state`, so `applyDomainEvent`'s
 	// in-place mutation of `bcs` / `task_counts` is picked up on the next
 	// ticker frame, exactly as in canvas-001.
+	//
+	// `canvas-007` extends the entry shape from `{ id, snapshot, pos }` to
+	// `{ id, snapshot, pos, bcLayout, bcPositions }`:
+	//   - `pos`         : world-space top-left of the project's FRAME
+	//                     (replaces the orbit-baseline `pos` of the project
+	//                     tile, semantically the same anchor).
+	//   - `bcLayout`    : deterministic force-directed positions of the
+	//                     BCs inside the frame, plus the auto-fit frame
+	//                     width/height. Recomputed on BC add / remove /
+	//                     relationship-change and on BC drag end.
+	//   - `bcPositions` : per-BC manual-drag overrides in frame-local
+	//                     coords. Persisted via `saveBcPosition` and
+	//                     batch-loaded via `loadBcPositions` at project
+	//                     paint. BCs present here are pinned during
+	//                     force-directed re-layout (`bc-layout.ts`).
 	interface ProjectEntry {
 		id: number;
 		snapshot: ProjectSnapshot;
 		pos: Point;
+		bcLayout: BcFrameLayout;
+		bcPositions: BcPositionMap;
 	}
 	let projects = $state<ProjectEntry[]>([]);
 
@@ -429,6 +450,13 @@
 		return projects.find((p) => p.id === id) ?? null;
 	}
 
+	/** Recompute one project's BC layout in place. Called on BC add /
+	 *  remove / relationship-change and on BC drag end. Deterministic and
+	 *  one-shot — no requestAnimationFrame loop. */
+	function recomputeBcLayout(entry: ProjectEntry) {
+		entry.bcLayout = computeBcLayout(entry.snapshot.bcs, entry.bcPositions);
+	}
+
 	/**
 	 * Derive a BC node's status from its task counts. This is the styleguide's
 	 * status vocabulary applied to real data:
@@ -440,7 +468,7 @@
 	 * The mapping is intentionally simple for the baseline; the canvas BC can
 	 * refine it once real per-task status exists.
 	 */
-	export function deriveBcStatus(bc: BcSnapshot): TaskState {
+	export function deriveBcStatus(bc: BoundedContext): TaskState {
 		const c = bc.task_counts;
 		const total = c.backlog + c.todo + c.doing + c.done;
 		if (total === 0) return 'missing';
@@ -464,12 +492,20 @@
 		let cameraAnimStart = 0;
 
 		// --- shared drag controller (canvas-002) ----------------------
-		// One set of `window` pointer listeners for *all* tiles. The active
-		// drag is identified by `dragProjectId`; tiles register themselves by
-		// setting it on `pointerdown` and clearing it on `pointerup`. This
-		// replaces the per-tile `window.addEventListener` pattern that would
-		// have leaked N listener sets and fired all of them on every move.
+		// One set of `window` pointer listeners for *all* drag targets. Two
+		// drag kinds are supported by `canvas-007`:
+		//   - frame drag : the active drag is identified by `dragProjectId`,
+		//                  the project frame moves in world space (saved
+		//                  via `saveTilePosition`)
+		//   - BC drag    : the active drag is identified by `dragProjectId`
+		//                  + `dragBcName`, a single BC bubble moves in
+		//                  frame-local coords (saved via `saveBcPosition`)
+		// A drag claim sets EXACTLY ONE of the two; both clear on
+		// `pointerup`. This replaces the per-tile `window.addEventListener`
+		// pattern that would have leaked N listener sets and fired all of
+		// them on every move.
 		let dragProjectId: number | null = null;
+		let dragBcName: string | null = null;
 		let dragOriginX = 0;
 		let dragOriginY = 0;
 
@@ -496,102 +532,34 @@
 			}
 
 			// --- the render pass: project world -> screen via the camera --
-			// Loops over every entry in `projects`; each one draws its tile +
-			// BC nodes + edges with its own world-space origin (`entry.pos`).
+			// `canvas-007`: each project renders as a FRAME (rounded rect
+			// border + header bar carrying name/counts) containing its BCs
+			// as interior bubbles (`bcLayout.positions`), with intra-project
+			// edges drawn between BCs by relationship type. Project->BC
+			// orbit edges are retired; containment (BC inside frame)
+			// replaces the line.
 			renderScene = () => {
 				if (!app) return;
 				world.removeChildren();
 
 				const z = camera.zoom;
 
-				// Edges first across all projects, so nodes draw on top.
-				const edges = new Graphics();
+				// Intra-project edges first (per project), so BC bubbles
+				// draw on top. Each project's edge set comes from the union
+				// of its BCs' `relationships[]` (deduplicated by unordered
+				// endpoint pair, with type and direction preserved from the
+				// FIRST occurrence we hit — same as `bc-layout.ts`'s edge
+				// extraction). The four edge variants share the
+				// `fgMuted`-family palette; geometry distinguishes them.
 				for (const entry of projects) {
-					const projScreen = camera.worldToScreen(entry.pos.x, entry.pos.y);
-					const bcCount = entry.snapshot.bcs.length;
-					for (let i = 0; i < bcCount; i++) {
-						const bcWorld = bcWorldPosition(entry.pos, i, bcCount);
-						const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
-						edges
-							.moveTo(
-								projScreen.x + (shape.tileWidth * z) / 2,
-								projScreen.y + (shape.tileHeight * z) / 2
-							)
-							.lineTo(
-								bcScreen.x + (shape.bcWidth * z) / 2,
-								bcScreen.y + (shape.bcHeight * z) / 2
-							);
-					}
+					drawIntraProjectEdges(entry, z);
 				}
-				edges.stroke({
-					width: Math.max(1, shape.borderWidth * z),
-					color: color.edge
-				});
-				world.addChild(edges);
 
-				// BC nodes + project tiles, per entry. Node keys are
+				// Project frames + interior BCs, per entry. Node keys are
 				// project-scoped so hover/focus rings do not collide across
-				// tiles even when two projects share a BC name.
+				// frames even when two projects share a BC name.
 				for (const entry of projects) {
-					const projScreen = camera.worldToScreen(entry.pos.x, entry.pos.y);
-					const bcCount = entry.snapshot.bcs.length;
-
-					entry.snapshot.bcs.forEach((bc, i) => {
-						const bcWorld = bcWorldPosition(entry.pos, i, bcCount);
-						const bcScreen = camera.worldToScreen(bcWorld.x, bcWorld.y);
-						world.addChild(
-							makeNode({
-								key: `bc:${entry.id}:${bc.name}`,
-								screenX: bcScreen.x,
-								screenY: bcScreen.y,
-								w: shape.bcWidth * z,
-								h: shape.bcHeight * z,
-								radius: shape.radiusBc * z,
-								fill: color.bcFill,
-								border: color.bcBorder,
-								titleColor: color.bcText,
-								subtitleColor: color.bcTextMuted,
-								title: bc.name,
-								subtitle:
-									`b ${bc.task_counts.backlog}   t ${bc.task_counts.todo}   ` +
-									`d ${bc.task_counts.doing}   done ${bc.task_counts.done}`,
-								statusState: deriveBcStatus(bc),
-								z
-							})
-						);
-					});
-
-					// Missing-tile rendering (canvas-005a): a registry row whose
-					// `.agentheim/` is gone on disk renders dim, with the
-					// `statusMissing` border and a `✕` corner glyph. The
-					// snapshot's `bcs: []` is already empty so no BC nodes
-					// loop for it above. The tile is NOT filtered out — the
-					// missing visual is the affordance.
-					const isMissing = entry.snapshot.missing;
-					const tile = makeNode({
-						key: `project:${entry.id}`,
-						screenX: projScreen.x,
-						screenY: projScreen.y,
-						w: shape.tileWidth * z,
-						h: shape.tileHeight * z,
-						radius: shape.radiusTile * z,
-						fill: color.tileFill,
-						border: isMissing ? color.statusMissing : color.tileBorder,
-						titleColor: color.tileText,
-						subtitleColor: color.tileTextMuted,
-						title: entry.snapshot.name,
-						subtitle: entry.snapshot.path,
-						statusState: null,
-						z
-					});
-					if (isMissing) {
-						tile.alpha = 0.5;
-						tile.addChild(
-							makeMissingGlyph(projScreen, shape.tileWidth * z, z)
-						);
-					}
-					attachTileDrag(tile, entry.id, projScreen, z);
-					world.addChild(tile);
+					drawProjectFrame(entry, z);
 				}
 
 				// Voice-state affordance — a single ambient glyph pinned to
@@ -599,6 +567,399 @@
 				// space, so it stays put while the canvas pans).
 				world.addChild(makeVoiceIndicator());
 			};
+
+			/** Draw one project's intra-project BC↔BC edges. Walks each BC's
+			 *  `relationships[]`, resolves the `to` name to a sibling BC
+			 *  inside the same project (cross-project references already
+			 *  dropped by the registry parser, defensive double-check
+			 *  here), deduplicates by unordered endpoint pair, then routes
+			 *  the four variants to their geometry. */
+			function drawIntraProjectEdges(entry: ProjectEntry, z: number) {
+				const bcs = entry.snapshot.bcs;
+				if (bcs.length < 2) return; // no pairs possible
+
+				const indexByName = new Map<string, number>();
+				bcs.forEach((bc, i) => indexByName.set(bc.name, i));
+
+				const seen = new Set<string>();
+				for (const bc of bcs) {
+					for (const rel of bc.relationships) {
+						const otherIdx = indexByName.get(rel.to);
+						if (otherIdx === undefined) continue;
+						const ownIdx = indexByName.get(bc.name);
+						if (ownIdx === undefined || ownIdx === otherIdx) continue;
+						const lo = Math.min(ownIdx, otherIdx);
+						const hi = Math.max(ownIdx, otherIdx);
+						const key = `${lo}-${hi}`;
+						if (seen.has(key)) continue;
+						seen.add(key);
+
+						drawRelationshipEdge(entry, bc, rel, z);
+					}
+				}
+			}
+
+			/** Draw one BC↔BC edge of the given relationship type. The
+			 *  `from` BC is the BC whose README declared the relationship;
+			 *  `rel.to` is the sibling. For directional types
+			 *  (`customer-supplier`, `anticorruption-layer`, `conformist`),
+			 *  `rel.direction` decides which end is upstream:
+			 *    - `direction: 'upstream'`   -> rel.to is upstream of from
+			 *    - `direction: 'downstream'` -> rel.to is downstream of from
+			 *  Arrowheads point AT the downstream end. */
+			function drawRelationshipEdge(
+				entry: ProjectEntry,
+				from: BoundedContext,
+				rel: Relationship,
+				z: number
+			) {
+				const fromCenter = bcCenterScreen(entry, from.name, z);
+				const toCenter = bcCenterScreen(entry, rel.to, z);
+				if (!fromCenter || !toCenter) return;
+
+				const g = new Graphics();
+				const w = shape.edgeWeight * z;
+				const wConf = shape.edgeWeightConformist * z;
+
+				switch (rel.type) {
+					case 'shared-kernel':
+					case 'partnership': {
+						// Non-directional line, no arrowhead, no notch.
+						g.moveTo(fromCenter.x, fromCenter.y).lineTo(toCenter.x, toCenter.y);
+						g.stroke({
+							width: Math.max(1, w),
+							color: color.edgeMutual
+						});
+						break;
+					}
+					case 'customer-supplier': {
+						// Directional line + arrowhead at downstream end.
+						const downstream =
+							rel.direction === 'upstream' ? fromCenter : toCenter;
+						const upstream =
+							rel.direction === 'upstream' ? toCenter : fromCenter;
+						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
+						g.stroke({
+							width: Math.max(1, w),
+							color: color.edgeUpstream
+						});
+						drawArrowhead(g, upstream, downstream, z, color.edgeUpstream);
+						break;
+					}
+					case 'anticorruption-layer': {
+						// Directional line + arrowhead at downstream end +
+						// triangle notch at midpoint pointing toward the
+						// upstream end (per design-system-002 §3.8).
+						const downstream =
+							rel.direction === 'upstream' ? fromCenter : toCenter;
+						const upstream =
+							rel.direction === 'upstream' ? toCenter : fromCenter;
+						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
+						g.stroke({
+							width: Math.max(1, w),
+							color: color.edgeACL
+						});
+						drawArrowhead(g, upstream, downstream, z, color.edgeACL);
+						drawAclNotch(g, upstream, downstream, z, color.edgeACL);
+						break;
+					}
+					case 'conformist': {
+						// Directional line at the lighter weight + arrowhead.
+						const downstream =
+							rel.direction === 'upstream' ? fromCenter : toCenter;
+						const upstream =
+							rel.direction === 'upstream' ? toCenter : fromCenter;
+						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
+						g.stroke({
+							width: Math.max(1, wConf),
+							color: color.edgeConformist
+						});
+						drawArrowhead(g, upstream, downstream, z, color.edgeConformist);
+						break;
+					}
+				}
+
+				world.addChild(g);
+			}
+
+			/** Screen-space center of one BC inside its project frame. The
+			 *  layout's `positions` map carries frame-local coords; we add
+			 *  the frame's world-space origin (`entry.pos`) then project via
+			 *  the camera. */
+			function bcCenterScreen(
+				entry: ProjectEntry,
+				bcName: string,
+				z: number
+			): Point | null {
+				const local = entry.bcLayout.positions.get(bcName);
+				if (!local) return null;
+				const worldX = entry.pos.x + local.x + shape.bcInsideWidth / 2;
+				const worldY = entry.pos.y + local.y + shape.bcInsideHeight / 2;
+				return camera.worldToScreen(worldX, worldY);
+			}
+
+			/** Draw a filled triangular arrowhead at `to`, pointing from
+			 *  `from -> to`. Size driven by §3.8 tokens. */
+			function drawArrowhead(
+				g: Graphics,
+				from: Point,
+				to: Point,
+				z: number,
+				col: number
+			) {
+				const dx = to.x - from.x;
+				const dy = to.y - from.y;
+				const len = Math.sqrt(dx * dx + dy * dy);
+				if (len < 0.0001) return;
+				const ux = dx / len;
+				const uy = dy / len;
+				const headLen = shape.arrowheadLength * z;
+				const headW = shape.arrowheadWidth * z;
+				// Pull the tip back to the bubble border so the arrowhead
+				// does not bury under the BC bubble. We can't know the
+				// rotated rectangle's intersection cheaply; pull back by
+				// half the bubble's width as a serviceable approximation
+				// (the bubble centers are the line endpoints).
+				const pullBack = (shape.bcInsideWidth / 2) * z;
+				const tipX = to.x - ux * pullBack;
+				const tipY = to.y - uy * pullBack;
+				const baseX = tipX - ux * headLen;
+				const baseY = tipY - uy * headLen;
+				// Perpendicular for the arrowhead's width axis.
+				const px = -uy;
+				const py = ux;
+				const leftX = baseX + px * (headW / 2);
+				const leftY = baseY + py * (headW / 2);
+				const rightX = baseX - px * (headW / 2);
+				const rightY = baseY - py * (headW / 2);
+				g.moveTo(tipX, tipY)
+					.lineTo(leftX, leftY)
+					.lineTo(rightX, rightY)
+					.lineTo(tipX, tipY)
+					.fill(col);
+			}
+
+			/** Draw the ACL notch — a small filled triangle at the midpoint
+			 *  pointing toward the upstream end of the edge. */
+			function drawAclNotch(
+				g: Graphics,
+				upstream: Point,
+				downstream: Point,
+				z: number,
+				col: number
+			) {
+				const dx = downstream.x - upstream.x;
+				const dy = downstream.y - upstream.y;
+				const len = Math.sqrt(dx * dx + dy * dy);
+				if (len < 0.0001) return;
+				const ux = dx / len;
+				const uy = dy / len;
+				const midX = (upstream.x + downstream.x) / 2;
+				const midY = (upstream.y + downstream.y) / 2;
+				const size = shape.aclNotchSize * z;
+				// Tip points toward upstream.
+				const tipX = midX - ux * (size / 2);
+				const tipY = midY - uy * (size / 2);
+				const baseX = midX + ux * (size / 2);
+				const baseY = midY + uy * (size / 2);
+				const px = -uy;
+				const py = ux;
+				const leftX = baseX + px * (size / 2);
+				const leftY = baseY + py * (size / 2);
+				const rightX = baseX - px * (size / 2);
+				const rightY = baseY - py * (size / 2);
+				g.moveTo(tipX, tipY)
+					.lineTo(leftX, leftY)
+					.lineTo(rightX, rightY)
+					.lineTo(tipX, tipY)
+					.fill(col);
+			}
+
+			/** Draw one project frame: rounded-rect body, header bar with
+			 *  divider line, header text (name + status badges + total
+			 *  task count), then every BC bubble inside. The frame's
+			 *  header bar is the project's drag handle and right-click
+			 *  target (replaces the orbit-baseline tile body for both).
+			 *  Missing-tile (`canvas-005a`) state recolors the border to
+			 *  `statusMissing` and dims the body. */
+			function drawProjectFrame(entry: ProjectEntry, z: number) {
+				const frameScreen = camera.worldToScreen(entry.pos.x, entry.pos.y);
+				const fw = entry.bcLayout.width * z;
+				const fh = entry.bcLayout.height * z;
+				const headerH = shape.frameHeaderHeight * z;
+				const isMissing = entry.snapshot.missing;
+				const borderCol = isMissing ? color.statusMissing : color.frameBorder;
+
+				// --- Frame body (rounded rect, frame fill, frame border) ----
+				const frame = new Container();
+				frame.alpha = isMissing ? 0.5 : 1;
+
+				const body = new Graphics();
+				body.roundRect(frameScreen.x, frameScreen.y, fw, fh, shape.radiusFrame * z)
+					.fill(color.frameFill)
+					.stroke({
+						width: Math.max(1, shape.borderWidthFrame * z),
+						color: borderCol
+					});
+				frame.addChild(body);
+
+				// --- Header bar fill + divider line -------------------------
+				// The header is the same rounded-top region; clipping the
+				// fill to the rounded top would require a mask. The body's
+				// frameFill already shows through where the header doesn't
+				// reach the corners; the header fill paints the top band as
+				// a separate rounded rect that covers only the band's
+				// vertical extent, leaving the bottom corners square — they
+				// sit inside the frame's outer rounded rect so the visible
+				// silhouette stays correct.
+				const header = new Graphics();
+				header
+					.roundRect(
+						frameScreen.x,
+						frameScreen.y,
+						fw,
+						headerH,
+						shape.radiusFrame * z
+					)
+					.fill(color.frameHeaderFill);
+				// Mask out the bottom-rounded part of the header rect by
+				// painting a flat-bottomed strip over the lower half — this
+				// keeps the header bar's bottom edge sharp at the divider.
+				header
+					.rect(
+						frameScreen.x,
+						frameScreen.y + headerH / 2,
+						fw,
+						headerH / 2
+					)
+					.fill(color.frameHeaderFill);
+				// Divider line between header and body.
+				header
+					.moveTo(frameScreen.x, frameScreen.y + headerH)
+					.lineTo(frameScreen.x + fw, frameScreen.y + headerH)
+					.stroke({
+						width: Math.max(1, shape.borderWidthFrame * z),
+						color: color.frameHeaderDivider
+					});
+				frame.addChild(header);
+
+				// --- Header content: title + path + total task count -------
+				const totalTasks = entry.snapshot.bcs.reduce(
+					(acc, b) =>
+						acc +
+						b.task_counts.backlog +
+						b.task_counts.todo +
+						b.task_counts.doing +
+						b.task_counts.done,
+					0
+				);
+				const titleText = new Text({
+					text: entry.snapshot.name,
+					style: {
+						fill: color.frameTitleText,
+						fontFamily: typography.fontFamily,
+						fontSize: Math.max(8, typography.sizeTitle * z),
+						fontWeight: String(typography.weightBold) as '700'
+					}
+				});
+				titleText.position.set(
+					frameScreen.x + shape.framePadding * z,
+					frameScreen.y + (headerH - typography.sizeTitle * z) / 2
+				);
+				frame.addChild(titleText);
+
+				// Counts pill right-aligned in the header.
+				const countsLabel = `${totalTasks} task${totalTasks === 1 ? '' : 's'}`;
+				const countsText = new Text({
+					text: countsLabel,
+					style: {
+						fill: color.frameTitleTextMuted,
+						fontFamily: typography.fontFamilyMono,
+						fontSize: Math.max(6, typography.sizeCaption * z)
+					}
+				});
+				countsText.anchor.set(1, 0.5);
+				countsText.position.set(
+					frameScreen.x + fw - shape.framePadding * z,
+					frameScreen.y + headerH / 2
+				);
+				frame.addChild(countsText);
+
+				// Missing-tile glyph in the header right corner (above the
+				// counts label by shifting the counts down? — keep counts
+				// in place; the magenta border + 50% alpha already signal
+				// missing. Use the corner glyph on the frame body's
+				// top-right edge inside the header band, same idiom as the
+				// orbit baseline used on the tile body).
+				if (isMissing) {
+					frame.addChild(
+						makeMissingGlyph(frameScreen, fw, z)
+					);
+				}
+
+				// Focus ring if the project frame's header is being hovered.
+				const focused = hoveredKey === `project:${entry.id}`;
+				if (focused) {
+					const ring = new Graphics();
+					ring
+						.roundRect(
+							frameScreen.x - 2 * z,
+							frameScreen.y - 2 * z,
+							fw + 4 * z,
+							fh + 4 * z,
+							shape.radiusFrame * z + 2 * z
+						)
+						.stroke({
+							width: Math.max(1, shape.borderWidthFocus * z),
+							color: color.focusRing
+						});
+					frame.addChild(ring);
+				}
+
+				// --- Header bar interactivity (drag handle + right-click) ---
+				// The header is the project's grab target; the body is
+				// pass-through so the user can drop BC bubbles inside it.
+				attachFrameHeaderDrag(frame, entry.id, frameScreen, fw, headerH, z);
+
+				world.addChild(frame);
+
+				// --- BC bubbles inside the frame -----------------------------
+				// Empty-frame placeholder text if the project has no BCs.
+				if (entry.snapshot.bcs.length === 0 && !isMissing) {
+					const empty = new Text({
+						text: 'No bounded contexts yet',
+						style: {
+							fill: color.frameEmptyText,
+							fontFamily: typography.fontFamily,
+							fontSize: Math.max(8, typography.sizeBody * z)
+						}
+					});
+					empty.anchor.set(0.5, 0.5);
+					empty.position.set(
+						frameScreen.x + fw / 2,
+						frameScreen.y + headerH + (fh - headerH) / 2
+					);
+					world.addChild(empty);
+					return;
+				}
+
+				for (const bc of entry.snapshot.bcs) {
+					const local = entry.bcLayout.positions.get(bc.name);
+					if (!local) continue;
+					const bcWorldX = entry.pos.x + local.x;
+					const bcWorldY = entry.pos.y + local.y;
+					const bcScreen = camera.worldToScreen(bcWorldX, bcWorldY);
+					const bubble = makeBcBubble({
+						key: `bc:${entry.id}:${bc.name}`,
+						bc,
+						screenX: bcScreen.x,
+						screenY: bcScreen.y,
+						z
+					});
+					attachBcDrag(bubble, entry.id, bc.name, bcScreen, z);
+					world.addChild(bubble);
+				}
+			}
 
 			// --- camera interaction: pan (drag empty space) + zoom (wheel) -
 			let panning = false;
@@ -631,8 +992,37 @@
 			app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 			// One shared window-level pointermove for both camera-pan and
-			// active tile drag — canvas-002's shared drag controller.
+			// active drag — canvas-002's shared drag controller, extended
+			// in canvas-007 to handle BC drag inside a frame as well as
+			// frame drag.
 			window.addEventListener('pointermove', (e) => {
+				if (dragProjectId !== null && dragBcName !== null) {
+					// BC drag: move one bubble in frame-local (= world-
+					// space delta scaled by zoom) coords.
+					const entry = findProject(dragProjectId);
+					if (entry) {
+						const current = entry.bcPositions.get(dragBcName);
+						const layoutPos =
+							current ?? entry.bcLayout.positions.get(dragBcName);
+						if (layoutPos) {
+							const dx = (e.clientX - dragOriginX) / camera.zoom;
+							const dy = (e.clientY - dragOriginY) / camera.zoom;
+							const next: Point = { x: layoutPos.x + dx, y: layoutPos.y + dy };
+							// Pin the BC at its new position; mirror it
+							// into the layout's positions Map so the
+							// render reads the updated spot without a
+							// full re-layout on every mouse move (we do
+							// recompute on drag END to allow other BCs to
+							// re-flow around the new pin).
+							entry.bcPositions.set(dragBcName, next);
+							entry.bcLayout.positions.set(dragBcName, next);
+							dragOriginX = e.clientX;
+							dragOriginY = e.clientY;
+							renderScene();
+						}
+					}
+					return;
+				}
 				if (dragProjectId !== null) {
 					const entry = findProject(dragProjectId);
 					if (entry) {
@@ -654,6 +1044,23 @@
 				renderScene();
 			});
 			window.addEventListener('pointerup', () => {
+				if (dragProjectId !== null && dragBcName !== null) {
+					// Persist the dragged BC's new frame-local position
+					// and re-run the one-shot layout so the rest of the
+					// graph re-flows around the new pin.
+					const entry = findProject(dragProjectId);
+					if (entry) {
+						const pos = entry.bcPositions.get(dragBcName);
+						if (pos) {
+							void saveBcPosition(entry.id, dragBcName, pos);
+						}
+						recomputeBcLayout(entry);
+						renderScene();
+					}
+					dragProjectId = null;
+					dragBcName = null;
+					return;
+				}
 				if (dragProjectId !== null) {
 					// Persist exactly the dragged project's new position.
 					const entry = findProject(dragProjectId);
@@ -790,6 +1197,20 @@
 						void refreshOne(event.project_id);
 						return;
 					}
+					case 'bc_relationships_changed': {
+						// `canvas-007`: a BC README's `relationships:`
+						// frontmatter changed. The event payload does NOT
+						// carry the new relationships — the watcher emits
+						// it as a scoped "go refresh" signal — so a per-
+						// project `refreshOne` re-pulls the parsed set and
+						// re-runs the BC layout once (force-directed
+						// re-runs for that project; pinned-by-saved-
+						// position BCs stay put). No full re-fetch.
+						const entry = findProject(event.project_id);
+						if (!entry) return;
+						void refreshOne(event.project_id);
+						return;
+					}
 					default: {
 						// A fine-grained filesystem-observation event:
 						// `task_moved` / `task_added` / `task_removed` /
@@ -807,6 +1228,26 @@
 						// `entry.snapshot` is part of Svelte 5 `$state`
 						// (deeply reactive). The mutation is picked up by
 						// the ticker's `renderScene()` on the next frame.
+						//
+						// BC topology changes (appear / disappear) require
+						// a one-shot layout recompute so the frame auto-
+						// fits and the new node finds a slot. Task-count
+						// events leave the BC set untouched and need no
+						// re-layout.
+						if (
+							event.kind === 'bc_appeared' ||
+							event.kind === 'bc_disappeared' ||
+							event.kind === 'task_added' ||
+							event.kind === 'task_moved' ||
+							event.kind === 'task_removed'
+						) {
+							// `task_*` events may lazily create a BC node
+							// (`snapshot-patch.ts`'s `bcNode`), so they too
+							// can change topology. Re-running the layout
+							// is cheap on these tiny graphs and keeps the
+							// frame coherent.
+							recomputeBcLayout(entry);
+						}
 						return;
 					}
 				}
@@ -849,10 +1290,21 @@
 		}
 
 		// World-space bounding box of the whole scene — the union of every
-		// project tile and every BC orbit. Used by zoom-to-fit ('f').
+		// project frame (which already auto-fits to its interior BCs). Used
+		// by zoom-to-fit ('f'). canvas-007: BC bubbles are inside the
+		// frame, so the frame extent already covers them; no separate BC
+		// orbit pass needed.
 		function sceneWorldBounds(): { x: number; y: number; w: number; h: number } {
 			if (projects.length === 0) {
-				return { x: 0, y: 0, w: shape.tileWidth, h: shape.tileHeight };
+				return {
+					x: 0,
+					y: 0,
+					w: shape.frameMinInnerWidth + shape.framePadding * 2,
+					h:
+						shape.frameMinInnerHeight +
+						shape.frameHeaderHeight +
+						shape.framePadding * 2
+				};
 			}
 			let minX = Number.POSITIVE_INFINITY;
 			let minY = Number.POSITIVE_INFINITY;
@@ -861,25 +1313,21 @@
 			for (const entry of projects) {
 				minX = Math.min(minX, entry.pos.x);
 				minY = Math.min(minY, entry.pos.y);
-				maxX = Math.max(maxX, entry.pos.x + shape.tileWidth);
-				maxY = Math.max(maxY, entry.pos.y + shape.tileHeight);
-				const bcCount = entry.snapshot.bcs.length;
-				for (let i = 0; i < bcCount; i++) {
-					const p = bcWorldPosition(entry.pos, i, bcCount);
-					minX = Math.min(minX, p.x);
-					minY = Math.min(minY, p.y);
-					maxX = Math.max(maxX, p.x + shape.bcWidth);
-					maxY = Math.max(maxY, p.y + shape.bcHeight);
-				}
+				maxX = Math.max(maxX, entry.pos.x + entry.bcLayout.width);
+				maxY = Math.max(maxY, entry.pos.y + entry.bcLayout.height);
 			}
 			return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 		}
 
-		/** Build a `ProjectEntry` for `snapshot`: restore its saved position
-		 * if any, otherwise pick the next spiral slot and persist it
-		 * immediately so it is stable across restarts even if never dragged.
-		 * `spiralIndex` is the registration-order index used when no saved
-		 * position exists. */
+		/** Build a `ProjectEntry` for `snapshot`: restore its saved frame
+		 * position if any, otherwise pick the next spiral slot and persist
+		 * it immediately so it is stable across restarts even if never
+		 * dragged. Also batch-loads every persisted per-BC position for
+		 * this project (`loadBcPositions` — one IPC round-trip per project
+		 * paint) and computes the deterministic force-directed initial
+		 * layout that will draw the BCs inside the frame. `spiralIndex` is
+		 * the registration-order index used when no saved frame position
+		 * exists. */
 		async function buildEntry(
 			snapshot: ProjectSnapshot,
 			spiralIndex: number
@@ -892,7 +1340,7 @@
 				} else {
 					pos = spiralPosition(spiralIndex);
 					// Persist auto-placement immediately so a never-dragged
-					// tile still lands in the same spot after a restart.
+					// frame still lands in the same spot after a restart.
 					try {
 						await saveTilePosition(snapshot.id, pos);
 					} catch (e) {
@@ -909,7 +1357,22 @@
 				);
 				pos = spiralPosition(spiralIndex);
 			}
-			return { id: snapshot.id, snapshot, pos };
+
+			// Batch-load every persisted BC position for this project —
+			// the project-frame paint's single round-trip on mount
+			// (`project-registry-004`, `canvas-007`). BCs without a saved
+			// position fall through to the force-directed layout.
+			let bcPositions: BcPositionMap = new Map();
+			try {
+				bcPositions = await loadBcPositions(snapshot.id);
+			} catch (e) {
+				logToCore(
+					'warn',
+					`could not load BC positions for project ${snapshot.id}: ${e}`
+				);
+			}
+			const bcLayout = computeBcLayout(snapshot.bcs, bcPositions);
+			return { id: snapshot.id, snapshot, pos, bcLayout, bcPositions };
 		}
 
 		/** On-mount initial population: list every registered project, build
@@ -938,15 +1401,26 @@
 		}
 
 		/** Re-fetch exactly one project's snapshot (`resync_required` —
-		 * ADR-009). Preserves the entry's existing world-space position so the
-		 * tile does not jump on a resync. */
+		 * ADR-009 — and `bc_relationships_changed` — `canvas-007`).
+		 * Preserves the entry's existing world-space position AND the
+		 * persisted per-BC drag positions so the frame and its bubbles do
+		 * not jump on a refresh. The BC layout is recomputed against the
+		 * fresh `bcs` / `relationships` set (force-directed re-runs once;
+		 * pinned-by-saved-position BCs stay where the user dragged them). */
 		async function refreshOne(id: number) {
 			try {
 				const fresh = await getProject(id);
 				const idx = projects.findIndex((p) => p.id === id);
 				if (idx === -1) return;
 				const existing = projects[idx];
-				projects[idx] = { id, snapshot: fresh, pos: existing.pos };
+				const bcLayout = computeBcLayout(fresh.bcs, existing.bcPositions);
+				projects[idx] = {
+					id,
+					snapshot: fresh,
+					pos: existing.pos,
+					bcLayout,
+					bcPositions: existing.bcPositions
+				};
 				renderScene();
 			} catch (e) {
 				logToCore('error', `get_project failed for ${id}: ${e}`);
@@ -1114,59 +1588,41 @@
 			}
 		}
 
-		// World-space position of BC node `i` of `count`, radiating around
-		// the supplied tile origin so edges fan out cleanly. canvas-002 added
-		// the `origin` parameter so each tile has its own ring of BCs rather
-		// than every BC orbiting the world's single former-module-level
-		// `tilePos`.
-		function bcWorldPosition(origin: Point, i: number, count: number): Point {
-			if (count === 0) return { x: origin.x, y: origin.y };
-			const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
-			return {
-				x: origin.x + Math.cos(angle) * shape.bcOrbitRadius,
-				y: origin.y + Math.sin(angle) * shape.bcOrbitRadius
-			};
-		}
-
-		// A styleguide node: filled rounded rect, border, title + subtitle in
-		// the type scale, an optional status badge, and a focus ring when the
-		// pointer is over it.
-		function makeNode(opts: {
+		/** Build one inside-the-frame BC bubble (§3.7). Denser than the
+		 *  orbit-baseline BC node: title + counts pill in one row at
+		 *  default zoom, status glyph in the top-right corner. World-space
+		 *  size driven by `bcInsideWidth` / `bcInsideHeight`; corner radius
+		 *  `radiusBcInside` (8) — smaller than the orbit's 10 so the
+		 *  inside-frame variant reads as a sibling-cluster element, not as
+		 *  a peer of the surrounding frame. */
+		function makeBcBubble(opts: {
 			key: string;
+			bc: BoundedContext;
 			screenX: number;
 			screenY: number;
-			w: number;
-			h: number;
-			radius: number;
-			fill: number;
-			border: number;
-			titleColor: number;
-			subtitleColor: number;
-			title: string;
-			subtitle: string;
-			statusState: TaskState | null;
 			z: number;
 		}): Container {
+			const { bc, screenX, screenY, z } = opts;
 			const node = new Container();
-			const { screenX, screenY, w, h, z } = opts;
+			const w = shape.bcInsideWidth * z;
+			const h = shape.bcInsideHeight * z;
 
 			const focused = hoveredKey === opts.key;
 
 			const g = new Graphics();
-			g.roundRect(screenX, screenY, w, h, opts.radius)
-				.fill(opts.fill)
+			g.roundRect(screenX, screenY, w, h, shape.radiusBcInside * z)
+				.fill(color.bcInsideFill)
 				.stroke({
-					width: Math.max(1, opts.border && opts.z ? shape.borderWidth * z : 1),
-					color: opts.border
+					width: Math.max(1, shape.borderWidth * z),
+					color: color.bcInsideBorder
 				});
-			// Focus/hover affordance — a brighter ring just outside the border.
 			if (focused) {
 				g.roundRect(
 					screenX - 2 * z,
 					screenY - 2 * z,
 					w + 4 * z,
 					h + 4 * z,
-					opts.radius + 2 * z
+					shape.radiusBcInside * z + 2 * z
 				).stroke({
 					width: Math.max(1, shape.borderWidthFocus * z),
 					color: color.focusRing
@@ -1174,39 +1630,64 @@
 			}
 			node.addChild(g);
 
+			// Title (BC name) — left of the row. §3.7 calls for
+			// `weightMedium` (denser interior variant, not the orbit BC's
+			// bold title).
 			const titleText = new Text({
-				text: opts.title,
+				text: bc.name,
 				style: {
-					fill: opts.titleColor,
+					fill: color.bcInsideText,
 					fontFamily: typography.fontFamily,
-					fontSize: Math.max(8, typography.sizeTitle * z),
-					fontWeight: String(typography.weightBold) as '700'
+					fontSize: Math.max(8, typography.sizeBody * z),
+					fontWeight: String(typography.weightMedium) as '500'
 				}
 			});
-			titleText.position.set(screenX + shape.radiusBadge * z + 6 * z, screenY + 10 * z);
+			titleText.position.set(
+				screenX + shape.framePadding * z * 0.5,
+				screenY + shape.framePadding * z * 0.5
+			);
 			node.addChild(titleText);
 
-			const subText = new Text({
-				text: opts.subtitle,
+			// Counts pill — right-aligned, in the title row. §3.7 mandates
+			// a `bcInsidePillFill` rounded rect carrying the count glyph;
+			// `bcInsidePillRadius` / `bcInsidePillHeight` / `bcInsidePillMinWidth`
+			// drive the shape. The pill is anchored to the bubble's right
+			// edge inset by `framePadding * 0.5` to match the title's left
+			// inset; horizontally the count `Text` is centred over the
+			// rounded-rect.
+			const c = bc.task_counts;
+			const countsLabel =
+				`b${c.backlog} t${c.todo} d${c.doing} ✓${c.done}`;
+			const pillText = new Text({
+				text: countsLabel,
 				style: {
-					fill: opts.subtitleColor,
+					fill: color.bcInsideTextMuted,
 					fontFamily: typography.fontFamilyMono,
 					fontSize: Math.max(6, typography.sizeCaption * z)
 				}
 			});
-			subText.position.set(
-				screenX + shape.radiusBadge * z + 6 * z,
-				screenY + h - 20 * z
+			const pillTextPadX = 6 * z;
+			const pillH = shape.bcInsidePillHeight * z;
+			const pillW = Math.max(
+				shape.bcInsidePillMinWidth * z,
+				pillText.width + pillTextPadX * 2
 			);
-			node.addChild(subText);
+			const pillX = screenX + w - shape.framePadding * z * 0.5 - pillW;
+			const pillY = screenY + shape.framePadding * z * 0.5;
+			const pillBg = new Graphics();
+			pillBg
+				.roundRect(pillX, pillY, pillW, pillH, shape.bcInsidePillRadius * z)
+				.fill(color.bcInsidePillFill);
+			node.addChild(pillBg);
+			pillText.anchor.set(0.5);
+			pillText.position.set(pillX + pillW / 2, pillY + pillH / 2);
+			node.addChild(pillText);
 
-			// Status badge — a small pill in the top-right corner. Colour +
-			// glyph (colourblind-friendly: colour is never the only signal).
-			if (opts.statusState) {
-				node.addChild(makeStatusBadge(screenX, screenY, w, opts.statusState, z));
-			}
+			// Status badge slot — colourblind-friendly colour + glyph.
+			// `agent-awareness` drives this later; for now derived from
+			// task counts (the same logic the orbit baseline used).
+			node.addChild(makeStatusBadge(screenX, screenY, w, deriveBcStatus(bc), z));
 
-			// Hover tracking for the focus-ring affordance.
 			node.eventMode = 'static';
 			node.hitArea = {
 				contains: (x: number, y: number) =>
@@ -1331,34 +1812,47 @@
 			return indicator;
 		}
 
-		/** Wire a project tile into the shared drag controller. The tile
-		 * itself only handles its own `pointerdown` (to claim the drag and
-		 * suppress the camera-pan); the actual `pointermove` / `pointerup`
-		 * handlers live once at window-level above. Persistence is on
-		 * `pointerup` via that shared handler (ADR-004 — tile position
-		 * persisted on drag). */
-		function attachTileDrag(tile: Container, id: number, screenPos: Point, z: number) {
-			tile.eventMode = 'static';
-			tile.hitArea = {
+		/** Wire a project frame's header bar into the shared drag
+		 *  controller. The header bar (NOT the frame body) is the
+		 *  project's grab handle and right-click target — canvas-007
+		 *  replaces the orbit baseline's "tile body" handle. The body is
+		 *  pass-through so BC bubbles inside it can be dragged independently
+		 *  and so empty regions of the frame don't swallow camera pans.
+		 *  Persistence is on `pointerup` via the window-level handler. */
+		function attachFrameHeaderDrag(
+			frame: Container,
+			id: number,
+			screenPos: Point,
+			frameW: number,
+			headerH: number,
+			z: number
+		) {
+			frame.eventMode = 'static';
+			frame.hitArea = {
 				contains: (x: number, y: number) =>
 					x >= screenPos.x &&
-					x <= screenPos.x + shape.tileWidth * z &&
+					x <= screenPos.x + frameW &&
 					y >= screenPos.y &&
-					y <= screenPos.y + shape.tileHeight * z
+					y <= screenPos.y + headerH
 			};
 
-			tile.on('pointerdown', (e) => {
+			frame.on('pointerover', () => {
+				hoveredKey = `project:${id}`;
+				renderScene();
+			});
+			frame.on('pointerout', () => {
+				if (hoveredKey === `project:${id}`) {
+					hoveredKey = null;
+					renderScene();
+				}
+			});
+
+			frame.on('pointerdown', (e) => {
 				e.stopPropagation(); // do not let this start a camera pan
-				// Right-button on a tile = open the tile context menu at the
-				// click coordinates (canvas-005a). The window-level
-				// capture-phase dismisser has already nulled any previous
-				// menu, so this reassignment effectively swaps menus when the
-				// user right-clicks elsewhere while a menu is open.
+				// Right-button on the header bar = open the tile context
+				// menu at the click coordinates (canvas-005a). Reuses the
+				// same menu shape as the orbit baseline.
 				if (e.button === 2) {
-					// Pixi's federated stopPropagation doesn't reach the DOM,
-					// so the canvas-level pointerdown listener would otherwise
-					// fire next and overwrite our tile menu with the empty-
-					// canvas menu. Halt the underlying DOM event.
 					if (e.nativeEvent && 'stopImmediatePropagation' in e.nativeEvent) {
 						e.nativeEvent.stopImmediatePropagation();
 					}
@@ -1367,8 +1861,48 @@
 				}
 				cameraTarget = null;
 				dragProjectId = id;
+				dragBcName = null;
 				dragOriginX = e.global.x;
 				dragOriginY = e.global.y;
+				// Suppress headerH unused warning — kept on the signature
+				// for future header-area sub-affordances.
+				void z;
+			});
+		}
+
+		/** Wire one BC bubble into the shared drag controller. A BC drag
+		 *  pins that BC's frame-local position (`bcPositions`) and persists
+		 *  it on drag end via `saveBcPosition`. The deterministic force-
+		 *  directed layout re-runs on drag end with the new pinned set so
+		 *  the rest of the BCs re-flow around it (one-shot, no
+		 *  requestAnimationFrame loop). */
+		function attachBcDrag(
+			bubble: Container,
+			projectId: number,
+			bcName: string,
+			screenPos: Point,
+			z: number
+		) {
+			// `pointerover`/`pointerout` already wired in `makeBcBubble`.
+			bubble.on('pointerdown', (e) => {
+				e.stopPropagation(); // do not let this bubble up to the
+				// frame's header drag or the canvas-level pan.
+				if (e.button === 2) {
+					// Right-click on a BC: no menu in v1. Just suppress.
+					if (e.nativeEvent && 'stopImmediatePropagation' in e.nativeEvent) {
+						e.nativeEvent.stopImmediatePropagation();
+					}
+					return;
+				}
+				cameraTarget = null;
+				dragProjectId = projectId;
+				dragBcName = bcName;
+				dragOriginX = e.global.x;
+				dragOriginY = e.global.y;
+				// Suppress unused warnings — params are kept for symmetry
+				// with `attachFrameHeaderDrag` and future hit-area needs.
+				void screenPos;
+				void z;
 			});
 		}
 
