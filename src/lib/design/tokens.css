@@ -34,6 +34,34 @@
 	--guppi-edge-highlight: #8a8ad0;
 	--guppi-focus-ring: #c8c8ff;
 
+	/* --- Colour: neutral muted foreground ----------------------------- */
+	/* Single hue used by all four intra-project edge types
+	   (design-system-002). Geometry distinguishes the types; colour stays
+	   uniform so dense canvases scan cleanly. */
+	--guppi-fg-muted: #6e6e80;
+
+	/* --- Colour: project frame (design-system-002) -------------------- */
+	--guppi-frame-fill: #1a1a22;
+	--guppi-frame-border: #8a8ad0;
+	--guppi-frame-header-fill: #262636;
+	--guppi-frame-header-divider: #8a8ad0;
+	--guppi-frame-title-text: #f2f2f7;
+	--guppi-frame-title-text-muted: #b9b9c8;
+	--guppi-frame-empty-text: #6e6e80;
+
+	/* --- Colour: BC bubble (inside-frame variant) --------------------- */
+	--guppi-bc-inside-fill: #20242b;
+	--guppi-bc-inside-border: #3c8b8e;
+	--guppi-bc-inside-text: #e6e6ec;
+	--guppi-bc-inside-text-muted: #9a9aa6;
+	--guppi-bc-inside-pill-fill: #2a2f38;
+
+	/* --- Colour: intra-project edge variants (named aliases) ---------- */
+	--guppi-edge-upstream: #6e6e80;
+	--guppi-edge-mutual: #6e6e80;
+	--guppi-edge-acl: #6e6e80;
+	--guppi-edge-conformist: #6e6e80;
+
 	/* --- Colour: status palette (colourblind-friendly) ---------------- */
 	--guppi-status-idle: #6f7585;
 	--guppi-status-running: #2f9fe0;
@@ -72,6 +100,29 @@
 	--guppi-radius-badge: 6px;
 	--guppi-border-width: 2px;
 	--guppi-border-width-focus: 3px;
+
+	/* --- Shape: project frame (design-system-002) --------------------- */
+	--guppi-radius-frame: 12px;
+	--guppi-border-width-frame: 1px;
+	--guppi-frame-header-height: 24px;
+	--guppi-frame-padding: 16px;
+	--guppi-frame-min-inner-width: 320px;
+	--guppi-frame-min-inner-height: 200px;
+
+	/* --- Shape: BC bubble (inside-frame variant) ---------------------- */
+	--guppi-bc-inside-width: 160px;
+	--guppi-bc-inside-height: 56px;
+	--guppi-radius-bc-inside: 8px;
+	--guppi-bc-inside-pill-height: 16px;
+	--guppi-bc-inside-pill-min-width: 32px;
+	--guppi-bc-inside-pill-radius: 8px;
+
+	/* --- Shape: intra-project edge geometry --------------------------- */
+	--guppi-edge-weight: 2px;
+	--guppi-edge-weight-conformist: 1px;
+	--guppi-arrowhead-length: 10px;
+	--guppi-arrowhead-width: 8px;
+	--guppi-acl-notch-size: 10px;
 
 	/* --- Motion ------------------------------------------------------- */
 	--guppi-duration-camera: 320ms;

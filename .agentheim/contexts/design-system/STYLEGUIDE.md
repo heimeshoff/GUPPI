@@ -52,8 +52,13 @@ hex strings.
 | BC node | `bcFill` | `#20242b` | BC node body — calmer, cooler |
 | BC node | `bcBorder` | `#3c8b8e` | BC node border — teal |
 | BC node | `bcText` / `bcTextMuted` | `#e6e6ec` / `#9a9aa6` | Title / subtitle |
-| Edge | `edge` | `#4a4a58` | Project → BC connectors |
+| Edge | `edge` | `#4a4a58` | Project → BC connectors (legacy / orbit baseline) |
 | Edge | `edgeHighlight` | `#8a8ad0` | Connector when its endpoint is focused |
+| Edge | `edgeUpstream` / `edgeMutual` / `edgeACL` / `edgeConformist` | `#6e6e80` | Intra-project edges — single neutral palette, geometry distinguishes types (see §3.8) |
+| Edge | `fgMuted` | `#6e6e80` | The underlying neutral hue all four intra-project edges resolve to |
+| Frame | `frameFill` / `frameBorder` / `frameHeaderFill` / `frameHeaderDivider` | `#1a1a22` / `#8a8ad0` / `#262636` / `#8a8ad0` | Project frame body, border, header bar (see §3.6) |
+| Frame | `frameTitleText` / `frameTitleTextMuted` / `frameEmptyText` | `#f2f2f7` / `#b9b9c8` / `#6e6e80` | Header text + empty-frame placeholder |
+| BC bubble (inside frame) | `bcInsideFill` / `bcInsideBorder` / `bcInsideText` / `bcInsideTextMuted` / `bcInsidePillFill` | `#20242b` / `#3c8b8e` / `#e6e6ec` / `#9a9aa6` / `#2a2f38` | Inside-frame BC bubble + task-counts pill (see §3.7) |
 | Affordance | `focusRing` | `#c8c8ff` | Ring drawn around a hovered/focused node |
 
 ### 2.2 Status palette — colourblind-friendly
@@ -96,12 +101,21 @@ zoom 1). Use the scale; don't invent intermediate values.
 
 | Token | Value | Use |
 |---|---|---|
-| `tileWidth` × `tileHeight` | `240 × 132` | Project tile — larger, the anchor |
-| `bcWidth` × `bcHeight` | `184 × 96` | BC node — smaller, secondary |
-| `bcOrbitRadius` | `380` | World distance of BC nodes from the project tile |
+| `tileWidth` × `tileHeight` | `240 × 132` | Project tile — larger, the anchor (orbit baseline) |
+| `bcWidth` × `bcHeight` | `184 × 96` | BC node — smaller, secondary (orbit baseline) |
+| `bcOrbitRadius` | `380` | World distance of BC nodes from the project tile (orbit baseline) |
 | `radiusTile` / `radiusBc` / `radiusBadge` | `12 / 10 / 6` | Corner radii |
 | `borderWidth` / `borderWidthFocus` | `2 / 3` | Border weights |
 | `badgeHeight` / `badgeMinWidth` | `18 / 18` | Status badge pill |
+| `radiusFrame` / `borderWidthFrame` | `12 / 1` | Project frame corner + border (see §3.6) |
+| `frameHeaderHeight` / `framePadding` | `24 / 16` | Header bar height + inner body padding |
+| `frameMinInnerWidth` / `frameMinInnerHeight` | `320 / 200` | Floor for auto-fit frame sizing |
+| `bcInsideWidth` × `bcInsideHeight` | `160 × 56` | BC bubble inside a frame (denser than orbit BC node) |
+| `radiusBcInside` | `8` | BC bubble corner radius (rounded rectangle, denser than orbit) |
+| `bcInsidePillHeight` / `bcInsidePillMinWidth` / `bcInsidePillRadius` | `16 / 32 / 8` | Task-counts pill inline with the BC name |
+| `edgeWeight` / `edgeWeightConformist` | `2 / 1` | Intra-project edge line weights |
+| `arrowheadLength` / `arrowheadWidth` | `10 / 8` | Arrowhead at the downstream end of directional edges |
+| `aclNotchSize` | `10` | Triangle notch at the midpoint of an ACL edge |
 
 ### 2.6 Motion — the animation budget
 
@@ -184,6 +198,172 @@ The baseline renders the `idle` state. The **voice BC** wires real mic state
 into `voiceState` later; this establishes the visual contract and the token
 set so that work has something explicit to land against.
 
+### 3.6 Project frame — *contract*
+
+The frame is the project-level container introduced by
+`design-system-002-project-frame-vocabulary` and consumed by
+`canvas-007-project-as-frame`. It supersedes the orbit baseline's
+**project tile + project→BC line** rendering: the project becomes a
+*region* on the canvas; its BCs sit *inside* the region as bubbles
+(§3.7); BC↔BC edges (§3.8) carry the relationship structure.
+
+The frame has three parts: a **header bar** along the top edge (drag
+handle, right-click target, status read-out), a **body** containing the
+project's BC bubbles, and a **border + corners** that mark the boundary.
+Auto-fit: the frame sizes itself to its content with `framePadding`
+inside and the `frameMin*` floors below — no user-resize at v1.
+
+| State | Visual |
+|---|---|
+| Default | `frameFill` body, `frameBorder` 1px border, `radiusFrame` 12px corners, header bar in `frameHeaderFill` divided from the body by `frameHeaderDivider` 1px |
+| Hover (over body) | no change — frame is a region, not an interactive node; hover affordance applies to the header bar only |
+| Hover (header bar) | `focusRing` 3px halo around the header bar edges — "click here for project-level actions" |
+| Dragging (header bar) | same as hover; the whole frame (header + body + interior BCs) follows the pointer. World position persists on pointer-up (ADR-004). |
+
+**Header bar.** Height = `frameHeaderHeight` (24). Carries, left to right:
+project name in `frameTitleText` at `sizeBody` `weightMedium`, then the
+status badges (one badge per status state that has count > 0; same
+`statusColor` / `statusGlyph` palette as a BC node), then the task-counts
+row right-aligned in `frameTitleTextMuted` at `sizeCaption` `fontFamilyMono`.
+Right-clicking the header bar opens the existing tile context menu
+(`Remove project`, etc. — same surface as today's tile right-click).
+
+**Empty-frame state.** A project with zero BCs is still a frame — but
+rendering an empty box reads as "broken". The body shows a single
+centred placeholder line in `frameEmptyText` at `sizeBody`:
+
+> No bounded contexts yet — add a `contexts/<bc>/` directory to populate.
+
+The placeholder reads as a hint, not a control; it does not pulse, link,
+or animate.
+
+**Pseudocode (PixiJS world coords):**
+
+```
+// Frame = header + body + border, drawn as one Container at project.pos.
+const w = max(frameMinInnerWidth + 2*framePadding, autofit.width);
+const h = max(frameMinInnerHeight + 2*framePadding + frameHeaderHeight,
+              autofit.height + frameHeaderHeight);
+
+frame.lineStyle(borderWidthFrame, frameBorder)
+     .beginFill(frameFill).drawRoundedRect(0, 0, w, h, radiusFrame).endFill();
+
+// Header bar
+frame.beginFill(frameHeaderFill)
+     .drawRoundedRect(0, 0, w, frameHeaderHeight, radiusFrame).endFill();
+frame.lineStyle(1, frameHeaderDivider)
+     .moveTo(0, frameHeaderHeight).lineTo(w, frameHeaderHeight);
+// → project name (left), status badges (centre/right), task counts (right)
+
+// Body: lay out BC bubbles inside the {framePadding, frameHeaderHeight+framePadding}
+// inset region using the force-directed layout canvas-007 owns.
+```
+
+### 3.7 BC bubble (inside frame) — *contract*
+
+The BC bubble inside a frame is distinct from the orbit-baseline BC node
+(§3.2). It is **denser** — title + counts pill in one row at default
+zoom, lower height — because many BCs share a frame and the eye needs to
+read the relationship graph between them, not each bubble's chrome.
+
+Shape: a rounded rectangle (`radiusBcInside` 8), `bcInsideWidth × bcInsideHeight`
+(160 × 56), `bcInsideFill` body, `bcInsideBorder` 2px stroke. Inside, in
+one row at default zoom:
+
+- BC name — `bcInsideText`, `sizeBody`, `weightMedium`, left-aligned.
+- Task-counts pill — right-aligned, `bcInsidePillFill` rounded rect
+  (`bcInsidePillRadius` 8, `bcInsidePillHeight` 16, min width
+  `bcInsidePillMinWidth` 32), `sizeCaption` `fontFamilyMono` glyph + count
+  e.g. `▶3`. The pill colour itself is neutral; the in-pill text uses the
+  matching `statusColor[...]` per state. (Future: one pill per non-zero
+  state.)
+- Status badge — top-right corner of the bubble (same surface as §3.4):
+  `radiusBadge` pill carrying `statusColor[state]` + `statusGlyph[state]`.
+  The badge is the at-a-glance signal; the pill is the count read-out.
+
+| State | Visual |
+|---|---|
+| Default | `bcInsideFill` body, `bcInsideBorder` 2px border, status badge top-right, counts pill inline |
+| Hover | adds the `focusRing` 3px ring just outside the border |
+| Focus | same as hover; persists until pointer leaves or focus moves |
+| Dragging | same as focus; world position inside the frame persists via `project-registry-004`'s `save_bc_position` IPC on pointer-up |
+
+Status derivation matches §3.2's `deriveBcStatus` rules — unchanged.
+
+### 3.8 Intra-project edges — *contract*
+
+Four edge variants, one per context-map relationship type from
+`project-registry-004`. The project→BC parent edge of the orbit baseline
+**retires**; containment (BC inside frame) replaces it.
+
+**Resolved default: single neutral palette.** All four variants use the
+same `fgMuted` hue (the named tokens — `edgeUpstream`, `edgeMutual`,
+`edgeACL`, `edgeConformist` — resolve to the same value). **Geometry**
+— arrowhead presence, notch glyph, line weight — carries the type
+distinction. The reasoning matches the "restrained" motion budget: a
+dense canvas reads cleanest when colour is consistent and shape varies.
+
+| Relationship | Token | Weight | Arrowhead | Notch | Direction |
+|---|---|---|---|---|---|
+| customer-supplier (upstream → downstream) | `edgeUpstream` | `edgeWeight` (2) | yes, at downstream end | — | directional |
+| shared-kernel / partnership / mutual | `edgeMutual` | `edgeWeight` (2) | — | — | non-directional |
+| anti-corruption-layer (upstream → downstream) | `edgeACL` | `edgeWeight` (2) | yes, at downstream end | yes, triangle at midpoint, `aclNotchSize` 10, pointing toward upstream | directional |
+| conformist (upstream → downstream) | `edgeConformist` | `edgeWeightConformist` (1) | yes, at downstream end | — | directional |
+| *(no relationship declared)* | — | — | — | — | no edge drawn |
+
+**Arrowhead geometry.** A filled isosceles triangle at the downstream
+end, `arrowheadLength` × `arrowheadWidth` (10 × 8), tip touching the
+edge of the downstream BC bubble. The shaft of the line terminates at
+the base of the arrowhead.
+
+**ACL notch.** A small filled triangle at the **midpoint** of the edge,
+`aclNotchSize` 10, oriented perpendicular to the line and pointing
+**toward the upstream end** (the side being protected from). Resolved
+default: a triangle (vs zig-zag, vs hover-only label) keeps the
+"anti-corruption" semantics visible at zoom-out without adding chrome.
+
+**Conformist.** Visually lighter (`edgeWeightConformist` 1) and reads
+as "downstream defers to upstream" — the lower contrast carries the
+asymmetry. Same hue + arrowhead direction as `edgeUpstream` otherwise.
+
+**Hover-on-edge highlight.** *Deferred to sign-off* — open question on
+the task: should hovering an edge highlight its two endpoint BCs (and
+optionally tween edges connected to either endpoint)? The token
+`edgeHighlight` already exists from the orbit baseline and is the
+natural surface for this behaviour if Marco accepts it. Until decided,
+edges have no hover state.
+
+**Motion.** Edge appearance/disappearance fades in/out per
+`durationAffordance` (120ms) when `bc_relationships_changed` arrives.
+Force-directed re-layout of BC positions is `canvas-007`'s call (lean:
+instant, matching the restrained budget).
+
+**Pseudocode (PixiJS):**
+
+```
+function drawEdge(g, a, b, kind) {
+  const colour = edgeColour[kind];          // all four → fgMuted today
+  const weight = kind === 'conformist' ? edgeWeightConformist : edgeWeight;
+  g.lineStyle(weight, colour);
+
+  if (kind === 'mutual') {
+    // bare line, no arrowhead, no notch
+    g.moveTo(a.x, a.y).lineTo(b.x, b.y);
+    return;
+  }
+  // directional: line + arrowhead at b
+  const tip   = edgeOfBubble(b, fromDirection(a, b));
+  const base  = pointAlong(tip, a, arrowheadLength);
+  g.moveTo(a.x, a.y).lineTo(base.x, base.y);
+  drawArrowhead(g, tip, base, arrowheadWidth, colour);
+
+  if (kind === 'acl') {
+    const mid = midpoint(a, tip);
+    drawNotchTriangle(g, mid, towardA(a, mid), aclNotchSize, colour);
+  }
+}
+```
+
 ---
 
 ## 4. Patterns
@@ -249,6 +429,26 @@ nothing else animates. The "running" pulse is a defined token; the baseline
 renders the static badge — wiring the pulse tween is a small follow-up the
 `canvas` BC can pick up. **Override path:** adjust `motion.*` durations, or
 add tokens for more motion if Marco wants a livelier canvas.
+
+### Q4–Q8 — Project-frame aesthetics (design-system-002) → **defaults shipped, sign-off deferred**
+
+The project-as-frame vocabulary (§3.6 / §3.7 / §3.8) carried five open
+aesthetic questions. Per the styleguide-001 pattern, defaults are
+shipped and `canvas-007` builds against them; Marco's in-person sign-off
+is a deferred human gate (recorded in the task's `done/` note). Each
+default is **overridable**.
+
+| # | Question | Default shipped | Override path |
+|---|---|---|---|
+| Q4 | Frame border — solid vs dashed vs inset shadow? | **1px solid `frameBorder`**, no shadow | change `borderWidthFrame` or swap the stroke style in the frame draw call |
+| Q5 | Header bar — integrated (one-piece) or attached (above)? | **integrated**, divided from body by `frameHeaderDivider` 1px | drop the divider line and detach the header geometry |
+| Q6 | BC bubble shape — circle (like orbit) or rounded rectangle? | **rounded rectangle**, `radiusBcInside` 8, denser than orbit | change `radiusBcInside` to half of `bcInsideHeight` for a pill / capsule |
+| Q7 | ACL notch — triangle on the line, zig-zag, or hover-only label? | **filled triangle at midpoint**, `aclNotchSize` 10, pointing toward upstream | swap `drawNotchTriangle` for a zig-zag polyline or remove and gate on hover |
+| Q8 | Edge colour — single neutral, or per-type hues? | **single neutral `fgMuted`**, geometry distinguishes types | change `edgeUpstream` / `edgeMutual` / `edgeACL` / `edgeConformist` to distinct hues; consumers already reference the named tokens |
+
+**Hover-on-edge highlight** (extra deferred question): until Marco
+decides, edges have no hover state. The `edgeHighlight` token is in
+place if the decision goes "yes".
 
 ---
 

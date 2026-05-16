@@ -36,9 +36,66 @@ export const color = {
 	bcText: 0xe6e6ec,
 	bcTextMuted: 0x9a9aa6,
 
-	/** Edges — project → BC connectors. */
+	/** Edges — project → BC connectors (legacy, used by the orbit baseline). */
 	edge: 0x4a4a58,
 	edgeHighlight: 0x8a8ad0,
+
+	/**
+	 * Neutral muted foreground — used as the single edge hue for all four
+	 * intra-project edge types (design-system-002). Geometry (arrowhead /
+	 * notch / weight) carries the type distinction; colour stays uniform so
+	 * a dense canvas reads cleanly at zoom-out.
+	 */
+	fgMuted: 0x6e6e80,
+
+	/* --- Project-as-frame (design-system-002) ------------------------ */
+	// The "frame" is the surrounding region drawn around a project; its
+	// interior contains the project's BCs as bubbles, with intra-project
+	// edges between them by relationship type. Title bar runs across the
+	// top edge and carries project name + status badges + task counts;
+	// it is the project's drag handle + right-click target.
+	/** Frame body — transparent canvas-bg tone so it reads as containment. */
+	frameFill: 0x1a1a22,
+	/** Frame border — same hue as the legacy `tileBorder` so the project
+	 *  identity reads continuous from the orbit baseline; weight differs
+	 *  (see `shape.borderWidthFrame`). */
+	frameBorder: 0x8a8ad0,
+	/** Frame header bar — slightly raised tone, divides title from body. */
+	frameHeaderFill: 0x262636,
+	/** The divider line between header bar and frame body. */
+	frameHeaderDivider: 0x8a8ad0,
+	/** Header bar text — project name + counts. */
+	frameTitleText: 0xf2f2f7,
+	frameTitleTextMuted: 0xb9b9c8,
+	/** Empty-frame placeholder text — "no bounded contexts yet". */
+	frameEmptyText: 0x6e6e80,
+
+	/* --- BC bubble (inside-frame variant — design-system-002) -------- */
+	// Distinct from the legacy orbit `bcFill` / `bcBorder` only by the
+	// intent (sits *inside* the frame), but the visual identity stays the
+	// same teal so a BC reads consistently across the two renderings.
+	// `bcInsidePillFill` is the small task-counts pill that sits inline
+	// with the BC title at default zoom.
+	bcInsideFill: 0x20242b,
+	bcInsideBorder: 0x3c8b8e,
+	bcInsideText: 0xe6e6ec,
+	bcInsideTextMuted: 0x9a9aa6,
+	bcInsidePillFill: 0x2a2f38,
+
+	/* --- Intra-project edges (design-system-002) --------------------- */
+	// Single neutral palette (resolved default: geometry, not hue, carries
+	// the type). All four resolve to `fgMuted`; the tokens exist as named
+	// aliases so consumers spell intent at the call site rather than
+	// reaching for `fgMuted` directly. Hover/focus highlight uses
+	// `edgeHighlight` (already defined above).
+	/** Customer-supplier (directional) — line + arrowhead at downstream end. */
+	edgeUpstream: 0x6e6e80,
+	/** Mutual / shared-kernel / partnership — line, no arrowhead. */
+	edgeMutual: 0x6e6e80,
+	/** Anti-corruption-layer (directional) — line + arrowhead + notch glyph. */
+	edgeACL: 0x6e6e80,
+	/** Conformist (directional) — line + arrowhead, lighter weight. */
+	edgeConformist: 0x6e6e80,
 
 	/** Focus / hover affordance — the ring drawn around an interactive node. */
 	focusRing: 0xc8c8ff,
@@ -120,7 +177,52 @@ export const shape = {
 
 	/** Status badge — a small pill in a node's corner. */
 	badgeHeight: 18,
-	badgeMinWidth: 18
+	badgeMinWidth: 18,
+
+	/* --- Project frame (design-system-002) --------------------------- */
+	// The frame contains a project's BCs. Border is intentionally thinner
+	// than a tile (1px vs 2px) so the frame reads as a boundary, not as a
+	// peer of the BC bubbles inside it. Corner radius matches `radiusTile`
+	// so frames feel "project-shaped" continuous with the orbit baseline.
+	/** Frame corner radius (resolved default: 12 — same as `radiusTile`). */
+	radiusFrame: 12,
+	/** Frame border weight — 1 keeps it a quiet container. */
+	borderWidthFrame: 1,
+	/** Frame title-bar height — `spacing.xl` (24). */
+	frameHeaderHeight: 24,
+	/** Frame body inner padding — distance from frame edge to BC layout area. */
+	framePadding: 16,
+	/** Minimum frame inner width / height when auto-fitting empty or sparse
+	 *  content. Below these, the frame looks too small to read as a region. */
+	frameMinInnerWidth: 320,
+	frameMinInnerHeight: 200,
+
+	/* --- BC bubble (inside-frame variant — design-system-002) -------- */
+	// Denser than the orbit BC node (resolved default). Title + counts pill
+	// fit in one row at default zoom; height drops accordingly. Corner
+	// radius drops to `spacing.sm` (8) — smaller than the orbit BC's 10 —
+	// so the inside-frame variant reads as a sibling-cluster element, not
+	// as a peer of the surrounding frame.
+	bcInsideWidth: 160,
+	bcInsideHeight: 56,
+	radiusBcInside: 8,
+	/** Inline task-counts pill that sits beside the BC name at default zoom. */
+	bcInsidePillHeight: 16,
+	bcInsidePillMinWidth: 32,
+	bcInsidePillRadius: 8,
+
+	/* --- Intra-project edge geometry (design-system-002) ------------- */
+	/** Default edge weight for upstream/downstream + mutual + ACL. */
+	edgeWeight: 2,
+	/** Conformist — visually lighter so it reads as "downstream defers". */
+	edgeWeightConformist: 1,
+	/** Arrowhead size at the downstream end of a directional edge. */
+	arrowheadLength: 10,
+	arrowheadWidth: 8,
+	/** ACL notch — a small triangle drawn at the midpoint of an ACL edge.
+	 *  Resolved default: a triangle (vs zig-zag or hover-only label) keeps
+	 *  the meaning visible at zoom-out without adding chrome. */
+	aclNotchSize: 10
 } as const;
 
 /* ------------------------------------------------------------------ */
