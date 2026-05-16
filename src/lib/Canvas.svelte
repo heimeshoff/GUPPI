@@ -78,6 +78,12 @@
 		statusGlyph,
 		type TaskState
 	} from './design/tokens';
+	import {
+		themeState,
+		initTheme,
+		setTheme,
+		onThemeChange
+	} from './theme.svelte';
 
 	// --- Right-click context menu (canvas-005a) -----------------------
 	// An items-array shape so canvas-005b can append "Scan folder for
@@ -480,6 +486,7 @@
 	onMount(() => {
 		let app: Application | null = null;
 		let unlistenEvent: (() => void) | null = null;
+		let unlistenTheme: (() => void) | null = null;
 		let disposed = false;
 
 		// PixiJS scene graph: world container holds everything; camera maps it.
@@ -510,6 +517,19 @@
 		let dragOriginY = 0;
 
 		(async () => {
+			// --- restore persisted theme BEFORE the canvas boots ---------
+			// design-system-004: read the v5 `preferences.theme` row from
+			// SQLite and apply the active palette + HTML `data-theme`
+			// attribute *before* PixiJS reads `color.canvasBg` below. The
+			// first paint then lands in the correct palette without a
+			// visible flash from dark to light. Failures fall back to dark
+			// (the migration's default seed) without throwing.
+			try {
+				await initTheme();
+			} catch (e) {
+				logToCore('warn', `could not restore persisted theme: ${e}`);
+			}
+
 			app = new Application();
 			await app.init({
 				resizeTo: host,
@@ -567,6 +587,29 @@
 				// space, so it stays put while the canvas pans).
 				world.addChild(makeVoiceIndicator());
 			};
+
+			// --- theme flip → re-render the scene (design-system-004) ----
+			// PixiJS objects hold colour numerics at instantiation, so a
+			// palette flip after the scene is built has no visible effect
+			// unless we redraw. `applyPalette()` has already mutated the
+			// active `color` / `statusColor` / `glow` objects by the time
+			// this listener fires; we just retrigger the draw, plus update
+			// the WebGL renderer's clear colour so the canvas backdrop
+			// flips alongside the world contents.
+			unlistenTheme = onThemeChange(() => {
+				if (!app) return;
+				try {
+					// `Renderer.background.color` is the same WebGL clear
+					// colour that `app.init({ background: ... })` set.
+					// PixiJS v8's `Color` setter accepts the 0xrrggbb
+					// numeric directly.
+					app.renderer.background.color = color.canvasBg;
+				} catch {
+					// Best-effort — older renderer versions or a partial
+					// init shouldn't block the scene redraw.
+				}
+				renderScene();
+			});
 
 			/** Draw one project's intra-project BC↔BC edges. Walks each BC's
 			 *  `relationships[]`, resolves the `to` name to a sibling BC
@@ -1209,6 +1252,26 @@
 						const entry = findProject(event.project_id);
 						if (!entry) return;
 						void refreshOne(event.project_id);
+						return;
+					}
+					case 'preference_changed': {
+						// `design-system-004-light-theme`. The IPC fires this
+						// on every `set_preference`, including the canvas's
+						// own `setTheme` write. Two reasons to still handle
+						// it: (1) future sibling surfaces (voice "Bob, go
+						// dark"; command palette) can flip the theme without
+						// touching this component; (2) it makes the system
+						// fan-out-symmetric (every consumer learns the new
+						// value the same way).
+						//
+						// `setTheme` is idempotent — it early-returns when
+						// `themeState.value === next` — so the local-set
+						// path costs nothing here. Unknown keys are ignored.
+						if (event.key === 'theme') {
+							if (event.value === 'light' || event.value === 'dark') {
+								void setTheme(event.value);
+							}
+						}
 						return;
 					}
 					default: {
@@ -1909,6 +1972,7 @@
 		return () => {
 			disposed = true;
 			unlistenEvent?.();
+			unlistenTheme?.();
 			app?.destroy(true);
 		};
 	});
@@ -1916,6 +1980,76 @@
 
 <div class="canvas-host" bind:this={host}></div>
 <div class="status">{status}</div>
+
+<!--
+	Theme toggle (design-system-004). Pinned to the viewport top-right
+	(16, 16) per the design's `references/.../GUPPI.html`. Pill chrome
+	with hairline border + two inner buttons carrying sun/moon glyphs.
+	State is read from the `themeState` rune; clicks call `setTheme`
+	directly (which is idempotent if the value is already active). The
+	preference is persisted via the v5 SQLite `preferences` table; a
+	`PreferenceChanged` event is fired on the bus (ADR-009) so future
+	sibling surfaces (voice command, command palette) can flip the
+	same source.
+-->
+<div class="theme-toggle" role="tablist" aria-label="Theme">
+	<button
+		type="button"
+		class="theme-toggle-button"
+		class:active={themeState.value === 'dark'}
+		role="tab"
+		aria-selected={themeState.value === 'dark'}
+		title="Dark theme"
+		onclick={() => void setTheme('dark')}
+	>
+		<!-- moon glyph (design reference) -->
+		<svg
+			class="theme-toggle-glyph"
+			width="12"
+			height="12"
+			viewBox="0 0 12 12"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.4"
+			aria-hidden="true"
+		>
+			<path
+				d="M10.5 7A4.5 4.5 0 1 1 5 1.5a3.5 3.5 0 0 0 5.5 5.5z"
+				fill="currentColor"
+				stroke="none"
+			/>
+		</svg>
+		Dark
+	</button>
+	<button
+		type="button"
+		class="theme-toggle-button"
+		class:active={themeState.value === 'light'}
+		role="tab"
+		aria-selected={themeState.value === 'light'}
+		title="Light theme"
+		onclick={() => void setTheme('light')}
+	>
+		<!-- sun glyph (design reference) -->
+		<svg
+			class="theme-toggle-glyph"
+			width="12"
+			height="12"
+			viewBox="0 0 12 12"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.4"
+			stroke-linecap="round"
+			aria-hidden="true"
+		>
+			<circle cx="6" cy="6" r="2.4" fill="currentColor" stroke="none" />
+			<path
+				d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M2.5 9.5l1-1M8.5 3.5l1-1"
+			/>
+		</svg>
+		Light
+	</button>
+</div>
 
 <!--
 	Right-click context menu (canvas-005a). A screen-space HTML overlay (ADR-003
@@ -2192,6 +2326,58 @@
 		font-size: var(--guppi-size-caption);
 		color: var(--guppi-bc-text-muted);
 		pointer-events: none;
+	}
+
+	/*
+	 * Theme toggle (design-system-004). Pinned to the viewport top-right
+	 * (16, 16). A pill with a hairline border holding two buttons; the
+	 * `active` button reads on the brand-orange tile-border tone so the
+	 * affordance feels continuous with the rest of the canvas chrome.
+	 * Tokens drive every value (no magic numbers).
+	 */
+	.theme-toggle {
+		position: absolute;
+		top: var(--guppi-space-lg);
+		right: var(--guppi-space-lg);
+		z-index: 9;
+		display: inline-flex;
+		align-items: center;
+		gap: var(--guppi-space-xs);
+		background: var(--guppi-tile-fill);
+		border: 1px solid var(--guppi-hairline-strong);
+		border-radius: 999px;
+		padding: var(--guppi-space-xs);
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-caption);
+		user-select: none;
+	}
+	.theme-toggle-button {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--guppi-space-xs);
+		background: transparent;
+		border: 0;
+		padding: var(--guppi-space-xs) var(--guppi-space-md);
+		font-family: inherit;
+		font-size: inherit;
+		font-weight: var(--guppi-weight-medium);
+		color: var(--guppi-tile-text-muted);
+		border-radius: 999px;
+		cursor: pointer;
+		line-height: 1;
+		transition:
+			background var(--guppi-duration-affordance) var(--guppi-ease-standard),
+			color var(--guppi-duration-affordance) var(--guppi-ease-standard);
+	}
+	.theme-toggle-button:hover {
+		color: var(--guppi-tile-text);
+	}
+	.theme-toggle-button.active {
+		background: var(--guppi-tile-border);
+		color: var(--guppi-status-text);
+	}
+	.theme-toggle-glyph {
+		flex-shrink: 0;
 	}
 
 	/*

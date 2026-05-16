@@ -59,7 +59,15 @@ pub const DEFAULT_SCAN_DEPTH_CAP: u32 = 3;
 /// deleted project (the 30-day GC sweep on `projects` is the cascade trigger
 /// for soft-delete; the user-initiated remove preserves BC positions through
 /// the retention window just as it does tile positions).
-pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+///
+/// v5 (`design-system-004-light-theme`): adds the `preferences (key, value)`
+/// table. Generic key/value home for cross-session user preferences — theme is
+/// the first inhabitant; future preferences (font scale, reduced-motion
+/// override, etc.) reuse the same table without further migrations. A default
+/// row `('theme','dark')` is inserted on first migration so the very first
+/// `get_preference("theme")` after a fresh install resolves without a NULL
+/// dance on the frontend.
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 /// ADR-005's 30-day retention window for soft-deleted projects — `remove_project`
 /// flags a row with `deleted_at`, the row stays for `RETENTION_DAYS` so a
@@ -307,6 +315,40 @@ impl Db {
             Some(row) => Ok(Some(row.get(0)?)),
             None => Ok(None),
         }
+    }
+
+    // -------- preferences (schema v5, `design-system-004-light-theme`) -----
+    //
+    // The `preferences` table is the cross-session home for user-tunable view
+    // preferences — theme is the first inhabitant; future preferences (font
+    // scale, reduced-motion override, etc.) reuse the same key/value shape
+    // without further migrations (Marco's 2026-05-16 design-system-004
+    // sign-off). Distinct from `app_state` (which holds UI-internal blobs
+    // like the serialised camera) so a preference reset never collides with
+    // view bookkeeping.
+
+    /// Read one preference by key. `Ok(None)` when the key has never been set
+    /// — callers default in the frontend rather than the DB layer.
+    pub fn get_preference(&self, key: &str) -> Result<Option<String>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM preferences WHERE key = ?1")?;
+        let mut rows = stmt.query([key])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Upsert one preference. Idempotent on the key: a second write overwrites
+    /// the value rather than failing.
+    pub fn set_preference(&self, key: &str, value: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO preferences (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = ?2",
+            (key, value),
+        )?;
+        Ok(())
     }
 
     // -------- scan-root CRUD (ADR-013, `project-registry-002a`) -----------
@@ -634,6 +676,31 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
                  y          REAL    NOT NULL,
                  PRIMARY KEY (project_id, bc_name)
              );",
+        )?;
+    }
+
+    if current < 5 {
+        // Step 4 -> 5: cross-session user preferences (`design-system-004`).
+        //
+        // Generic key/value so future preferences (font scale, reduced-motion
+        // override, light-mode-by-time-of-day, etc.) reuse this table without
+        // a per-preference migration. Marco's 2026-05-16 design-system-004
+        // sign-off: theme persistence lives in SQLite per ADR-004, not in
+        // `localStorage` — one source of truth for view state alongside
+        // tile/BC positions and the camera blob.
+        //
+        // The default `('theme','dark')` row keeps the very first
+        // `get_preference("theme")` after a fresh install from returning
+        // NULL (which the frontend would otherwise have to default in JS).
+        // `INSERT OR IGNORE` is safe across re-migrations and v4-databases
+        // that already have a `preferences` table from a hand-rolled path
+        // (defensive, not expected).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS preferences (
+                 key   TEXT PRIMARY KEY,
+                 value TEXT NOT NULL
+             );
+             INSERT OR IGNORE INTO preferences (key, value) VALUES ('theme', 'dark');",
         )?;
     }
 
@@ -1468,11 +1535,13 @@ mod tests {
     // -------- 004: per-BC positions + v3->v4 migration ---------------------
 
     #[test]
-    fn fresh_db_is_at_schema_version_four() {
-        // `project-registry-004` acceptance: a fresh DB lands at v4 (adds
-        // `bc_positions` for per-BC positions inside a project frame).
+    fn fresh_db_is_at_schema_version_four_or_higher() {
+        // `project-registry-004` acceptance: a fresh DB lands at v4 or higher
+        // (adds `bc_positions` for per-BC positions inside a project frame).
+        // The `or higher` keeps this stable across subsequent schema bumps —
+        // mirrors the v2/v3 contract tests.
         let db = Db::open_in_memory().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 4);
+        assert!(db.schema_version().unwrap() >= 4);
     }
 
     #[test]
@@ -1539,9 +1608,10 @@ mod tests {
             .unwrap();
         }
 
-        // Open with migration applied.
+        // Open with migration applied. The leap may go beyond v4 (current
+        // version moves forward as schema grows) — assert "at least v4".
         let db = Db::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 4);
+        assert!(db.schema_version().unwrap() >= 4);
 
         // Pre-existing project + tile position survived.
         let rows = db.list_projects().unwrap();
@@ -1658,6 +1728,163 @@ mod tests {
         let (x, y) = pos.expect("final position must be present");
         assert!((0.0..16.0).contains(&x), "x out of range: {x}");
         assert!((y - 2.0 * x).abs() < f64::EPSILON, "y must be 2*x: {x},{y}");
+    }
+
+    // -------- 005: preferences + v4->v5 migration -------------------------
+
+    #[test]
+    fn fresh_db_is_at_schema_version_five() {
+        // `design-system-004-light-theme` acceptance: a fresh DB lands at v5
+        // (adds the `preferences` table for cross-session user preferences).
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.schema_version().unwrap(), 5);
+    }
+
+    #[test]
+    fn fresh_db_seeds_default_theme_preference_as_dark() {
+        // The default `('theme','dark')` row keeps the very first
+        // `get_preference("theme")` after a fresh install from returning NULL.
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(
+            db.get_preference("theme").unwrap(),
+            Some("dark".to_string()),
+            "fresh DB must seed theme=dark"
+        );
+    }
+
+    #[test]
+    fn preference_round_trips() {
+        // `design-system-004` IPC contract: set then get returns what was set.
+        let db = Db::open_in_memory().unwrap();
+        // No-such-key reads as None (not an error).
+        assert_eq!(db.get_preference("font_scale").unwrap(), None);
+
+        db.set_preference("font_scale", "1.25").unwrap();
+        assert_eq!(
+            db.get_preference("font_scale").unwrap(),
+            Some("1.25".to_string())
+        );
+
+        // Idempotent — a second write overwrites.
+        db.set_preference("font_scale", "1.5").unwrap();
+        assert_eq!(
+            db.get_preference("font_scale").unwrap(),
+            Some("1.5".to_string())
+        );
+
+        // Theme flip: write the opposite of the seed, read it back.
+        db.set_preference("theme", "light").unwrap();
+        assert_eq!(
+            db.get_preference("theme").unwrap(),
+            Some("light".to_string())
+        );
+    }
+
+    #[test]
+    fn v4_db_migrates_to_v5_without_data_loss() {
+        // `design-system-004` acceptance: a v4 DB (no `preferences` table) is
+        // migrated to v5 in place, gaining the new table + default theme row.
+        // Existing project / tile_position / bc_position rows survive
+        // untouched.
+        use rusqlite::Connection;
+
+        let path = std::env::temp_dir().join(format!(
+            "guppi-v4-v5-migration-{}-{:?}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Hand-roll a v4 database with a project + tile_position + bc_position.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "foreign_keys", true).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);
+                 INSERT INTO schema_version (version) VALUES (4);
+                 CREATE TABLE clusters (
+                     id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name  TEXT NOT NULL,
+                     color TEXT NOT NULL
+                 );
+                 CREATE TABLE scan_roots (
+                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                     path      TEXT NOT NULL UNIQUE,
+                     depth_cap INTEGER NOT NULL DEFAULT 3,
+                     added_at  TEXT NOT NULL
+                 );
+                 CREATE TABLE projects (
+                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                     path         TEXT NOT NULL UNIQUE,
+                     nickname     TEXT NOT NULL,
+                     added_at     TEXT NOT NULL,
+                     last_seen_at TEXT NOT NULL,
+                     scan_root_id INTEGER NULL REFERENCES scan_roots(id) ON DELETE RESTRICT,
+                     deleted_at   TEXT NULL
+                 );
+                 CREATE TABLE tile_positions (
+                     project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                     x          REAL NOT NULL,
+                     y          REAL NOT NULL,
+                     width      REAL NOT NULL,
+                     height     REAL NOT NULL,
+                     cluster_id INTEGER NULL REFERENCES clusters(id) ON DELETE SET NULL
+                 );
+                 CREATE TABLE app_state (
+                     key   TEXT PRIMARY KEY,
+                     value TEXT NOT NULL
+                 );
+                 CREATE TABLE bc_positions (
+                     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                     bc_name    TEXT    NOT NULL,
+                     x          REAL    NOT NULL,
+                     y          REAL    NOT NULL,
+                     PRIMARY KEY (project_id, bc_name)
+                 );
+                 INSERT INTO projects (path, nickname, added_at, last_seen_at)
+                 VALUES ('C:/src/guppi', 'GUPPI', datetime('now'), datetime('now'));
+                 INSERT INTO tile_positions (project_id, x, y, width, height)
+                 VALUES (1, 100.0, 200.0, 220, 120);
+                 INSERT INTO bc_positions (project_id, bc_name, x, y)
+                 VALUES (1, 'canvas', 42.0, 17.0);",
+            )
+            .unwrap();
+        }
+
+        // Open with migration applied — v4 leaps to v5 (and beyond if the
+        // current version moves further).
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 5);
+
+        // Pre-existing project + tile position + bc_position survived.
+        let rows = db.list_projects().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "C:/src/guppi");
+        assert_eq!(db.tile_position(rows[0].id).unwrap(), Some((100.0, 200.0)));
+        assert_eq!(
+            db.bc_position(rows[0].id, "canvas").unwrap(),
+            Some((42.0, 17.0))
+        );
+
+        // The new preferences table is queryable and pre-seeded with the
+        // default theme row.
+        assert_eq!(
+            db.get_preference("theme").unwrap(),
+            Some("dark".to_string()),
+            "v4 -> v5 migration must seed theme=dark"
+        );
+        // Round-trip a fresh key against the migrated DB.
+        db.set_preference("theme", "light").unwrap();
+        assert_eq!(
+            db.get_preference("theme").unwrap(),
+            Some("light".to_string())
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

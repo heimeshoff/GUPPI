@@ -5,7 +5,7 @@ status: Accepted
 scope: global
 bc: infrastructure
 date: 2026-05-14
-related_tasks: [infrastructure-009-event-bus, infrastructure-014-fine-grained-fs-events, canvas-001-targeted-canvas-updates]
+related_tasks: [infrastructure-009-event-bus, infrastructure-014-fine-grained-fs-events, canvas-001-targeted-canvas-updates, design-system-004-light-theme]
 ---
 
 # ADR-009: IPC and event bus — Tokio broadcast channel in the core, Tauri events to the frontend
@@ -85,6 +85,11 @@ enum DomainEvent {
     // Voice bridge (ADR-007)
     VoiceWakeWord,
     VoiceTranscript { text, final_: bool },
+
+    // User preferences (design-system-004 — see 2026-05-16 reconciliation
+    // note below). Generic key/value so future preferences reuse the same
+    // shape.
+    PreferenceChanged { key, value },
 }
 ```
 
@@ -127,6 +132,19 @@ kept aligned with the filesystem-observation work in ADR-008.
 >   reconstruct them from the fine-grained stream, so an explicit
 >   resync-from-source-of-truth signal is still needed; this is that signal,
 >   under a name that says what it is for.
+
+> **Reconciliation note (design-system-004, 2026-05-16):** the taxonomy gains
+> a new variant — **`PreferenceChanged { key: String, value: String }`** —
+> for cross-session user preferences persisted in the v5 SQLite
+> `preferences (key, value)` table (ADR-004). The first inhabitant is
+> `key: "theme", value: "dark" | "light"`, fired by the `set_preference`
+> IPC command so the canvas (PixiJS) and the HTML overlay layer can
+> re-render against the newly-active palette without polling — and so
+> future sibling surfaces (voice "Bob, go dark"; command palette) can flip
+> the same source. Future preferences (font scale, reduced-motion override,
+> light-mode-by-time-of-day, etc.) reuse the same generic key/value shape;
+> consumers ignore keys they do not recognise. The frontend bridge forwards
+> the variant under the existing `guppi://event` name — no new event channel.
 
 ### Frontend bridge
 

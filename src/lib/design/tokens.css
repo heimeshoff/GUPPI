@@ -156,3 +156,88 @@
 	--guppi-ease-standard: cubic-bezier(0.22, 0.61, 0.36, 1);
 	--guppi-ease-pulse: cubic-bezier(0.45, 0, 0.55, 1);
 }
+
+/*
+ * Light theme — design-system-004.
+ *
+ * Values lifted verbatim from the design's
+ * `references/claude-design-2026-05-16/project/guppi-tokens.css`
+ * `[data-theme="light"]` block. The toggle attribute lives on `<html>`
+ * (`document.documentElement`); switching from dark to light is a single
+ * `setAttribute('data-theme', 'light')` (and the inverse is `removeAttribute`).
+ *
+ * Slightly deeper accents than the dark theme's brand-orange / brand-blue
+ * anchors so they read at AA contrast on white surfaces (acceptance
+ * criterion #6 — verified against the design's prototype).
+ *
+ * Shape + motion + typography are theme-invariant; only colour vars
+ * (surfaces + accents + status + voice) are overridden here.
+ */
+:root[data-theme='light'] {
+	color-scheme: light;
+
+	/* Surfaces */
+	--guppi-canvas-bg: #f4f5f8;
+	--guppi-canvas-bg-raised: #ebedf2;
+
+	/* Project tile */
+	--guppi-tile-fill: #ffffff;
+	--guppi-tile-border: #ff8b00;
+	--guppi-tile-text: #15161c;
+	--guppi-tile-text-muted: #4a4b58;
+
+	/* Bounded-context node */
+	--guppi-bc-fill: #f6f7fa;
+	--guppi-bc-border: #1d8cd4;
+	--guppi-bc-text: #15161c;
+	--guppi-bc-text-muted: #4a4b58;
+
+	/* Edges + affordances */
+	--guppi-edge: #c8cad3;
+	--guppi-edge-highlight: #ff8b00;
+	--guppi-focus-ring: #ff8b00;
+
+	/* Muted text + hairlines */
+	--guppi-fg-muted: #6b6c7a;
+	--guppi-hairline-strong: #c8cad3;
+
+	/* Project frame */
+	--guppi-frame-fill: #ffffff;
+	--guppi-frame-border: #ff8b00;
+	--guppi-frame-header-fill: #f6f7fa;
+	--guppi-frame-header-divider: #e2e4eb;
+	--guppi-frame-title-text: #15161c;
+	--guppi-frame-title-text-muted: #4a4b58;
+	--guppi-frame-empty-text: #6b6c7a;
+
+	/* BC bubble (inside-frame variant) */
+	--guppi-bc-inside-fill: #f6f7fa;
+	--guppi-bc-inside-border: #1d8cd4;
+	--guppi-bc-inside-text: #15161c;
+	--guppi-bc-inside-text-muted: #4a4b58;
+	--guppi-bc-inside-pill-fill: #ebedf2;
+
+	/* Intra-project edge variants — single neutral, geometry distinguishes */
+	--guppi-edge-upstream: #c8cad3;
+	--guppi-edge-mutual: #c8cad3;
+	--guppi-edge-acl: #c8cad3;
+	--guppi-edge-conformist: #c8cad3;
+
+	/* Status — same hues, slightly darker for AA on white */
+	--guppi-status-idle: #8a8d99;
+	--guppi-status-running: #1d8cd4;
+	--guppi-status-blocked: #d04545;
+	--guppi-status-missing: #d97500;
+	--guppi-status-text: #10131a;
+
+	/* Status glow halos — tightened alphas matching the design's light block */
+	--guppi-status-idle-glow: rgba(138, 141, 153, 0.16);
+	--guppi-status-running-glow: rgba(29, 140, 212, 0.2);
+	--guppi-status-blocked-glow: rgba(208, 69, 69, 0.2);
+	--guppi-status-missing-glow: rgba(217, 117, 0, 0.22);
+
+	/* Voice */
+	--guppi-voice-idle: #8a8d99;
+	--guppi-voice-listening: #1d8cd4;
+	--guppi-voice-muted: #6b6c7a;
+}

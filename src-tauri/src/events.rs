@@ -97,6 +97,16 @@ pub enum DomainEvent {
     // yet, deferred to the terminal-panel feature per ADR-006. `bytes` is not
     // UTF-8-guaranteed; it is whatever ConPTY emitted.
     SessionOutput { session_id: i64, bytes: Vec<u8> },
+
+    // User preferences (`design-system-004-light-theme`). Fired by
+    // `set_preference` so any subscriber (the PixiJS canvas, the HTML overlay
+    // layer) can react. Theme is the first inhabitant — flipping
+    // `('theme','dark'<->'light')` triggers a canvas re-render against the
+    // newly-active palette and flips the `data-theme` attribute on
+    // `<html>`. Future preferences (font scale, reduced-motion override,
+    // etc.) reuse the same generic shape. See ADR-009's 2026-05-16
+    // reconciliation note.
+    PreferenceChanged { key: String, value: String },
 }
 
 /// The in-core pub/sub bus. Cloneable: every clone shares the same channel.
@@ -174,5 +184,29 @@ mod tests {
     fn publish_without_subscribers_does_not_panic() {
         let bus = EventBus::new();
         assert_eq!(bus.publish(DomainEvent::ProjectMissing { project_id: 9 }), 0);
+    }
+
+    #[tokio::test]
+    async fn preference_changed_event_reaches_a_subscriber() {
+        // `design-system-004-light-theme` acceptance: the `PreferenceChanged`
+        // domain event is part of the ADR-009 taxonomy. Fired by
+        // `set_preference` (the IPC command) so the canvas + HTML overlay can
+        // re-render against the newly-active palette without polling.
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+
+        bus.publish(DomainEvent::PreferenceChanged {
+            key: "theme".to_string(),
+            value: "light".to_string(),
+        });
+
+        let received = rx.recv().await.expect("event should be delivered");
+        match received {
+            DomainEvent::PreferenceChanged { key, value } => {
+                assert_eq!(key, "theme");
+                assert_eq!(value, "light");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 }

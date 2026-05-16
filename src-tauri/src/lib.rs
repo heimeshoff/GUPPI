@@ -807,6 +807,49 @@ fn pty_is_alive(state: tauri::State<'_, AppState>) -> bool {
     guard.as_mut().map(|s| s.is_alive()).unwrap_or(false)
 }
 
+// --- User preferences (`design-system-004-light-theme`) -----------------
+//
+// Generic key/value preferences live in the v5 `preferences` SQLite table.
+// `set_preference` publishes a `PreferenceChanged` domain event on the bus so
+// the canvas (PixiJS) + the HTML overlay layer can react without polling.
+// Theme is the first inhabitant; future preferences (font scale,
+// reduced-motion override, etc.) reuse the same shape.
+
+/// IPC command — read one preference value by key (`design-system-004`).
+/// `Ok(None)` when the key has never been set; callers default in the
+/// frontend rather than the IPC boundary.
+#[tauri::command]
+fn get_preference(
+    state: tauri::State<'_, AppState>,
+    key: String,
+) -> Result<Option<String>, String> {
+    state.db.get_preference(&key).map_err(|e| {
+        tracing::error!(error = %e, key = %key, "get_preference: db query failed");
+        e.to_string()
+    })
+}
+
+/// IPC command — upsert a preference value (`design-system-004`). Fires a
+/// `DomainEvent::PreferenceChanged { key, value }` on the event bus so the
+/// canvas + HTML overlay can re-render against the newly-active value.
+#[tauri::command]
+fn set_preference(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    state.db.set_preference(&key, &value).map_err(|e| {
+        tracing::error!(error = %e, key = %key, "set_preference: db write failed");
+        e.to_string()
+    })?;
+    state.bus.publish(DomainEvent::PreferenceChanged {
+        key: key.clone(),
+        value: value.clone(),
+    });
+    tracing::info!(key = %key, value = %value, "set_preference: persisted + event published");
+    Ok(())
+}
+
 /// IPC command — ADR-010's frontend log forwarding. `console.*` in the WebView
 /// is routed here so frontend logs land in the same file as core logs.
 #[tauri::command]
@@ -957,6 +1000,8 @@ pub fn run() {
             load_bc_positions,
             save_camera,
             load_camera,
+            get_preference,
+            set_preference,
             log_from_frontend,
             pty_spawn_claude,
             pty_write,

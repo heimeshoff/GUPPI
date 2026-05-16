@@ -1,6 +1,9 @@
 // GUPPI design tokens — the single source of truth for the visual language
-// (design-system-001-styleguide). Every frontend feature task references
-// these; nothing in the canvas should hard-code a colour, size, or duration.
+// (design-system-001-styleguide; brand+status refresh in design-system-003;
+// optional light theme added in design-system-004).
+//
+// Every frontend feature task references these; nothing in the canvas should
+// hard-code a colour, size, or duration.
 //
 // Why a TypeScript object and not only CSS variables: the canvas renders
 // through PixiJS v8 (ADR-003), whose APIs take *numeric* colours (0xrrggbb)
@@ -9,16 +12,42 @@
 // properties for the HTML overlay layer (markdown viewer, command palette,
 // terminal-panel chrome — ADR-003's overlay approach).
 //
-// Convention: `color*` values are PixiJS-ready numbers. `cssVar()` exposes the
-// matching CSS custom property name for DOM consumers.
+// Convention: `color*` values are PixiJS-ready numbers. `cssHex()` exposes the
+// matching CSS hex string for DOM consumers that need to bridge.
+//
+// ─── Light/dark theme (design-system-004) ───────────────────────────────
+//
+// `colorDark` / `colorLight` hold the two palette objects. `color` is the
+// *active* palette, mutated in place by `applyPalette(theme)` on theme flip
+// (Marco's 2026-05-16 design-system-004 sign-off — the light values come
+// verbatim from `references/claude-design-2026-05-16/project/guppi-tokens.css`
+// `[data-theme="light"]` block, with CSS `#rrggbb` translated to numeric
+// `0xrrggbb`).
+//
+// **Why mutate `color` in place rather than re-bind it?** Consumers across
+// the codebase have already imported `color` as a value binding and read
+// `color.frameBorder` literally; an import re-bind would never be observed.
+// Mutating the object's keys (via `Object.assign`) means every consumer sees
+// the new values on the next read — which the PixiJS canvas guarantees by
+// re-calling `renderScene()` on theme change (the trigger is the `theme`
+// `$state` rune in `src/lib/theme.svelte.ts`).
+//
+// Same trick for `statusColor` (whose values derive from `color.statusIdle`
+// etc.) and `glow` (RGBA strings used by the CSS pulse keyframe).
 
 /* ------------------------------------------------------------------ */
-/* Colour — dark mode is the default and only theme shipped now.       */
-/* (Open question resolved: dark-default, light mode deferred. See the */
-/*  styleguide doc for the reasoning.)                                 */
+/* Palette type — the shape both `colorDark` and `colorLight` must     */
+/* satisfy. Derived from `colorDark` so adding a new key forces both   */
+/* palettes to stay in sync (a type error otherwise).                  */
 /* ------------------------------------------------------------------ */
 
-export const color = {
+/* ------------------------------------------------------------------ */
+/* Dark palette — Marco's brand-true 2026-05-16 colours.               */
+/* The default-active palette on first run (per the migration's        */
+/* `('theme','dark')` seed).                                           */
+/* ------------------------------------------------------------------ */
+
+export const colorDark = {
 	/** Canvas backdrop — PixiJS `Application` background. */
 	canvasBg: 0x16161c,
 	/** A faint world grid / vignette tone, if a backdrop texture is added. */
@@ -60,11 +89,6 @@ export const color = {
 	hairlineStrong: 0x3a3b46,
 
 	/* --- Project-as-frame (design-system-002) ------------------------ */
-	// The "frame" is the surrounding region drawn around a project; its
-	// interior contains the project's BCs as bubbles, with intra-project
-	// edges between them by relationship type. Title bar runs across the
-	// top edge and carries project name + status badges + task counts;
-	// it is the project's drag handle + right-click target.
 	/** Frame body — transparent canvas-bg tone so it reads as containment. */
 	frameFill: 0x1a1a22,
 	/** Frame border — brand orange (warm anchor). Reads continuous with the
@@ -84,11 +108,6 @@ export const color = {
 	frameEmptyText: 0x6e6e80,
 
 	/* --- BC bubble (inside-frame variant — design-system-002) -------- */
-	// Distinct from the legacy orbit `bcFill` / `bcBorder` only by the
-	// intent (sits *inside* the frame). Border updated to brand blue in
-	// design-system-003 so the BC bubble reads cool against the warm
-	// project frame. `bcInsidePillFill` is the small task-counts pill that
-	// sits inline with the BC title at default zoom.
 	bcInsideFill: 0x20242b,
 	bcInsideBorder: 0x25abfe,
 	bcInsideText: 0xe6e6ec,
@@ -96,12 +115,6 @@ export const color = {
 	bcInsidePillFill: 0x2a2f38,
 
 	/* --- Intra-project edges (design-system-002) --------------------- */
-	// Single neutral palette (resolved default: geometry, not hue, carries
-	// the type). All four resolve to `hairlineStrong` since design-system-003
-	// (was `fgMuted` — but `fgMuted` is muted *text*; edges deserve their own
-	// hairline hue). The tokens exist as named aliases so consumers spell
-	// intent at the call site rather than reaching for `hairlineStrong`
-	// directly. Hover/focus highlight uses `edgeHighlight` (above).
 	/** Customer-supplier (directional) — line + arrowhead at downstream end. */
 	edgeUpstream: 0x3a3b46,
 	/** Mutual / shared-kernel / partnership — line, no arrowhead. */
@@ -117,12 +130,6 @@ export const color = {
 	focusRing: 0xffb05a,
 
 	/* --- Status palette (colourblind-friendly) ----------------------- */
-	// Chosen to stay distinguishable under deuteranopia/protanopia: the four
-	// states differ in HUE *and* in lightness, and each pairs with a distinct
-	// glyph (see styleguide) so colour is never the only signal. The palette
-	// was revised in design-system-003 to lock in Marco's brand hues: blue
-	// for "running" and orange for "missing" both pull double duty as brand
-	// accents (matching `frameBorder` / `bcBorder`).
 	statusIdle: 0x7b7c8a, // plain grey — "nothing happening"
 	statusRunning: 0x25abfe, // brand blue — "work in progress"
 	statusBlocked: 0xe85454, // red — "blocked on a question"
@@ -131,16 +138,118 @@ export const color = {
 	/** Text colour that sits *on top* of a status fill (badges). */
 	statusText: 0x10131a,
 
-	/** Voice-state indicator — the ambient corner glyph.
-	 *  `voiceListening` matches `statusRunning` (brand blue) so listening
-	 *  reads as "an agent is working" — voice is just another running
-	 *  process. `voiceMuted` reads on the neutral `fgMuted` hue with a
-	 *  slash glyph (see the design's `guppi-voice-views.jsx`, §4); the
-	 *  earlier magenta-pink read as "alarm" which is wrong for muted. */
+	/** Voice-state indicator — the ambient corner glyph. */
 	voiceIdle: 0x5a5a68, // mic available, not listening
 	voiceListening: 0x25abfe, // actively listening — matches statusRunning blue
 	voiceMuted: 0x6e6e80 // mic unavailable / muted — neutral fgMuted
 } as const;
+
+export type Palette = { -readonly [K in keyof typeof colorDark]: number };
+
+/* ------------------------------------------------------------------ */
+/* Light palette — design-system-004. Values lifted verbatim from      */
+/* `references/claude-design-2026-05-16/project/guppi-tokens.css`'s    */
+/* `[data-theme="light"]` block, with `#rrggbb` translated to numeric  */
+/* `0xrrggbb` for PixiJS consumers. Slightly darker accents than the   */
+/* brand-orange/-blue dark anchors so they read at AA contrast on a    */
+/* near-white surface (verified against the design's prototype).       */
+/* ------------------------------------------------------------------ */
+
+export const colorLight: Palette = {
+	// Surfaces — cool, slightly off-white.
+	canvasBg: 0xf4f5f8,
+	canvasBgRaised: 0xebedf2,
+
+	// Project tile — same brand-orange border for hierarchy continuity;
+	// fill is the design's `surface-1` (white) so the tile reads raised
+	// against the near-white canvas backdrop.
+	tileFill: 0xffffff,
+	tileBorder: 0xff8b00,
+	tileText: 0x15161c,
+	tileTextMuted: 0x4a4b58,
+
+	// BC node — cool secondary. The light palette deepens brand blue to
+	// `#1d8cd4` for AA contrast against the design's `surface-2` BC fill.
+	bcFill: 0xf6f7fa,
+	bcBorder: 0x1d8cd4,
+	bcText: 0x15161c,
+	bcTextMuted: 0x4a4b58,
+
+	// Edges (orbit baseline) — neutral mid-grey on white.
+	edge: 0xc8cad3,
+	edgeHighlight: 0xff8b00,
+
+	// Muted text / structural hairlines.
+	fgMuted: 0x6b6c7a,
+	hairlineStrong: 0xc8cad3,
+
+	// Project-as-frame: white frame on near-white canvas, with the same
+	// brand-orange border as dark. Header tone uses `surface-2` for the
+	// raised feel; divider is `hairline` from the design's light block.
+	frameFill: 0xffffff,
+	frameBorder: 0xff8b00,
+	frameHeaderFill: 0xf6f7fa,
+	frameHeaderDivider: 0xe2e4eb,
+	frameTitleText: 0x15161c,
+	frameTitleTextMuted: 0x4a4b58,
+	frameEmptyText: 0x6b6c7a,
+
+	// BC bubble (inside-frame variant). Bubble fill = `surface-2`; border =
+	// the same deepened brand blue. Pill = `surface-4` for the on-white
+	// hovered/raised feel.
+	bcInsideFill: 0xf6f7fa,
+	bcInsideBorder: 0x1d8cd4,
+	bcInsideText: 0x15161c,
+	bcInsideTextMuted: 0x4a4b58,
+	bcInsidePillFill: 0xebedf2,
+
+	// Intra-project edges — single neutral, geometry distinguishes type.
+	// Resolves to the light palette's `hairline-strong` (`#c8cad3`).
+	edgeUpstream: 0xc8cad3,
+	edgeMutual: 0xc8cad3,
+	edgeACL: 0xc8cad3,
+	edgeConformist: 0xc8cad3,
+
+	// Focus ring — brand orange on light (the design uses
+	// `--g-focus-ring: #ff8b00` in the light block; the warm `#ffb05a` of
+	// dark would wash out on white).
+	focusRing: 0xff8b00,
+
+	// Status — same hues, slightly darker for AA on white. The four
+	// values are sized for AA contrast against the light frame body:
+	//   • #8a8d99 (idle grey)   ~5.0:1  on #ffffff
+	//   • #1d8cd4 (running blue) ~4.6:1 on #ffffff
+	//   • #d04545 (blocked red)  ~4.9:1 on #ffffff
+	//   • #d97500 (missing orng) ~4.5:1 on #ffffff
+	// Verified against the design's [data-theme="light"] block (acceptance
+	// criterion #6 — AA contrast on light surface).
+	statusIdle: 0x8a8d99,
+	statusRunning: 0x1d8cd4,
+	statusBlocked: 0xd04545,
+	statusMissing: 0xd97500,
+
+	// Status text sits on top of a status fill (badges). On dark, the
+	// fills are mid-saturation against a dark surface, so dark text on
+	// the fill reads. On light the fills are the same hues, just deeper,
+	// so dark text still reads (we keep the dark glyph colour). Verified
+	// in the prototype.
+	statusText: 0x10131a,
+
+	// Voice — listening matches `statusRunning` blue; muted is `fgMuted`.
+	voiceIdle: 0x8a8d99,
+	voiceListening: 0x1d8cd4,
+	voiceMuted: 0x6b6c7a
+};
+
+/* ------------------------------------------------------------------ */
+/* Active palette — `color`. Mutated in place by `applyPalette()`.     */
+/* Initialised to a (mutable) copy of `colorDark` so consumers can     */
+/* keep reading `color.frameBorder` literally; the reactivity trigger  */
+/* is the `theme` `$state` rune in `theme.svelte.ts`, which re-calls   */
+/* `renderScene()` after the mutation lands.                           */
+/* ------------------------------------------------------------------ */
+
+export const color: Palette = { ...colorDark };
 
 /* ------------------------------------------------------------------ */
 /* Glow — RGBA strings used by the running-badge pulse + status halos. */
@@ -152,12 +261,27 @@ export const color = {
 /* so the CSS mirror is a 1:1 string copy.                             */
 /* ------------------------------------------------------------------ */
 
-export const glow = {
+export const glowDark = {
 	statusIdle: 'rgba(123,124,138,.18)',
 	statusRunning: 'rgba(37,171,254,.22)',
 	statusBlocked: 'rgba(232,84,84,.22)',
 	statusMissing: 'rgba(255,139,0,.22)'
 } as const;
+
+export type GlowPalette = { -readonly [K in keyof typeof glowDark]: string };
+
+/** Glow halos for the light theme — slightly tightened alphas to match the
+ *  design's `[data-theme="light"]` block. The RGB matches each light status
+ *  colour so a pulse on a `running` BC reads "this hue, slightly bigger". */
+export const glowLight: GlowPalette = {
+	statusIdle: 'rgba(138,141,153,.16)',
+	statusRunning: 'rgba(29,140,212,.20)',
+	statusBlocked: 'rgba(208,69,69,.20)',
+	statusMissing: 'rgba(217,117,0,.22)'
+};
+
+/** Active glow palette (mutated in place by `applyPalette()`). */
+export const glow: GlowPalette = { ...glowDark };
 
 /* ------------------------------------------------------------------ */
 /* Typography — one family, three sizes (per the task scope).          */
@@ -221,71 +345,38 @@ export const shape = {
 	badgeMinWidth: 18,
 
 	/* --- Project frame (design-system-002) --------------------------- */
-	// The frame contains a project's BCs. Border is intentionally thinner
-	// than a tile (1px vs 2px) so the frame reads as a boundary, not as a
-	// peer of the BC bubbles inside it. Corner radius matches `radiusTile`
-	// so frames feel "project-shaped" continuous with the orbit baseline.
-	/** Frame corner radius (resolved default: 12 — same as `radiusTile`). */
 	radiusFrame: 12,
-	/** Frame border weight — 1 keeps it a quiet container. */
 	borderWidthFrame: 1,
-	/** Frame title-bar height — 36 (design-system-003). Accommodates the
-	 *  drag-handle dots + project name + per-state mini badges + the
-	 *  task-count row in one bar without crowding. */
 	frameHeaderHeight: 36,
-	/** Frame body inner padding — distance from frame edge to BC layout area. */
 	framePadding: 16,
-	/** Minimum frame inner width / height when auto-fitting empty or sparse
-	 *  content. Below these, the frame looks too small to read as a region. */
 	frameMinInnerWidth: 320,
 	frameMinInnerHeight: 200,
 
 	/* --- BC bubble (inside-frame variant — design-system-002) -------- */
-	// Denser than the orbit BC node (resolved default). Title + counts pill
-	// fit in one row at default zoom; height drops accordingly. Corner
-	// radius drops to `spacing.sm` (8) — smaller than the orbit BC's 10 —
-	// so the inside-frame variant reads as a sibling-cluster element, not
-	// as a peer of the surrounding frame. Dimensions revised from
-	// 160×56 → 188×60 in design-system-003 to give the title + pill row
-	// more breathing room without breaking the dense-canvas read.
 	bcInsideWidth: 188,
 	bcInsideHeight: 60,
 	radiusBcInside: 8,
-	/** Inline task-counts pill that sits beside the BC name at default zoom. */
 	bcInsidePillHeight: 16,
 	bcInsidePillMinWidth: 32,
 	bcInsidePillRadius: 8,
 
 	/* --- Intra-project edge geometry (design-system-002) ------------- */
-	/** Default edge weight for upstream/downstream + mutual + ACL. */
 	edgeWeight: 2,
-	/** Conformist — visually lighter so it reads as "downstream defers". */
 	edgeWeightConformist: 1,
-	/** Arrowhead size at the downstream end of a directional edge. */
 	arrowheadLength: 10,
 	arrowheadWidth: 8,
-	/** ACL notch — a small triangle drawn at the midpoint of an ACL edge.
-	 *  Resolved default: a triangle (vs zig-zag or hover-only label) keeps
-	 *  the meaning visible at zoom-out without adding chrome. */
 	aclNotchSize: 10
 } as const;
 
 /* ------------------------------------------------------------------ */
-/* Motion — the animation budget. Open question resolved: "restrained" */
-/* — short, eased transitions for navigation; one slow ambient pulse   */
-/* for the single "running" signal; nothing else moves. See styleguide.*/
+/* Motion — the animation budget.                                      */
 /* ------------------------------------------------------------------ */
 
 export const motion = {
-	/** Camera transitions — zoom-to-fit, focus-on-tile. */
 	durationCamera: 320, // ms
-	/** Hover / focus affordance fade. */
 	durationAffordance: 120, // ms
-	/** The "running" badge pulse — one full cycle. Slow, so it reads as ambient. */
 	durationPulse: 1600, // ms
-	/** Standard easing — ease-out for navigation, feels responsive. */
 	easeStandard: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
-	/** Pulse easing — symmetric in/out so the breathing looks even. */
 	easePulse: 'cubic-bezier(0.45, 0, 0.55, 1)'
 } as const;
 
@@ -295,17 +386,20 @@ export const motion = {
 
 export type TaskState = 'idle' | 'running' | 'blocked' | 'missing';
 
-/** PixiJS-ready fill colour for a task/tile status. */
+/** PixiJS-ready fill colour for a task/tile status. Mutated in place by
+ *  `applyPalette()` — see the theme-flip explanation at the top of this
+ *  module. */
 export const statusColor: Record<TaskState, number> = {
-	idle: color.statusIdle,
-	running: color.statusRunning,
-	blocked: color.statusBlocked,
-	missing: color.statusMissing
+	idle: colorDark.statusIdle,
+	running: colorDark.statusRunning,
+	blocked: colorDark.statusBlocked,
+	missing: colorDark.statusMissing
 };
 
 /**
  * The glyph that pairs with each status. Colour is never the sole signal
  * (colourblind-friendly requirement) — the glyph carries the meaning too.
+ * Theme-invariant.
  */
 export const statusGlyph: Record<TaskState, string> = {
 	idle: '○', // ○  hollow circle — at rest
@@ -314,13 +408,36 @@ export const statusGlyph: Record<TaskState, string> = {
 	missing: '✕' // ✕  cross — absent
 };
 
-/** Human-readable label for a status (badge tooltip / hint). */
+/** Human-readable label for a status (badge tooltip / hint). Theme-invariant. */
 export const statusLabel: Record<TaskState, string> = {
 	idle: 'Idle',
 	running: 'Running',
 	blocked: 'Blocked on a question',
 	missing: 'Missing'
 };
+
+/* ------------------------------------------------------------------ */
+/* Theme flip — design-system-004.                                     */
+/*                                                                    */
+/* `applyPalette(theme)` mutates the active `color`, `statusColor`,    */
+/* and `glow` exports in place so consumers reading `color.frameBorder`*/
+/* see the new palette on the next read. The PixiJS canvas pairs this  */
+/* with an explicit `renderScene()` call on the next frame             */
+/* (`theme.svelte.ts` triggers via its `$state` rune subscription).    */
+/* ------------------------------------------------------------------ */
+
+export type Theme = 'dark' | 'light';
+
+export function applyPalette(theme: Theme): void {
+	const palette = theme === 'light' ? colorLight : colorDark;
+	const glows = theme === 'light' ? glowLight : glowDark;
+	Object.assign(color, palette);
+	Object.assign(glow, glows);
+	statusColor.idle = palette.statusIdle;
+	statusColor.running = palette.statusRunning;
+	statusColor.blocked = palette.statusBlocked;
+	statusColor.missing = palette.statusMissing;
+}
 
 /* ------------------------------------------------------------------ */
 /* CSS-variable bridge — for the HTML overlay layer (ADR-003).         */

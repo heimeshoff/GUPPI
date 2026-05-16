@@ -186,6 +186,24 @@ export async function loadCamera(): Promise<CameraState | null> {
 	}
 }
 
+/** Read one cross-session user preference by key from the v5 SQLite
+ *  `preferences` table (`design-system-004-light-theme`). Returns `null`
+ *  when the key has never been set — the frontend defaults in that case.
+ *  Theme is the first inhabitant; future preferences (font scale,
+ *  reduced-motion override, etc.) reuse the same call. */
+export async function getPreference(key: string): Promise<string | null> {
+	const result = await invoke<string | null>('get_preference', { key });
+	return result;
+}
+
+/** Upsert a cross-session user preference (`design-system-004-light-theme`).
+ *  The backend persists into SQLite and publishes a `PreferenceChanged`
+ *  domain event on the bus so any subscriber (the PixiJS canvas, the HTML
+ *  overlay layer) can react without polling. */
+export function setPreference(key: string, value: string): Promise<void> {
+	return invoke('set_preference', { key, value });
+}
+
 /** Forward a frontend log line into the core's tracing log file (ADR-010). */
 export function logToCore(
 	level: 'info' | 'warn' | 'error' | 'debug',

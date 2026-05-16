@@ -169,4 +169,11 @@ export type DomainEvent =
 	 * not fire this event (`project-registry-004`).
 	 */
 	| { kind: 'bc_relationships_changed'; project_id: number; bc: string }
-	| { kind: 'resync_required'; project_id: number };
+	| { kind: 'resync_required'; project_id: number }
+	/**
+	 * A cross-session user preference was set (`design-system-004-light-theme`).
+	 * Fired by the `set_preference` IPC. Theme is the first key; future
+	 * preferences (font scale, reduced-motion override, etc.) reuse this
+	 * generic shape. Consumers ignore keys they don't recognise.
+	 */
+	| { kind: 'preference_changed'; key: string; value: string };
