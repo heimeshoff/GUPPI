@@ -1,3 +1,9 @@
+---
+name: infrastructure
+classification: generic
+relationships: []
+---
+
 # infrastructure
 
 ## Purpose

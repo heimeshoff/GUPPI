@@ -124,6 +124,52 @@ export async function loadTilePosition(projectId: number): Promise<Point | null>
 	return result ? { x: result[0], y: result[1] } : null;
 }
 
+/** Persist a BC bubble's position inside its project frame
+ * (`project-registry-004`, consumed by `canvas-007`). The drag-to-place loop
+ * fires this on drag end. Preserved through ADR-005 soft-delete (the 30-day
+ * retention window covers `bc_positions` the same way it covers
+ * `tile_positions`). */
+export function saveBcPosition(
+	projectId: number,
+	bcName: string,
+	pos: Point
+): Promise<void> {
+	return invoke('save_bc_position', {
+		projectId,
+		bcName,
+		x: pos.x,
+		y: pos.y
+	});
+}
+
+/** Read back one BC's persisted position, if any (`project-registry-004`). */
+export async function loadBcPosition(
+	projectId: number,
+	bcName: string
+): Promise<Point | null> {
+	const result = await invoke<[number, number] | null>('load_bc_position', {
+		projectId,
+		bcName
+	});
+	return result ? { x: result[0], y: result[1] } : null;
+}
+
+/** Batch-load every persisted BC position for a project — the
+ * project-frame paint's single round-trip on mount (`project-registry-004`,
+ * `canvas-007`). Returns a `Map<bc_name, Point>`. BCs without a saved
+ * position are simply absent from the result; the canvas falls back to its
+ * layout default for those. */
+export async function loadBcPositions(projectId: number): Promise<Map<string, Point>> {
+	const result = await invoke<Record<string, [number, number]>>('load_bc_positions', {
+		projectId
+	});
+	const out = new Map<string, Point>();
+	for (const [name, [x, y]] of Object.entries(result)) {
+		out.set(name, { x, y });
+	}
+	return out;
+}
+
 /** Persist the camera (pan + zoom) as a JSON blob in `app_state` (ADR-004). */
 export function saveCamera(camera: CameraState): Promise<void> {
 	return invoke('save_camera', { camera: JSON.stringify(camera) });

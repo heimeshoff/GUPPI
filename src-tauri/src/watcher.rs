@@ -23,11 +23,13 @@
 //! paired — they stay separate `TaskAdded` / `TaskRemoved`.
 
 use crate::events::{DomainEvent, EventBus};
+use crate::project::{parse_relationships, Relationship};
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// ADR-008: long enough to coalesce a burst from one logical change, short
@@ -58,6 +60,16 @@ pub struct AgentheimWatcher {
     >,
 }
 
+/// Per-project cache of the last parsed `relationships:` block for each BC.
+/// `project-registry-004` consults this on every README write so the
+/// `BcRelationshipsChanged` event only fires when the parsed set actually
+/// differs from the cached value — prose-only edits do not trigger a relayout.
+///
+/// Lives inside the watcher closure (one cache per `AgentheimWatcher`) so the
+/// state is naturally scoped to the project's lifetime and is dropped with the
+/// watcher.
+type RelationshipsCache = HashMap<String, Vec<Relationship>>;
+
 impl AgentheimWatcher {
     /// Begin watching `<project>/.agentheim/` recursively. Every debounced
     /// batch of filesystem events is correlated into fine-grained domain
@@ -78,6 +90,15 @@ impl AgentheimWatcher {
         }
 
         let agentheim_root = agentheim.clone();
+        // `project-registry-004`: per-project cache of the parsed
+        // `relationships:` block, keyed by BC name. The closure mutates it on
+        // every README write; deep-equal against the previous value decides
+        // whether to fire `BcRelationshipsChanged`. Initialised lazily — empty
+        // on first run, so a fresh-watcher's first README write fires the event
+        // iff the BC actually declares any relationships. (Subsequent prose
+        // edits don't.)
+        let relationships_cache: Arc<Mutex<RelationshipsCache>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let mut debouncer = new_debouncer(DEBOUNCE_WINDOW, None, move |result: DebounceEventResult| {
             // The debouncer hands us either a coalesced batch of events or a
             // batch of errors. A watched directory vanishing shows up here as
@@ -92,6 +113,28 @@ impl AgentheimWatcher {
                         events.iter().map(|e| e.event.clone()).collect();
                     for event in correlate(project_id, &agentheim_root, &raw) {
                         bus.publish(event);
+                    }
+                    // `project-registry-004`: scan the same batch for BC
+                    // README writes and fire `BcRelationshipsChanged` for each
+                    // BC whose parsed relationships set actually changed.
+                    let bcs_touched = readme_touched_bcs(&agentheim_root, &raw);
+                    if !bcs_touched.is_empty() {
+                        let mut cache = relationships_cache.lock().unwrap();
+                        for bc in bcs_touched {
+                            let parsed =
+                                reparse_bc_relationships(&agentheim_root, &bc);
+                            let changed = match cache.get(&bc) {
+                                Some(prev) => prev != &parsed,
+                                None => !parsed.is_empty(),
+                            };
+                            if changed {
+                                cache.insert(bc.clone(), parsed);
+                                bus.publish(DomainEvent::BcRelationshipsChanged {
+                                    project_id,
+                                    bc,
+                                });
+                            }
+                        }
                     }
                 }
                 Ok(_) => {}
@@ -130,6 +173,10 @@ enum PathKind {
     },
     /// A bounded-context directory: `contexts/<bc>`.
     Bc { bc: String },
+    /// A bounded-context README: `contexts/<bc>/README.md`. Surfaced separately
+    /// from generic `Other` so `project-registry-004`'s relationship-change
+    /// detector can spot README writes without re-classifying every path.
+    BcReadme { bc: String },
     /// Anything else under `.agentheim/` that does not change task placement
     /// (vision.md, INDEX.md, concept pages, the `contexts/` dir itself, …).
     Other,
@@ -154,6 +201,11 @@ fn classify(agentheim_root: &Path, path: &Path) -> PathKind {
         ["contexts", bc] => PathKind::Bc {
             bc: (*bc).to_string(),
         },
+        // contexts/<bc>/README.md — relationships frontmatter lives here
+        // (`project-registry-004`).
+        ["contexts", bc, "README.md"] => PathKind::BcReadme {
+            bc: (*bc).to_string(),
+        },
         // contexts/<bc>/<state>/<file>.md
         ["contexts", bc, state, file]
             if TASK_STATES.contains(state) && file.ends_with(".md") =>
@@ -166,6 +218,63 @@ fn classify(agentheim_root: &Path, path: &Path) -> PathKind {
         }
         _ => PathKind::Other,
     }
+}
+
+/// Scan a debounced batch for any `contexts/<bc>/README.md` writes (create,
+/// modify, or rename). Returns the unique set of BC names whose README was
+/// touched in this batch. Used by the watcher's relationship-change detector
+/// (`project-registry-004`).
+///
+/// We include `Modify(Data)` and `Modify(Any)` here because the standard
+/// editor-save path is a content change, not a create — and the task is
+/// explicit that prose-only README edits should be cheap (the cache + parse
+/// short-circuits) but README writes that change `relationships:` MUST fire
+/// the event.
+fn readme_touched_bcs(agentheim_root: &Path, events: &[Event]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for event in events {
+        let touches_content = matches!(
+            event.kind,
+            EventKind::Create(_)
+                | EventKind::Modify(_)
+                | EventKind::Remove(_)
+        );
+        if !touches_content {
+            continue;
+        }
+        for path in &event.paths {
+            if let PathKind::BcReadme { bc } = classify(agentheim_root, path) {
+                if !out.contains(&bc) {
+                    out.push(bc);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Re-parse one BC's `relationships:` frontmatter from disk. Wraps
+/// `project::parse_relationships` with the watcher's sibling-name discovery
+/// (the parser needs the list of sibling BCs in this project to drop
+/// cross-project `to` references).
+///
+/// Errors during the sibling enumeration are swallowed: the watcher cannot
+/// give up on a project just because `contexts/` momentarily disappears —
+/// returning an empty vec degrades gracefully (the cache will simply see
+/// "nothing changed" or "everything emptied", and the canvas will catch up on
+/// the next legitimate change).
+fn reparse_bc_relationships(agentheim_root: &Path, bc_name: &str) -> Vec<Relationship> {
+    let contexts_dir = agentheim_root.join("contexts");
+    let sibling_names: Vec<String> = match std::fs::read_dir(&contexts_dir) {
+        Ok(read) => read
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let bc_dir = contexts_dir.join(bc_name);
+    parse_relationships(&bc_dir, bc_name, &sibling_names)
 }
 
 /// Split one debounced `notify::Event` into the paths that *appeared* and the
@@ -224,7 +333,10 @@ fn correlate(project_id: i64, agentheim_root: &Path, events: &[Event]) -> Vec<Do
                         appeared_bcs.push(bc);
                     }
                 }
-                PathKind::Other => {}
+                // README writes are handled by `readme_touched_bcs` +
+                // relationship-change detection in the watcher closure, not
+                // by `correlate` — they do not move tasks or add/remove BCs.
+                PathKind::BcReadme { .. } | PathKind::Other => {}
             }
         }
         for path in removed {
@@ -237,7 +349,7 @@ fn correlate(project_id: i64, agentheim_root: &Path, events: &[Event]) -> Vec<Do
                         removed_bcs.push(bc);
                     }
                 }
-                PathKind::Other => {}
+                PathKind::BcReadme { .. } | PathKind::Other => {}
             }
         }
     }
@@ -598,6 +710,219 @@ mod tests {
                 other => panic!("unexpected event: {other:?}"),
             }
         }
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- `project-registry-004`: relationships change-detection cache ----
+
+    /// Make a Modify(Data) event for one path — the most common
+    /// editor-save shape.
+    fn modify_data(path: PathBuf) -> Event {
+        Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
+            paths: vec![path],
+            attrs: Default::default(),
+        }
+    }
+
+    #[test]
+    fn readme_touched_bcs_returns_bc_for_create_on_bc_readme() {
+        let root = Path::new("/fake/.agentheim");
+        let path = root.join("contexts").join("canvas").join("README.md");
+        let events = vec![create(path)];
+        assert_eq!(readme_touched_bcs(root, &events), vec!["canvas".to_string()]);
+    }
+
+    #[test]
+    fn readme_touched_bcs_returns_bc_for_modify_on_bc_readme() {
+        // The standard editor-save path is a content modification.
+        let root = Path::new("/fake/.agentheim");
+        let path = root.join("contexts").join("voice").join("README.md");
+        let events = vec![modify_data(path)];
+        assert_eq!(readme_touched_bcs(root, &events), vec!["voice".to_string()]);
+    }
+
+    #[test]
+    fn readme_touched_bcs_dedupes_multiple_events_for_the_same_bc() {
+        // A burst of modify events on the same README (editor save + atomic
+        // rename combo) yields exactly one BC in the result.
+        let root = Path::new("/fake/.agentheim");
+        let path = root.join("contexts").join("canvas").join("README.md");
+        let events = vec![modify_data(path.clone()), modify_data(path)];
+        assert_eq!(readme_touched_bcs(root, &events), vec!["canvas".to_string()]);
+    }
+
+    #[test]
+    fn readme_touched_bcs_ignores_non_readme_writes() {
+        // A task-file write, a vision.md edit, an INDEX.md edit — none of these
+        // are README writes, so none surface here.
+        let root = Path::new("/fake/.agentheim");
+        let task = root.join("contexts").join("canvas").join("backlog").join("c-1.md");
+        let vision = root.join("vision.md");
+        let index = root.join("contexts").join("canvas").join("INDEX.md");
+        let events = vec![
+            modify_data(task),
+            modify_data(vision),
+            modify_data(index),
+        ];
+        assert!(
+            readme_touched_bcs(root, &events).is_empty(),
+            "non-README writes must not be picked up"
+        );
+    }
+
+    #[test]
+    fn reparse_bc_relationships_returns_empty_for_missing_readme() {
+        // No README on disk → empty Vec, no error.
+        let dir = scratch_project();
+        // contexts/canvas exists but has no README.md.
+        let agentheim = dir.join(".agentheim");
+        assert!(reparse_bc_relationships(&agentheim, "canvas").is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reparse_bc_relationships_picks_up_a_sibling_bc_reference() {
+        // Lay out two BCs in the project so the sibling-name discovery in
+        // `reparse_bc_relationships` finds the `to:` target.
+        let dir = scratch_project();
+        let agentheim = dir.join(".agentheim");
+        fs::create_dir_all(agentheim.join("contexts").join("project-registry")).unwrap();
+        let canvas_readme = agentheim.join("contexts").join("canvas").join("README.md");
+        fs::write(
+            &canvas_readme,
+            "---\n\
+             relationships:\n  - to: project-registry\n    type: customer-supplier\n    direction: upstream\n\
+             ---\n# canvas\n",
+        )
+        .unwrap();
+
+        let parsed = reparse_bc_relationships(&agentheim, "canvas");
+        assert_eq!(parsed.len(), 1, "got {parsed:?}");
+        assert_eq!(parsed[0].to, "project-registry");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn relationship_change_fires_event_only_when_parsed_set_actually_changes() {
+        // The load-bearing acceptance criterion: writes that change
+        // `relationships:` MUST fire `BcRelationshipsChanged`; writes that
+        // don't (prose-only edits) MUST NOT.
+        let dir = scratch_project();
+        let agentheim = dir.join(".agentheim");
+        // Two BCs so the parser has a sibling target.
+        fs::create_dir_all(agentheim.join("contexts").join("project-registry")).unwrap();
+
+        let canvas_readme = agentheim.join("contexts").join("canvas").join("README.md");
+        // Seed the README BEFORE the watcher arms so the cache starts populated
+        // with whatever's on disk — actually no: the cache starts empty by
+        // construction, and the first write should fire iff the parsed set
+        // is non-empty. To keep this test pure to the "change-detection"
+        // behaviour, we seed the README, arm the watcher, then make a
+        // prose-only edit (no fire), then a relationship-changing edit (fires).
+        fs::write(
+            &canvas_readme,
+            "---\nrelationships:\n  - to: project-registry\n    type: customer-supplier\n    direction: upstream\n---\n# canvas\n",
+        )
+        .unwrap();
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let _watcher = AgentheimWatcher::start(7, &dir, bus).unwrap();
+
+        // Let the watcher arm.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // First write: rewrite the SAME file with the SAME relationships set
+        // (just touching the prose body). The cache starts empty, so the
+        // first event MAY fire (the parser produces a non-empty set, the
+        // cache says "previous was empty/missing => changed"). To make the
+        // test deterministic, treat the first event as "establish the cache"
+        // and the second prose-only edit as the real prose-only assertion.
+
+        // We re-write with the SAME relationships block + slightly different
+        // prose. The watcher correlates this as a Modify on the README.
+        fs::write(
+            &canvas_readme,
+            "---\nrelationships:\n  - to: project-registry\n    type: customer-supplier\n    direction: upstream\n---\n# canvas\n\nPROSE A.\n",
+        )
+        .unwrap();
+
+        // Drain whatever the first edit produces (we expect at most one
+        // `BcRelationshipsChanged` — the cache priming).
+        let mut saw_initial_change = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Ok(DomainEvent::BcRelationshipsChanged { project_id, bc })) => {
+                    assert_eq!(project_id, 7);
+                    assert_eq!(bc, "canvas");
+                    saw_initial_change = true;
+                }
+                Ok(Ok(_)) => continue,
+                _ => break,
+            }
+        }
+        // The initial write should have populated the cache. (We don't fail
+        // hard if it didn't fire — depending on platform timing the seed
+        // might have been treated as identical to "no previous"; the next
+        // assertion is the load-bearing one.)
+        let _ = saw_initial_change;
+
+        // Now do a PURE PROSE edit — same `relationships:` block, different
+        // body. This MUST NOT fire `BcRelationshipsChanged`.
+        fs::write(
+            &canvas_readme,
+            "---\nrelationships:\n  - to: project-registry\n    type: customer-supplier\n    direction: upstream\n---\n# canvas\n\nPROSE B (totally different).\n",
+        )
+        .unwrap();
+
+        // Wait through the debounce window plus generous slack. Any
+        // `BcRelationshipsChanged` here would be a test failure.
+        let prose_deadline = tokio::time::Instant::now() + Duration::from_millis(900);
+        loop {
+            match tokio::time::timeout_at(prose_deadline, rx.recv()).await {
+                Ok(Ok(DomainEvent::BcRelationshipsChanged { .. })) => {
+                    panic!("prose-only README edit must not fire BcRelationshipsChanged");
+                }
+                Ok(Ok(_)) => continue,
+                _ => break,
+            }
+        }
+
+        // Now do a real relationship change — replace the to: target with a
+        // different one. (We don't need a real second sibling; the parser
+        // simply drops the unknown target with a warning, yielding an empty
+        // set — which IS a change from the previous non-empty set.) This
+        // MUST fire `BcRelationshipsChanged`.
+        fs::write(
+            &canvas_readme,
+            "---\nrelationships: []\n---\n# canvas\n",
+        )
+        .unwrap();
+
+        let mut saw_real_change = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Ok(DomainEvent::BcRelationshipsChanged { project_id, bc })) => {
+                    assert_eq!(project_id, 7);
+                    assert_eq!(bc, "canvas");
+                    saw_real_change = true;
+                    break;
+                }
+                Ok(Ok(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(
+            saw_real_change,
+            "a real change in the parsed relationships must fire BcRelationshipsChanged"
+        );
 
         fs::remove_dir_all(&dir).ok();
     }

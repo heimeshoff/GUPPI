@@ -31,7 +31,12 @@ function bcNode(snapshot: ProjectSnapshot, name: string): BcSnapshot {
 	if (existing) return existing;
 	const created: BcSnapshot = {
 		name,
-		task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 }
+		task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+		// `project-registry-004`: lazily-created BC nodes start with no
+		// relationships — the canvas will receive a `bc_relationships_changed`
+		// event once the README is written, or a `resync_required` lag
+		// signal will re-hydrate the field from `get_project`.
+		relationships: []
 	};
 	snapshot.bcs.push(created);
 	// Keep BC ordering stable and matching the Rust `get_project` snapshot

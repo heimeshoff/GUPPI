@@ -1,3 +1,11 @@
+---
+name: voice
+classification: core
+relationships:
+  - to: infrastructure
+    type: shared-kernel
+---
+
 # voice
 
 ## Purpose

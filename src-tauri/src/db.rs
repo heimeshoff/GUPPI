@@ -52,7 +52,14 @@ pub const DEFAULT_SCAN_DEPTH_CAP: u32 = 3;
 /// resolves it (so the GC sweep and per-id cleanup paths can look it up).
 /// `Db::open` sweeps rows older than `RETENTION_DAYS` after the migration
 /// runs.
-pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+///
+/// v4 (`project-registry-004`): adds the `bc_positions` table —
+/// `(project_id, bc_name) -> (x, y)`. `ON DELETE CASCADE` on `project_id`
+/// matches `tile_positions` semantics: BC positions vanish with a hard-
+/// deleted project (the 30-day GC sweep on `projects` is the cascade trigger
+/// for soft-delete; the user-initiated remove preserves BC positions through
+/// the retention window just as it does tile positions).
+pub const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 /// ADR-005's 30-day retention window for soft-deleted projects — `remove_project`
 /// flags a row with `deleted_at`, the row stays for `RETENTION_DAYS` so a
@@ -212,6 +219,71 @@ impl Db {
             Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
             None => Ok(None),
         }
+    }
+
+    /// Persist a BC's position inside its project frame (`project-registry-004`,
+    /// consumed by `canvas-007`). Upserts on `(project_id, bc_name)` — the user
+    /// drags a BC bubble, this records the new spot, and the next
+    /// `load_bc_position(s)` returns it.
+    ///
+    /// Soft-delete is **not** consulted here. The caller (the IPC handler) only
+    /// fires this on a drag inside a live project frame; a stale call against a
+    /// soft-deleted project_id would simply be FK-rejected, which surfaces as
+    /// `DbError::Sqlite` to the IPC layer.
+    pub fn save_bc_position(
+        &self,
+        project_id: i64,
+        bc_name: &str,
+        x: f64,
+        y: f64,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO bc_positions (project_id, bc_name, x, y)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(project_id, bc_name) DO UPDATE SET x = ?3, y = ?4",
+            (project_id, bc_name, x, y),
+        )?;
+        Ok(())
+    }
+
+    /// Read one BC's persisted position, if any. `None` for a BC that was
+    /// never dragged — the canvas falls back to its layout default.
+    pub fn bc_position(
+        &self,
+        project_id: i64,
+        bc_name: &str,
+    ) -> Result<Option<(f64, f64)>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT x, y FROM bc_positions WHERE project_id = ?1 AND bc_name = ?2",
+        )?;
+        let mut rows = stmt.query((project_id, bc_name))?;
+        match rows.next()? {
+            Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
+            None => Ok(None),
+        }
+    }
+
+    /// Every persisted BC position for a project, keyed by `bc_name`. Used by
+    /// the canvas's project-frame paint to hydrate all BC bubble positions in
+    /// one round-trip (instead of N `load_bc_position` calls).
+    pub fn bc_positions(
+        &self,
+        project_id: i64,
+    ) -> Result<std::collections::HashMap<String, (f64, f64)>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT bc_name, x, y FROM bc_positions WHERE project_id = ?1")?;
+        let rows = stmt.query_map([project_id], |row| {
+            Ok((row.get::<_, String>(0)?, (row.get::<_, f64>(1)?, row.get::<_, f64>(2)?)))
+        })?;
+        let mut out = std::collections::HashMap::new();
+        for r in rows {
+            let (name, pos) = r?;
+            out.insert(name, pos);
+        }
+        Ok(out)
     }
 
     /// Store a small UI preference (camera pan/zoom, last focus, …) in the
@@ -535,6 +607,36 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
         )?;
     }
 
+    if current < 4 {
+        // Step 3 -> 4: per-BC position storage (`project-registry-004`,
+        // consumed by `canvas-007-project-as-frame`).
+        //
+        // The canvas's project-as-frame visual model needs a place to remember
+        // where each BC bubble sits inside its project frame, independent of
+        // the project tile's own world position (which lives in
+        // `tile_positions`). The composite key `(project_id, bc_name)` matches
+        // the grain of "one BC inside one project"; `ON DELETE CASCADE` on
+        // `project_id` mirrors `tile_positions` so per-BC positions vanish
+        // with a hard-deleted project.
+        //
+        // ADR-005 soft-delete retention applies here the same way it does to
+        // `tile_positions`: `remove_project` (soft-delete) does NOT touch this
+        // table, so BC positions are preserved through the 30-day window and a
+        // re-register revives the layout in place. The startup GC sweep's
+        // hard-delete of `projects` rows cascades through this FK and clears
+        // expired BC positions. Cascade-deregister (`remove_scan_root`,
+        // ADR-013) also hard-deletes through the cascade.
+        conn.execute_batch(
+            "CREATE TABLE bc_positions (
+                 project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                 bc_name    TEXT    NOT NULL,
+                 x          REAL    NOT NULL,
+                 y          REAL    NOT NULL,
+                 PRIMARY KEY (project_id, bc_name)
+             );",
+        )?;
+    }
+
     // Record the version we ended on (single-row table).
     conn.execute("DELETE FROM schema_version", [])?;
     conn.execute(
@@ -681,11 +783,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_db_is_at_schema_version_three() {
+    fn fresh_db_is_at_schema_version_three_or_higher() {
         // `project-registry-003` acceptance: a fresh DB lands at v3 (adds
         // `projects.deleted_at` for ADR-005's 30-day retention realisation).
+        // `project-registry-004` bumped the current version to v4; the v3
+        // surface this test cares about remains intact.
         let db = Db::open_in_memory().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 3);
+        assert!(db.schema_version().unwrap() >= 3);
     }
 
     #[test]
@@ -1118,9 +1222,10 @@ mod tests {
             .unwrap();
         }
 
-        // Open with migration applied.
+        // Open with migration applied — v2 leaps all the way to the current
+        // version (v4 with `project-registry-004`'s `bc_positions` table).
         let db = Db::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 3);
+        assert_eq!(db.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         // Pre-existing project survived AND has deleted_at = NULL.
         let rows = db.list_projects().unwrap();
@@ -1358,5 +1463,226 @@ mod tests {
         }
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    // -------- 004: per-BC positions + v3->v4 migration ---------------------
+
+    #[test]
+    fn fresh_db_is_at_schema_version_four() {
+        // `project-registry-004` acceptance: a fresh DB lands at v4 (adds
+        // `bc_positions` for per-BC positions inside a project frame).
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.schema_version().unwrap(), 4);
+    }
+
+    #[test]
+    fn v3_db_migrates_to_v4_without_data_loss() {
+        // `project-registry-004` acceptance: a v3 DB (no `bc_positions` table)
+        // is migrated to v4 in place, gaining the new table. Existing project
+        // rows and tile_positions rows survive untouched.
+        use rusqlite::Connection;
+
+        let path = std::env::temp_dir().join(format!(
+            "guppi-v3-v4-migration-{}-{:?}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Hand-roll a v3 database with one project + tile_position.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "foreign_keys", true).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);
+                 INSERT INTO schema_version (version) VALUES (3);
+                 CREATE TABLE clusters (
+                     id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name  TEXT NOT NULL,
+                     color TEXT NOT NULL
+                 );
+                 CREATE TABLE scan_roots (
+                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                     path      TEXT NOT NULL UNIQUE,
+                     depth_cap INTEGER NOT NULL DEFAULT 3,
+                     added_at  TEXT NOT NULL
+                 );
+                 CREATE TABLE projects (
+                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                     path         TEXT NOT NULL UNIQUE,
+                     nickname     TEXT NOT NULL,
+                     added_at     TEXT NOT NULL,
+                     last_seen_at TEXT NOT NULL,
+                     scan_root_id INTEGER NULL REFERENCES scan_roots(id) ON DELETE RESTRICT,
+                     deleted_at   TEXT NULL
+                 );
+                 CREATE TABLE tile_positions (
+                     project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                     x          REAL NOT NULL,
+                     y          REAL NOT NULL,
+                     width      REAL NOT NULL,
+                     height     REAL NOT NULL,
+                     cluster_id INTEGER NULL REFERENCES clusters(id) ON DELETE SET NULL
+                 );
+                 CREATE TABLE app_state (
+                     key   TEXT PRIMARY KEY,
+                     value TEXT NOT NULL
+                 );
+                 INSERT INTO projects (path, nickname, added_at, last_seen_at)
+                 VALUES ('C:/src/guppi', 'GUPPI', datetime('now'), datetime('now'));
+                 INSERT INTO tile_positions (project_id, x, y, width, height)
+                 VALUES (1, 100.0, 200.0, 220, 120);",
+            )
+            .unwrap();
+        }
+
+        // Open with migration applied.
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 4);
+
+        // Pre-existing project + tile position survived.
+        let rows = db.list_projects().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "C:/src/guppi");
+        assert_eq!(db.tile_position(rows[0].id).unwrap(), Some((100.0, 200.0)));
+
+        // The new bc_positions table is queryable and empty.
+        assert!(db.bc_positions(rows[0].id).unwrap().is_empty());
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn bc_position_round_trips() {
+        // The drag-to-place loop: save then load returns what was saved.
+        let db = Db::open_in_memory().unwrap();
+        let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+
+        assert_eq!(db.bc_position(pid, "canvas").unwrap(), None);
+
+        db.save_bc_position(pid, "canvas", 12.5, -34.0).unwrap();
+        assert_eq!(
+            db.bc_position(pid, "canvas").unwrap(),
+            Some((12.5, -34.0))
+        );
+
+        // Dragging the same BC again overwrites in place.
+        db.save_bc_position(pid, "canvas", 99.0, 1.0).unwrap();
+        assert_eq!(db.bc_position(pid, "canvas").unwrap(), Some((99.0, 1.0)));
+    }
+
+    #[test]
+    fn bc_positions_returns_all_persisted_bcs_for_a_project() {
+        let db = Db::open_in_memory().unwrap();
+        let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        db.save_bc_position(pid, "canvas", 1.0, 2.0).unwrap();
+        db.save_bc_position(pid, "project-registry", 3.0, 4.0).unwrap();
+        db.save_bc_position(pid, "infrastructure", 5.0, 6.0).unwrap();
+
+        let map = db.bc_positions(pid).unwrap();
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["canvas"], (1.0, 2.0));
+        assert_eq!(map["project-registry"], (3.0, 4.0));
+        assert_eq!(map["infrastructure"], (5.0, 6.0));
+    }
+
+    #[test]
+    fn bc_positions_only_returns_rows_for_the_given_project() {
+        // Each project's BC positions are isolated by `project_id` —
+        // no cross-talk.
+        let db = Db::open_in_memory().unwrap();
+        let p1 = db.upsert_project("C:/src/p1", "P1").unwrap();
+        let p2 = db.upsert_project("C:/src/p2", "P2").unwrap();
+        db.save_bc_position(p1, "canvas", 1.0, 1.0).unwrap();
+        db.save_bc_position(p2, "canvas", 9.0, 9.0).unwrap();
+
+        let m1 = db.bc_positions(p1).unwrap();
+        assert_eq!(m1.len(), 1);
+        assert_eq!(m1["canvas"], (1.0, 1.0));
+
+        let m2 = db.bc_positions(p2).unwrap();
+        assert_eq!(m2["canvas"], (9.0, 9.0));
+    }
+
+    #[test]
+    fn bc_positions_cascades_on_hard_delete_of_project() {
+        // ON DELETE CASCADE on bc_positions.project_id: hard-deleting a project
+        // wipes its BC positions. Mirrors tile_positions's behaviour and is the
+        // mechanism the 30-day GC sweep relies on to clear stale positions.
+        let db = Db::open_in_memory().unwrap();
+        let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        db.save_bc_position(pid, "canvas", 1.0, 2.0).unwrap();
+        assert!(!db.bc_positions(pid).unwrap().is_empty());
+
+        db.remove_project(pid).unwrap();
+
+        assert!(
+            db.bc_positions(pid).unwrap().is_empty(),
+            "bc_positions must cascade with hard-deleted project"
+        );
+    }
+
+    #[test]
+    fn bc_position_concurrent_saves_do_not_race() {
+        // Acceptance criterion: concurrent saves don't race. The `Db` wraps
+        // its `Connection` in a `Mutex`, so by construction every write is
+        // serialised. This test fires many concurrent saves and asserts the
+        // final state is one of the values (no torn writes, no panics, no
+        // dropped rows).
+        use std::sync::Arc;
+        use std::thread;
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let db = db.clone();
+            handles.push(thread::spawn(move || {
+                db.save_bc_position(pid, "canvas", i as f64, (i * 2) as f64)
+                    .unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let pos = db.bc_position(pid, "canvas").unwrap();
+        // The final value is whichever thread won the race for "last writer".
+        // We just assert SOME value is stored and its `y` is `2 * x` (the
+        // invariant the test threads maintain).
+        let (x, y) = pos.expect("final position must be present");
+        assert!((0.0..16.0).contains(&x), "x out of range: {x}");
+        assert!((y - 2.0 * x).abs() < f64::EPSILON, "y must be 2*x: {x},{y}");
+    }
+
+    #[test]
+    fn bc_positions_are_preserved_through_soft_delete() {
+        // ADR-005 retention + `project-registry-004` carve-out: a soft-delete
+        // (single "Remove project" affordance) must NOT touch bc_positions,
+        // mirroring tile_positions. A re-register revives the BC layout in
+        // place.
+        let db = Db::open_in_memory().unwrap();
+        let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        db.save_bc_position(pid, "canvas", 42.0, 17.0).unwrap();
+        db.save_bc_position(pid, "project-registry", -1.0, 2.0).unwrap();
+
+        db.soft_delete_project(pid).unwrap();
+
+        // BC positions survive the soft-delete.
+        let map = db.bc_positions(pid).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["canvas"], (42.0, 17.0));
+        assert_eq!(map["project-registry"], (-1.0, 2.0));
+
+        // Re-register: same id, same positions still there.
+        let revived = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        assert_eq!(revived, pid);
+        let map = db.bc_positions(pid).unwrap();
+        assert_eq!(map["canvas"], (42.0, 17.0));
     }
 }

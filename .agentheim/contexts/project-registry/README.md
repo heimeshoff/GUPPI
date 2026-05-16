@@ -1,3 +1,11 @@
+---
+name: project-registry
+classification: supporting
+relationships:
+  - to: infrastructure
+    type: shared-kernel
+---
+
 # project-registry
 
 ## Purpose
@@ -35,6 +43,10 @@ In v1 this BC is read-only-plus-create: it observes existing projects and create
 - **Origin tracking** — every project row carries a nullable `scan_root_id` FK to its discovering scan root (ADR-013). NULL = manually added (ADR-005 "Add project…"); non-NULL = discovered under that root. `ON DELETE RESTRICT` makes the app-driven cascade-deregister (`project-registry-002b`) a checked invariant rather than a convention.
 - **Import (scanned-projects import)** — the mutation that turns the user's checklist picks from `add_scan_root`/`rescan_scan_root` into registered projects. `import_scanned_projects(scan_root_id, paths)` re-walks the root to verify each pick is still in the candidate set (out-of-set paths are skipped, not silently registered), stamps each survivor with `scan_root_id`, and arms its `.agentheim/` watcher via `WatcherSupervisor::add`. Idempotent on canonical path — re-import is a no-op.
 - **Cascade-deregister** — the mutation that tears down a scan root and every project discovered under it (`remove_scan_root(scan_root_id)`). App-driven (the `WatcherSupervisor` cannot be torn down by SQLite), so the IPC drives the ordering: enumerate children → `supervisor.remove` + `db.remove_project` each → `delete_scan_root` last. The schema's `ON DELETE RESTRICT` makes that ordering a checked invariant. **Hard-deletes** child projects and their tile state — ADR-005's 30-day tile-state retention applies ONLY to the user-initiated single "Remove project" affordance (`canvas-005`), never to this cascade. Manually-added projects (NULL `scan_root_id`) are NEVER touched.
+- **Bounded context (snapshot shape)** — `{ name, task_counts, relationships }`, the Rust struct named `BoundedContext` in `project.rs` and mirrored in `src/lib/types.ts`. Stable order by `name`; `relationships` is the parsed `relationships:` block from the BC's README YAML frontmatter (`project-registry-004`).
+- **BC↔BC relationship** — a DDD-typed edge between two bounded contexts inside the **same** project (cross-project edges are out of scope for v1). Declared in each BC's README YAML frontmatter as `relationships: [ { to: <sibling-bc>, type: <type>, direction?: <dir> }, … ]`. The five types `customer-supplier`, `shared-kernel`, `partnership`, `anticorruption-layer`, `conformist` mirror the DDD strategic palette; directional types pair with `direction: upstream | downstream`, non-directional types omit `direction`. Mismatched shape entries are dropped at parse time with a warning rather than silently accepted.
+- **`bc_positions` table (schema v4)** — `(project_id, bc_name) -> (x, y)`, the per-BC bubble position inside its project frame on the canvas (`canvas-007` consumer). `ON DELETE CASCADE` on `project_id` mirrors `tile_positions`: soft-delete preserves through the 30-day retention window, hard-delete (cascade-deregister or GC sweep) clears the rows. CRUD: `save_bc_position` / `bc_position` / `bc_positions` on `Db`; `save_bc_position` / `load_bc_position` / `load_bc_positions` over IPC.
+- **`BcRelationshipsChanged` domain event** — fires when a BC's `README.md` is written and the parsed `relationships:` set actually differs from the previously cached value (deep-equal compare). Prose-only README edits do **not** fire it (`project-registry-004`). The single-project `AgentheimWatcher` owns the per-BC cache (`RelationshipsCache`), keyed by BC name. Carried over the ADR-009 bus to the canvas, which patches the BC's `relationships` in place and re-runs intra-project edge layout (`canvas-007`).
 
 ## Upstream / downstream
 

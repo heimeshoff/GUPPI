@@ -1,3 +1,17 @@
+---
+name: agent-awareness
+classification: core
+relationships:
+  - to: claude-runner
+    type: customer-supplier
+    direction: upstream
+  - to: project-registry
+    type: conformist
+    direction: upstream
+  - to: infrastructure
+    type: shared-kernel
+---
+
 # agent-awareness
 
 ## Purpose

@@ -660,6 +660,58 @@ fn load_tile_position(
         .map_err(|e| e.to_string())
 }
 
+/// IPC command — persist a BC bubble's position inside its project frame
+/// (`project-registry-004`, consumed by `canvas-007`). Per-BC positions are
+/// scoped to a project; the upsert is keyed on `(project_id, bc_name)`. The
+/// drag-to-place loop fires this on drag end; preserved through ADR-005 soft
+/// delete (the 30-day retention window covers `bc_positions` exactly like
+/// `tile_positions`, since `bc_positions.project_id ON DELETE CASCADE` only
+/// kicks in on hard-delete).
+#[tauri::command]
+fn save_bc_position(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+    bc_name: String,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    state
+        .db
+        .save_bc_position(project_id, &bc_name, x, y)
+        .map_err(|e| {
+            tracing::error!(error = %e, project_id, bc_name = %bc_name, "save_bc_position failed");
+            e.to_string()
+        })
+}
+
+/// IPC command — read back one BC's persisted position, if any
+/// (`project-registry-004`).
+#[tauri::command]
+fn load_bc_position(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+    bc_name: String,
+) -> Result<Option<(f64, f64)>, String> {
+    state
+        .db
+        .bc_position(project_id, &bc_name)
+        .map_err(|e| e.to_string())
+}
+
+/// IPC command — batch-load every persisted BC position for a project
+/// (`project-registry-004`). Consumed by the canvas's project-frame paint to
+/// hydrate all BC bubble positions in one round-trip on project mount.
+#[tauri::command]
+fn load_bc_positions(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+) -> Result<std::collections::HashMap<String, (f64, f64)>, String> {
+    state
+        .db
+        .bc_positions(project_id)
+        .map_err(|e| e.to_string())
+}
+
 /// IPC command — persist the camera (pan + zoom) as a JSON blob in `app_state`.
 #[tauri::command]
 fn save_camera(state: tauri::State<'_, AppState>, camera: String) -> Result<(), String> {
@@ -900,6 +952,9 @@ pub fn run() {
             remove_scan_root,
             save_tile_position,
             load_tile_position,
+            save_bc_position,
+            load_bc_position,
+            load_bc_positions,
             save_camera,
             load_camera,
             log_from_frontend,

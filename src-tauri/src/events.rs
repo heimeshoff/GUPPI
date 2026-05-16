@@ -73,6 +73,14 @@ pub enum DomainEvent {
     BCAppeared { project_id: i64, bc: String },
     /// A `contexts/<bc>/` directory was removed.
     BCDisappeared { project_id: i64, bc: String },
+    /// A BC's `README.md` was written and the parsed `relationships:`
+    /// frontmatter changed (deep-equal compared against the in-memory cached
+    /// previous value). Consumed by `canvas-007`: the canvas patches the BC's
+    /// `relationships` array in place and re-runs intra-project edge layout.
+    /// README writes that don't change the parsed relationships set (e.g.
+    /// prose-only edits) do **not** fire this event — see
+    /// `watcher::RelationshipsCache` (`project-registry-004`).
+    BcRelationshipsChanged { project_id: i64, bc: String },
 
     // Filesystem observation (ADR-008 / ADR-009) — the lag-only resync signal.
     // ADR-009: when the frontend bridge's broadcast receiver reports `Lagged`,

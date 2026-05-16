@@ -10,11 +10,56 @@ export interface TaskCounts {
 	done: number;
 }
 
-/** One bounded context as the canvas draws it. */
-export interface BcSnapshot {
+/** A DDD relationship classification between two bounded contexts inside
+ * the same project — surfaced via each BC README's YAML frontmatter and
+ * consumed by the canvas to render intra-project edges (`canvas-007`,
+ * `project-registry-004`). Mirrors `project::RelationshipType` in Rust.
+ *
+ * Directional types (`customer-supplier`, `anticorruption-layer`,
+ * `conformist`) pair with a `Direction`; non-directional types
+ * (`shared-kernel`, `partnership`) carry `direction: null` (or absent). */
+export type RelationshipType =
+	| 'customer-supplier'
+	| 'shared-kernel'
+	| 'partnership'
+	| 'anticorruption-layer'
+	| 'conformist';
+
+/** Direction of a directional relationship — `upstream` (the **target** BC is
+ * upstream of the **source** BC) or `downstream`. Mirrors `project::Direction`
+ * in Rust. */
+export type Direction = 'upstream' | 'downstream';
+
+/** One BC↔BC relationship as declared in a BC's README frontmatter. `to` is
+ * the bare directory name of a sibling BC inside the same project (e.g.
+ * `project-registry`). Cross-project references are dropped by the Rust
+ * parser at v1, so the canvas never sees them. Mirrors `project::Relationship`
+ * in Rust. */
+export interface Relationship {
+	to: string;
+	type: RelationshipType;
+	/** `null` (or absent) for non-directional relationship types. */
+	direction?: Direction | null;
+}
+
+/** One bounded context as the canvas draws it. `relationships` is parsed from
+ * the BC's README YAML frontmatter at enumeration time (`project-registry-004`);
+ * malformed frontmatter degrades to an empty array without breaking BC
+ * enumeration. Mirrors the Rust `BoundedContext` type. */
+export interface BoundedContext {
 	name: string;
 	task_counts: TaskCounts;
+	/** Intra-project BC↔BC relationships. Empty for BCs whose README has no
+	 * frontmatter, whose frontmatter has no `relationships:` block, or whose
+	 * frontmatter fails to parse. */
+	relationships: Relationship[];
 }
+
+/** Legacy alias for `BoundedContext` — kept so the canvas frontend
+ * (`Canvas.svelte`, `snapshot-patch.ts`) continues to compile without an
+ * invasive rename. `canvas-007` is the consumer that will switch over to
+ * `BoundedContext` directly. */
+export type BcSnapshot = BoundedContext;
 
 /** Everything needed to render a project tile and its BC children.
  *
@@ -35,7 +80,7 @@ export interface ProjectSnapshot {
 	id: number;
 	name: string;
 	path: string;
-	bcs: BcSnapshot[];
+	bcs: BoundedContext[];
 	missing: boolean;
 }
 
@@ -122,4 +167,12 @@ export type DomainEvent =
 	  }
 	| { kind: 'bc_appeared'; project_id: number; bc: string }
 	| { kind: 'bc_disappeared'; project_id: number; bc: string }
+	/**
+	 * A BC's `README.md` was written and the parsed `relationships:`
+	 * frontmatter changed (deep-equal compared in the Rust watcher). Consumed
+	 * by `canvas-007`: the canvas patches the BC's `relationships` array in
+	 * place and re-runs intra-project edge layout. Prose-only README edits do
+	 * not fire this event (`project-registry-004`).
+	 */
+	| { kind: 'bc_relationships_changed'; project_id: number; bc: string }
 	| { kind: 'resync_required'; project_id: number };

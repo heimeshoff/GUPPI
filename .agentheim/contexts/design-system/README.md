@@ -1,3 +1,11 @@
+---
+name: design-system
+classification: supporting
+relationships:
+  - to: infrastructure
+    type: shared-kernel
+---
+
 # design-system
 
 ## Purpose

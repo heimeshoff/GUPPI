@@ -1,3 +1,17 @@
+---
+name: canvas
+classification: core
+relationships:
+  - to: project-registry
+    type: customer-supplier
+    direction: upstream
+  - to: agent-awareness
+    type: customer-supplier
+    direction: upstream
+  - to: infrastructure
+    type: shared-kernel
+---
+
 # canvas
 
 ## Purpose

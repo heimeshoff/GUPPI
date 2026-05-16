@@ -1,3 +1,11 @@
+---
+name: claude-runner
+classification: core
+relationships:
+  - to: infrastructure
+    type: shared-kernel
+---
+
 # claude-runner
 
 ## Purpose
