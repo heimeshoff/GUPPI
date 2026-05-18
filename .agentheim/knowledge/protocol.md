@@ -5,6 +5,334 @@ Newest entries on top.
 
 ---
 
+## 2026-05-18 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 1, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 1 (eea3d09 canvas-014)
+
+---
+
+## 2026-05-18 -- Task verified and completed: canvas-014 - Investigate canvas pan/zoom sluggishness — find the per-frame cost
+
+**Type:** Work / Task completion
+**Task:** canvas-014-investigate-pan-zoom-performance - Investigate canvas pan/zoom sluggishness — find the per-frame cost
+**Summary:** Spike identified the dominant per-frame cost — `app.ticker.add(() => renderScene())` was rebuilding the entire scene graph (`world.removeChildren()` + ~200–500 fresh Pixi `Graphics` / `Text` / `Container` allocations for N≈7 frames × ~5 BCs) ~60 Hz, idle AND during gestures (the interactive paths already called `renderScene()` themselves, so the ticker was pure double-work). Trivial-win patch landed: ticker guarded by `cameraTarget` (steady-state per-frame cost drops to zero), explicit `window` `resize` listener replaces the incidental coverage the unconditional rebuild provided, explicit `renderScene()` added to the targeted-event default branch as a load-bearing correctness fix (without it `task_*`/`bc_appeared`/`bc_disappeared` events would silently stop visually updating the canvas). Research report at `.agentheim/knowledge/research/canvas-perf-2026-05-17/README.md` ranks the three remaining hotspots — (1) full scene-graph rebuild per `renderScene` call → canvas-015 (persistent scene graph + camera-as-stage-transform pan, 1–3 days), (2) screen-space overlays allocate per render → canvas-016 (cache voice indicator + future agent-awareness badges, ½ day), (3) no broad-phase hit rejection → canvas-017 (`world.eventMode = 'passive'` + `world.hitArea` of scene bounds, ½ day). canvas-018 captures a dev-only diagnostic seam follow-up (`window.__guppi` behind a DEV guard) surfaced by the reproducer-protocol friction. canvas-013 unblocked — its strategy hypothesis (HTML overlay for project titles + BitmapText deferred) is unchanged by these findings; the report is explicit that HTML-overlay-for-titles is **strengthened** by the hotspot ranking. canvas-013's AC #1 (DPR fix at `Canvas.svelte` L533) deliberately untouched per the spike scope boundary. **Operator confirmation outstanding** (recorded in the report): Marco needs to (a) paste actual `app.renderer.type` / `.resolution` / `devicePixelRatio` / `ticker.FPS` / GPU-string values into `console-snapshot.md` next to the report, and (b) hands-on smoke-test that a `task_*` event still visually updates a BC's counts post-fix.
+**Verification:** PASS (iteration 1)
+**Commit:** eea3d09
+**Files changed:** 8 (src/lib/Canvas.svelte; .agentheim/contexts/canvas/README.md; .agentheim/knowledge/research/canvas-perf-2026-05-17/README.md NEW; canvas/backlog/canvas-{015,016,017,018}-*.md NEW; canvas/done/canvas-014-*.md NEW)
+**Tests added:** 0 — type: spike; AC explicitly asks for `pnpm check` clean + `cargo test --lib` unchanged, both verified (940 files 0/0/0; 122/122).
+**ADRs written:** none — ADR-003 (PixiJS v8 + HTML overlays) and ADR-015 (one-shot BC layout) both hold unchanged; the substantive renderer rework (which may warrant an ADR-003 extension) is properly deferred to canvas-015.
+**New backlog items:** canvas-015 (persistent scene graph + stage-transform pan, depends on canvas-014, v1-perf), canvas-016 (cache screen-space overlays, depends on canvas-014), canvas-017 (broad-phase hit rejection, depends on canvas-014), canvas-018 (dev-only diagnostic seam, no deps).
+**Unblocks:** canvas-013 (the perf report did not change the rendering-strategy hypothesis — promote-without-another-refinement-pass posture from 2026-05-17 REFINE holds; canvas-013 is now ready).
+**Note:** Sharp first-try PASS on a hard-to-bound spike. The "trivial wins land in-spike, non-trivial fixes spin out" discipline worked exactly as designed — one load-bearing ticker fix (with the accompanying targeted-event renderScene compensation) shipped, the substantive renderer rework spun out as canvas-015 with proper depends_on, and the analytical cost model gives canvas-015's worker a starting point that does not require re-deriving the problem. The verifier's audit specifically flagged "are there OTHER dispatch paths that previously relied on the next-tick rebuild?" — the worker's source-only audit was deep enough to find the targeted-event branch as the one missing-dispatch site and patch it in the same commit, which is what kept this a first-try PASS instead of an iteration-2.
+
+---
+
+## 2026-05-18 -- Batch started: [canvas-014-investigate-pan-zoom-performance]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-014-investigate-pan-zoom-performance - Investigate canvas pan/zoom sluggishness — find the per-frame cost
+**Parallel:** no (1 worker — sole ready task; v1 blocker that gates canvas-013)
+
+---
+
+## 2026-05-18 -- Model / Promoted: canvas-014 - Investigate canvas pan/zoom sluggishness — find the per-frame cost
+
+**Type:** Model / Promote
+**BC:** canvas
+**From → To:** backlog → todo
+**Summary:** Sole promotion this turn. Marco's session-open question ("what's next?") landed on the v1-blocker triad surfaced 2026-05-17 (canvas-012 / 013 / 014). canvas-013 is hard-gated on canvas-014's perf report per the 2026-05-17 REFINE, so 014 is the unblocker. canvas-012 (drag stickiness) and canvas-003 (focus-zoom) held in backlog by choice — 014's findings may reshape both before they enter todo (012's drag-controller suspects overlap with overlay reflow / hit-test suspects from 014; 003's keyboard scheme still wants a refinement pass). Readiness check passed without REFINE — 6 concrete acceptance criteria, no unmet deps, measurement protocol + frame-time targets already spelled out in the body.
+
+---
+
+## 2026-05-17 -- Model / Refined: canvas-013 - Crisp rendering at any zoom + Miro-style constant-size project titles
+
+**Type:** Model / Refine
+**BC:** canvas
+**Mode:** Interrogator (REFINE default)
+**Status after:** backlog (gated on canvas-014; near-ready)
+**Summary:** Three Marco locks made during this refinement: (1) project title overflow at constant size → **truncate with end-ellipsis at the current frame header width**; (2) ordering vs. canvas-014 → **canvas-014 runs first; canvas-013 gains a hard `depends_on: [canvas-014]`** so the rendering-strategy ADR is written with real per-frame cost numbers in hand; (3) BC text visibility floor → **none. Always render BC text, no matter how small.** Orchestrator pass routed to architect-style in-line analysis (one specialist, narrow scope) which verified every hypothesis against `Canvas.svelte` line-by-line and surfaced one load-bearing finding the original task missed: `app.init({ resizeTo, background, antialias })` at L533 sets neither `resolution` nor `autoDensity`, so PixiJS defaults to `resolution = 1` regardless of `devicePixelRatio` — every Text and Graphics is rasterized at 1× and the GPU upscales to the display's actual DPR. That DPR fix is now AC #1 (load-bearing). Other architect recommendations baked into the refined task body: ADR is an **extension to ADR-003**, not a new ADR (crispness + overlay-positioning refine the existing PixiJS-v8 + HTML-overlays decision rather than contradicting it); intra-project edges (arrowheads + ACL notches) belong to the "borders" category and get constant screen-space stroke widths together with the frame and bubble borders, not their own scheme; `BitmapText` migration is deferred as a canvas-014 follow-up if per-frame Pixi `Text` rebuild shows up as a top-3 hotspot, NOT a 013 commitment; project-title HTML overlay piggybacks on the existing ADR-003 overlay container (where modals / toasts / menus already live) in its own z-band below interactive overlays. Acceptance criteria expanded from 9 → 10 entries, all three Marco locks baked in. Promotion stance: **promote-without-another-refinement-pass after canvas-014 ships** — the strategy hypothesis is now sharp enough for the worker to author the ADR extension and the implementation directly; only a 014 finding that materially changes the strategy (e.g. `BitmapText` becoming a 013 AC instead of a 014 follow-up) would trigger another REFINE pass.
+**Split into:** none — task stayed whole.
+**ADRs written:** none. The crispness/constant-size strategy ADR is the worker's output (extension to ADR-003).
+
+---
+
+## 2026-05-17 -- Model / Captured: canvas-012, canvas-013, canvas-014 — front-end refinements from hands-on verification
+
+**Type:** Model / Capture
+**BC:** canvas
+**Mode:** Facilitator
+**Filed to:** backlog (×3)
+**Summary:** Marco ran the freshly-shipped v1 design-refresh trio (003 → 004 → 008) hands-on and surfaced three front-end issues that need to land before the existing backlog continues. canvas-012 (bug): drag state sometimes sticks after `pointerup`; subsequent bare mouse-moves continue panning the canvas — audit the shared window-level drag controller's pointerup/pointercancel/pointerleave paths across all three drag kinds (frame / BC / empty-canvas pan). canvas-013 (feature): two rendering invariants — (1) crispness universal (borders + all text at display resolution at every zoom, no bilinear blur, no disappearing hairlines), (2) project frame titles at constant on-screen pixel size regardless of camera zoom (Miro-style); BC titles + task counts deliberately scale with zoom but stay crisp; strategy mix proposed in notes (HTML overlay for project titles, Pixi re-rasterization for BC text, inverse-zoom-scaled line widths for borders); decision → ADR. canvas-014 (spike): pan / zoom feel sluggish; cause unknown; output is a research report at `.agentheim/knowledge/research/canvas-perf-2026-05-17/` with active renderer + per-frame cost + top-3 hotspots + proposed fixes, trivial wins land in-spike, non-trivial fixes become follow-up tasks. All three flagged as v1 blockers per Marco's "before we continue with all the other tickets" prioritization. Prior art linked: canvas-002 (shared drag controller origin), canvas-007 (frame/BC drag-claim split, project-as-frame rendering), canvas-008 (current token consumption). Related ADRs: ADR-003 (PixiJS v8 + HTML overlays — already permits the overlay strategy canvas-013 needs); ADR-015 (deterministic BC layout, relevant to canvas-014's perf baseline).
+
+---
+
+## 2026-05-16 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 3 (first-try PASS: 3, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 3 (ab441d0 design-system-003, 6ce724e design-system-004, bbe3704 canvas-008)
+**ADRs written:** 0 new; ADR-009 amended (new `DomainEvent::PreferenceChanged` variant + dated 2026-05-16 reconciliation note for the generic key/value preferences design).
+**New backlog items:** design-system-005-document-modal-backdrop-token — surfaced by canvas-008's light-mode audit catch (modal scrim token added but not yet documented in STYLEGUIDE.md).
+**Note:** The v1 design-refresh trio shipped sequentially in a single clean session — design-system-003 (brand orange + brand blue + revised status palette + hairlineStrong + four glow RGBAs + dimensional bumps 188×60 / 36px), design-system-004 (dual palettes + SQLite-persisted theme via new v5 `preferences` table + `PreferenceChanged` event + top-right toggle UI), canvas-008 (verification + audit pass against the revised tokens in both themes). **Three first-try PASS verdicts in a row** — a useful contrast against the iteration-1 FAIL we saw on canvas-007 last session. The "tokens defined but not consumed" lever still proved its worth here: canvas-008's verifier specifically grepped for inline hex + dimensional literals in the four rendering modules, and the audit caught one structural light-mode gap (`Modal.svelte`'s hardcoded backdrop) the type-checker is blind to. **Pattern reinforced:** when the §3.x acceptance criteria explicitly enumerate token names, the verifier turns that enumeration into a checklist. **todo/, doing/, backlog/ status post-session:** todo/ empty in every BC; doing/ empty in every BC; design-system backlog +1 (design-system-005, ready for the next refine/work pass). Marco's in-person `pnpm tauri dev` sign-off remains the outstanding human gate — actionable now against HEAD with the full revised palette + working theme toggle visible end-to-end. **Concept candidates:** none.
+
+---
+
+## 2026-05-16 -- Task verified and completed: canvas-008 - Apply revised tokens — visual re-validation against the 2026-05-16 design
+
+**Type:** Work / Task completion
+**Task:** canvas-008-apply-revised-tokens - Apply revised tokens — visual re-validation against the 2026-05-16 design
+**Summary:** Token-application audit pass against the 2026-05-16 design. `Canvas.svelte` + `bc-layout.ts` + `tile-layout.ts` + `snapshot-patch.ts` all consume tokens cleanly (zero inline hex, zero inline dimensional literals); the new 188×60 BC + 36px header values flow through correctly. Theme flip verified end-to-end — `initTheme()` runs pre-Pixi-init so first paint is in the persisted palette; `onThemeChange()` calls `renderScene()` + resets `renderer.background.color`. Audit catch: `Modal.svelte`'s inline `rgb(22 22 28 / 70%)` backdrop was a stale dark-theme assumption — fixed with new theme-invariant `--guppi-modal-backdrop` / `modalBackdrop` token (`rgba(10, 10, 14, 0.62)` per design §5).
+**Verification:** PASS (iteration 1)
+**Commit:** bbe3704
+**Files changed:** 3 (Modal.svelte + tokens.ts + tokens.css)
+**Tests added:** 0 — audit-pass task per AC #7 ("no new tests mandatory here unless the audit surfaces a logic regression"); the one catch was a stale CSS literal, not a logic regression. `pnpm check` 0/0/0 (940); `cargo test --lib` 122/122.
+**ADRs written:** none — no structural decision required.
+**New backlog items:** design-system-005-document-modal-backdrop-token (design-system BC; the new modal-backdrop token exists in both contract files but `STYLEGUIDE.md` doesn't yet document it; documentation-only follow-up).
+**Closes:** the v1 design-refresh trio (design-system-003 → design-system-004 → canvas-008).
+**Note:** canvas-007's "tokens defined but not consumed" lever continued to pay off — the verifier explicitly grepped `Canvas.svelte` / `bc-layout.ts` / `tile-layout.ts` / `snapshot-patch.ts` for inline hex + raw dimensional literals (188 / 160 / 56 / 24 / 36) and zero matches confirmed the consumer side flows through tokens cleanly. The Modal.svelte catch was the audit's structural value-add: a light-mode regression the type-checker could not see.
+
+---
+
+## 2026-05-16 -- Batch started: [canvas-008-apply-revised-tokens]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-008-apply-revised-tokens - Apply revised tokens — visual re-validation against the 2026-05-16 design
+**Parallel:** no (1 worker — last task in the v1 design-refresh trio)
+
+---
+
+## 2026-05-16 -- Task verified and completed: design-system-004 - Optional light theme — toggle persisted in SQLite
+
+**Type:** Work / Task completion
+**Task:** design-system-004-light-theme - Optional light theme — toggle persisted in SQLite
+**Summary:** Optional light theme landed end-to-end — dual palettes (`colorDark` + `colorLight`) in `tokens.ts`; `[data-theme="light"]` block in `tokens.css`; theme persisted via new v5 SQLite `preferences (key, value)` table; new `get_preference` / `set_preference` IPC commands + new `DomainEvent::PreferenceChanged` variant. Top-right toggle in `Canvas.svelte` flips both HTML overlay (`data-theme` on `<html>`) and PixiJS scene (`renderScene()` + `app.renderer.background.color` re-set).
+**Verification:** PASS (iteration 1)
+**Commit:** 6ce724e
+**Files changed:** 11 (db.rs + events.rs + lib.rs + tokens.ts + tokens.css + theme.svelte.ts new + ipc.ts + types.ts + Canvas.svelte + ADR-009 amended + BC README)
+**Tests added:** 5 cargo tests (`fresh_db_is_at_schema_version_five`, `fresh_db_seeds_default_theme_preference_as_dark`, `preference_round_trips`, `v4_db_migrates_to_v5_without_data_loss`, `preference_changed_event_reaches_a_subscriber`); existing `fresh_db_is_at_schema_version_four` relaxed to `>= 4` per the v2/v3 contract-test idiom. `pnpm check` 0/0/0 (940); `cargo test --lib` 122/122.
+**ADRs written:** ADR-009-event-bus.md (amended) — new `PreferenceChanged { key, value }` variant added to the enum sketch; dated 2026-05-16 reconciliation note explaining the generic key/value design and `theme` as the first inhabitant; `related_tasks` extended to include `design-system-004-light-theme`.
+**Unblocks:** `canvas-008-apply-revised-tokens` — both upstream deps (003 + 004) now done; canvas-008 is now ready. End of the v1-relevant design refresh trio.
+**Note:** Larger task than typical — spans Rust (schema migration v4→v5, IPC, event taxonomy), TypeScript (new `theme.svelte.ts` rune, `ipc.ts` wrappers, `types.ts` event union), and Svelte/PixiJS (toggle UI in `Canvas.svelte`, scene re-draw on theme change). The `initTheme()` load-before-`Application.init()` ordering means first paint already lands in the persisted palette — no flash-of-dark on restart. The new `theme.svelte.ts` rune is a clean piece of design-system BC scaffolding; canvas-008 will consume it without further plumbing changes.
+
+---
+
+## 2026-05-16 -- Batch started: [design-system-004-light-theme]
+
+**Type:** Work / Batch start
+**Tasks:** design-system-004-light-theme - Optional light theme — toggle persisted in SQLite
+**Parallel:** no (1 worker — sole ready task; canvas-008 blocked on this)
+
+---
+
+## 2026-05-16 -- Task verified and completed: design-system-003 - Brand colors + status palette + v1 dimensional refinement
+
+**Type:** Work / Task completion
+**Task:** design-system-003-brand-colors-and-status-revision - Brand colors + status palette + v1 dimensional refinement
+**Summary:** Brand palette (orange `#ff8b00` warm anchor + blue `#25abfe` cool secondary), revised status palette (grey/blue/red/orange + ○▶◆✕ glyphs), new `hairlineStrong` `#3a3b46` token + four status-glow RGBA strings, and v1 dimensional refinements (`frameHeaderHeight` 24→36, `bcInsideWidth×Height` 160×56→188×60) landed across `tokens.ts`, `tokens.css`, and `STYLEGUIDE.md`. `Canvas.svelte` untouched — visual re-validation is canvas-008's job.
+**Verification:** PASS (iteration 1)
+**Commit:** ab441d0
+**Files changed:** 4 (tokens.ts + tokens.css + STYLEGUIDE.md + BC README)
+**Tests added:** 0 — pure token + doc updates; `pnpm check` 0/0/0 (939 files) is the gate. canvas-008's visual re-validation will be the integration gate.
+**ADRs written:** none — Q9 STYLEGUIDE.md §5 entry records the brand-hue decision per the design-system-002 Q4–Q8 pattern (acceptance-criterion #7 explicitly says "no ADR if no conflict with a prior styleguide ADR").
+**Unblocks:** `design-system-004-light-theme` (was blocked on 003; depends_on satisfied → moves to ready next batch). `canvas-008-apply-revised-tokens` remains blocked pending 004.
+**Note:** Verifier explicitly cross-checked every row of the task's `## What` token table against `tokens.ts` + `tokens.css` mirror, plus every STYLEGUIDE.md example hex against `tokens.ts`. The post-canvas-007 verification pattern ("type-checker can't see token consistency") proved its worth in the reverse direction — instead of a consumer that didn't read tokens, this was a producer that had to fan every value out across three files; no orphans found.
+
+---
+
+## 2026-05-16 -- Batch started: [design-system-003-brand-colors-and-status-revision]
+
+**Type:** Work / Batch start
+**Tasks:** design-system-003-brand-colors-and-status-revision - Brand colors + status palette + v1 dimensional refinement
+**Parallel:** no (1 worker — sole ready task; 004 and canvas-008 blocked on this)
+
+---
+
+## 2026-05-16 -- Model / Captured + refined: 2026-05-16 design ingestion
+
+**Type:** Model / Capture + Refine
+**BC:** design-system + canvas + voice + agent-awareness
+**Mode:** Facilitator → Suggestor
+**Summary:** Marco generated a full visual design at claude.ai/design and pointed the model skill at the Anthropic-API export URL (`api.anthropic.com/v1/design/h/EEOPCxE8gLGPIpNeTv4eHA?open_file=GUPPI.html`). WebFetch returned a 51.7KB gzip tarball (the "handoff bundle" — README, chat transcript, GUPPI.html, 8 JSX modules, guppi-tokens.css). Extracted, read the bundle's `README.md` (its instructions: read the chat first, then GUPPI.html, then imports), then read `chats/chat1.md` + `GUPPI.html` + `guppi-tokens.css`. The chat captured two business decisions that override the orbit-baseline placeholder accents: (1) brand colours `#ff8b00` (warm, frame border + focus ring + `missing` status) and `#25abfe` (cool, BC border + `running` status); (2) revised status palette grey ○ / blue ▶ / red ◆ / orange ✕ (was grey-blue / blue / amber / magenta-pink). The design also pins v1 dimensional refinements (BC bubble 188×60 was 160×56; header bar 36px was 24; edges on a distinct `hairlineStrong` `#3a3b46` rather than the existing `fgMuted` `#6e6e80`) and ships a full optional light theme (`[data-theme="light"]` block in the design's tokens.css). The design also pins six v2+ component specs (project detail panel §5, terminal panel §6, command palette ⌘K §8, voice-state indicator §4, blocked-question callout §3, zoom transition §7).
+
+**Filed:** design bundle saved to `.agentheim/contexts/design-system/references/claude-design-2026-05-16/` (12 files: README, chat, GUPPI.html, 8 JSX modules, guppi-tokens.css). Source of truth for every captured task.
+
+**New tasks (todo, v1-relevant, ready-to-work):**
+- `design-system-003-brand-colors-and-status-revision` — `tokens.ts` + `tokens.css` + STYLEGUIDE.md updates; new `hairlineStrong` token; ~12 token value changes; 3 dimensional changes.
+- `design-system-004-light-theme` — light palette + theme-switchable token resolution + SQLite preference table (schema v4→v5) + `get_preference`/`set_preference` IPC + new `PreferenceChanged` event (amends ADR-009) + toggle UI top-right. Depends on `003`.
+- `canvas-008-apply-revised-tokens` — visual re-validation of `Canvas.svelte` against revised tokens in both themes; token-application audit (no inline hex); cross-check against design's `GUPPI.html` artboards. Depends on `003` + `004`. Supersedes `canvas-004`.
+
+**New tasks (backlog, v2+ specs — design-pinned, do NOT promote without upstream ready):**
+- `canvas-009-project-detail-panel-spec` — 520px right slide-in markdown reader; v1.5+.
+- `canvas-010-terminal-panel-spec` — orchestrator + sub-agents + blocked-card; v2+; hard upstream is a structured stream taxonomy from `claude-runner`.
+- `canvas-011-command-palette-spec` — ⌘K, voice-vocabulary parity; v2+; hard upstream is the intent-to-executor router.
+- `voice-001-voice-state-indicator-spec` — screen-space pill, 4 states; v2+; hard upstream is Whisperheim/Utterheim bridge.
+- `agent-awareness-001-blocked-question-callout-spec` — 240px tethered callout, pulse-synced; v2+; hard upstream is structured blocked-state.
+
+**Refined (light pass):**
+- `canvas-003-focus-zoom` — appended "Design pins (2026-05-16)" section: overview 38% / focused 110% / 320ms / `cubic-bezier(.16,.84,.36,1)` / `transform-origin: center of target` / focus-ring 1.5px brand orange. Resolves two open questions (camera-state-on-focus = transient; ESC = inverse transition); two stay open (keyboard scheme, BC focus targets). Structurally unblocked by `canvas-007` (commit `e2296c2`) — promotable once the two remaining questions answered in a Suggestor pass.
+
+**Closed (subsumed):**
+- `canvas-004-styleguide-visuals` — moved to `done/` with a `subsumed_by: canvas-008` frontmatter marker and a closure note in the body. No work done, no commit; the residual scope is now `canvas-008`'s. Per Marco's 2026-05-16 sign-off.
+
+**Sign-offs given by Marco (2026-05-16) before capture:**
+- Light theme persistence: **SQLite** per ADR-004 (not localStorage).
+- `canvas-004`: **close as subsumed** by `canvas-008` (not refine, not keep).
+- `design-system-003` scope: **bundle** colors + status + dimensions in one task (not split).
+
+**No orchestrator round, no ADRs written** (the §5 entry in STYLEGUIDE.md is the resolution path for the brand-color decision per the `design-system-002` pattern; `design-system-004` will amend ADR-009 with the new event variant during its worker run, not at capture time).
+
+**INDEXes updated:** canvas, design-system, voice, agent-awareness. Backlog counts after this pass: canvas 4 (canvas-003 unblocked + 009/010/011 v2+); design-system 0 in backlog, 2 in todo; voice 1; agent-awareness 1; infrastructure 1 (infrastructure-017, unchanged). Todo counts: design-system 2, canvas 1.
+
+**Next:** Marco's call. The v1-relevant trio (003 → 004 → 008) is ready for `/agentheim:work`. Suggested batch order: 003 first (no dependencies), 004 second (depends on 003), 008 third (depends on both). The v2+ specs stay frozen in backlog until their respective upstreams (claude-runner stream, Whisperheim bridge, intent router) land.
+
+---
+
+## 2026-05-16 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 0, re-dispatched: 1, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 1 (e2296c2 canvas-007-project-as-frame)
+**ADRs written:** ADR-015 (scope: bc, bc: canvas)
+**New backlog items:** infrastructure-017-frontend-test-infrastructure
+**Note:** Solo task this session — `canvas-007-project-as-frame`, the project-as-frame integration redesign atop yesterday's design-system-002 + project-registry-004 wins. **One surprising thing worth flagging:** the iteration-1 verifier caught a tight §3.7 contract gap (`bcInsidePill*` tokens defined in `tokens.ts` but not consumed in `Canvas.svelte`'s `makeBcBubble`; counts were rendered as a plain `Text` glyph rather than a rounded-rect pill; secondary `weightBold` vs. specified `weightMedium`). `pnpm check` cannot see styleguide compliance — only type compliance — so this would have shipped wrong without the verification gate. Iteration 2 closed it with a +22-line scoped delta inside `makeBcBubble`; no regression elsewhere. Pattern worth remembering: the §3.6/§3.7/§3.8 token enumeration in the acceptance criteria text is the verifier's lever for catching "styleguide tokens defined but not consumed" gaps that the type-checker is blind to. **todo/, doing/, backlog/ status:** todo/ empty in every BC; canvas-003-focus-zoom + canvas-004-styleguide-visuals still in canvas backlog (both candidates for next REFINE-against-frames pass); infrastructure-017 newly captured in infrastructure backlog. **canvas-003 is now structurally unblocked** — its open questions (keyboard scheme, BC-as-focus-target, ESC behaviour) can be re-asked against the frames-and-bubbles shape this session shipped. Marco's deferred in-person `STYLEGUIDE.md` §5.Q4–Q8 sign-off is also actionable now via `pnpm tauri dev` against commit e2296c2.
+
+---
+
+## 2026-05-16 -- Task verified and completed: canvas-007-project-as-frame - Project-as-frame — BCs inside, edges between BCs by relationship type
+
+**Type:** Work / Task completion
+**Task:** canvas-007-project-as-frame - Project-as-frame — BCs inside, edges between BCs by relationship type
+**Summary:** Project tiles now render as bounded frames whose header bars carry project name + task counts and whose interior holds BCs as denser bubbles connected by intra-project relationship edges. Four §3.8 edge variants on the locked single-neutral `fgMuted` palette (geometry distinguishes customer-supplier / shared-kernel / ACL / conformist). New pure deterministic spring-electrical BC layout module (`src/lib/bc-layout.ts` — mulberry32 seeded by `project_id`, one-shot on input change, no rAF loop) places bubbles inside each frame; sticky per-BC drag positions persisted via `project-registry-004`'s `saveBcPosition` / `loadBcPositions` IPC; re-layout fires only on `bc_appeared` / `bc_disappeared` / `bc_relationships_changed`. `snapshot-patch.ts` gains a `bc_relationships_changed` case that signals `refreshOne(project_id)` in `Canvas.svelte` followed by a one-shot recompute — `canvas-001` targeted-update invariant preserved (no full `list_projects` re-fetch). `BcSnapshot` TS alias retired in favour of `BoundedContext` across all consumers. Frame body is pass-through so the empty-canvas right-click menu still opens inside an empty frame region; frame header bar owns the drag handle + tile-right-click menu wiring (canvas-005a). canvas-005b cascade, canvas-006 `liveAddChain`, missing-tile visual all rewired against the new shape. Voice BC renders edge-less inside its frame as expected (Whisperheim/Utterheim ACLs cross-project, dropped by the registry parser at v1).
+**Verification:** PASS (iteration 2 — iteration 1 caught a §3.7 pill-token gap; the four `bcInsidePill*` tokens were not consumed in `makeBcBubble` and BC name used `weightBold` instead of `weightMedium`; iteration 2 closed it with a `Graphics.roundRect.fill(bcInsidePillFill)` element sized to `bcInsidePillHeight × max(bcInsidePillMinWidth, textWidth+pad)` with `bcInsidePillRadius` corner radius, right-aligned in the bubble + counts `Text` centred over it.)
+**Commit:** e2296c2
+**Files changed:** 8 (Canvas.svelte + snapshot-patch.ts + types.ts + bc-layout.ts new + canvas README + ADR-015 new + infrastructure-017 new + moved task file)
+**Tests added:** 0 — project still has no frontend test runner; `bc-layout.ts` built pure (no Svelte/Pixi imports) against that future surface. `pnpm check` 0/0/0 (939 files); `pnpm build` passes; `cargo test --lib` 117/117 (no Rust changes — task was frontend-only as scoped).
+**ADRs written:** ADR-015 (scope: bc, bc: canvas) — BC layout inside a project frame: deterministic one-shot spring-electrical with sticky pins. Pure module `src/lib/bc-layout.ts` alongside `tile-layout.ts`; mulberry32 RNG seeded by `project_id` (deterministic across restarts); pins applied before the simulation runs so dragged BCs stay put.
+**New backlog items:** infrastructure-017-frontend-test-infrastructure — add vitest + first test set for the three pure modules (`tile-layout.ts`, `snapshot-patch.ts`, `bc-layout.ts`). Surfaced from canvas-007; canvas-001 / canvas-002 / canvas-006 also called this out at completion time.
+**Unblocks:** `canvas-003-focus-zoom` — its open questions (keyboard scheme, BC-as-focus-target, ESC behaviour) can now be re-asked against frames-and-bubbles. Marco's deferred in-person `STYLEGUIDE.md` §5.Q4–Q8 sign-off is also actionable now via `pnpm tauri dev` against this commit.
+
+---
+
+## 2026-05-16 -- Verification failed: canvas-007-project-as-frame
+
+**Type:** Work / Verification failure
+**Task:** canvas-007-project-as-frame - Project-as-frame — BCs inside, edges between BCs by relationship type
+**Iteration:** 1 of 3
+**Reasons:** §3.7 `bcInsidePill*` tokens not consumed (`bcInsidePillFill`, `bcInsidePillHeight`, `bcInsidePillMinWidth`, `bcInsidePillRadius`); counts rendered as plain `Text` glyph at bottom-left of bubble rather than as the right-aligned rounded-rect pill the styleguide §3.7 mandates. Secondary: BC name uses `weightBold` where §3.7 specifies `weightMedium`.
+**Iteration hint:** likely-fixable
+**Next:** re-dispatched worker
+
+---
+
+## 2026-05-16 11:01 -- Batch started: [canvas-007-project-as-frame]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-007-project-as-frame - Project-as-frame — BCs inside, edges between BCs by relationship type
+**Parallel:** no (1 worker — sole ready task)
+
+---
+
+## 2026-05-16 -- Model / Refined + Promoted: canvas-007-project-as-frame
+
+**Type:** Model / Refine + Promote
+**BC:** canvas
+**Status after:** todo (was backlog)
+**Mode:** Interrogator (defaulted; quick verification pass, no questions needed — every wave-hand had a concrete contract waiting)
+**Summary:** REFINE pass confirmed every "what design-system-002 ships" and "how project-registry-004 shapes the snapshot" wave-hand has collapsed to a named contract from the upstream done notes, so the task was promoted to `todo/` in the same pass. **Wave-hands collapsed verbatim:** (1) Frame tokens nailed to §3.6 names (`frameFill`, `frameBorder`, `frameHeaderFill`, `frameHeaderDivider`, `radiusFrame`, `borderWidthFrame`, `frameHeaderHeight`, `framePadding`, `frameMin*`). (2) Interior bubble tokens nailed to §3.7 names (`radiusBcInside` 8, `bcInside{Width,Height}`, `bcInsidePill*`). (3) Four edge variants nailed to §3.8 on the locked single-neutral `fgMuted` palette: customer-supplier line + arrowhead (`arrowheadLength` 10, `arrowheadWidth` 8), shared-kernel/partnership line no decoration, anti-corruption-layer line + filled-triangle notch at midpoint pointing upstream (`aclNotchSize` 10), conformist `edgeWeightConformist` (lighter than `edgeWeight`). (4) Data shape nailed: `BoundedContext.relationships: Relationship[]` (Rust struct `BoundedContext` from project-registry-004 + TS still has `BcSnapshot` as a back-compat alias that canvas-007 explicitly retires per project-registry-004's done note); cross-project `to` references already dropped by the registry parser (canvas does not double-handle). (5) Event nailed: `BcRelationshipsChanged { project_id, bc_name }` from ADR-009's enum; `snapshot-patch.ts` extends to handle the variant (and the existing `bcNode` lazy-create already seeds `relationships: []` — no work needed there). (6) IPC nailed: `saveBcPosition` / `loadBcPosition` / `loadBcPositions` wrappers exist; canvas wires the calls. (7) Voice BC's no-edges-in-v1 state explicitly added as an expected acceptance criterion (its Whisperheim/Utterheim ACLs are cross-project, locked out at v1; the registry-004 bootstrap reflects this — voice will render edge-less inside its frame, not a bug). (8) Marco's deferred in-person `STYLEGUIDE.md` §5.Q4–Q8 sign-off becomes actionable *after* canvas-007 ships — canvas-007 is the `pnpm tauri dev` visual confirmation point. **Frontmatter additions:** `related_adrs` gained ADR-014 (the frontmatter-as-relationship-data-source decision canvas-007 consumes). **No orchestrator round** — every decision was already locked from the 2026-05-15 13:45 Suggestor refinement + the two prereq done notes (commits 38f48ab + b3727f5); no architect / strategic-modeler / tactical-modeler delegation needed. **No ADRs written.** **No new dependencies.** No new task captured; canvas-003 stays in backlog with its `depends_on canvas-007` chain intact. Backlog after this pass: canvas-003, canvas-004 (still backlog; canvas-004 is the next candidate for a REFINE-against-frames pass once canvas-007 lands or sooner if Marco wants).
+
+---
+
+## 2026-05-16 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 2 (first-try PASS: 2, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 2 (38f48ab design-system-002, b3727f5 project-registry-004)
+**Note:** Cleared both upstream tasks gating `canvas-007-project-as-frame` — the project-as-frame redesign is now ready to be promoted from backlog to todo (a `model` REFINE pass will likely confirm this trivially, since both prerequisites landed verbatim against the locked decisions from the 2026-05-15 13:45 Suggestor refinement). The two tasks were serialised (not parallelised) because both touched the design-system BC README — design-system-002 updated its own README with the new ubiquitous-language entries; project-registry-004 wrote the bootstrap `relationships:` frontmatter across all seven BC READMEs (a scope explicitly granted to the worker via the orchestrator's "exception" override of the standard worker rule). The serial-not-parallel cost was small (no real parallel speedup since project-registry-004 is the substantial task — Rust types, schema migration, IPC, watcher event, frontmatter bootstrap, 27 new tests). Backend tests 89 → 117. `pnpm check` stable at 938/0/0 throughout. New ADR: **ADR-014 (scope: bc, bc: project-registry)** — per-BC README frontmatter chosen as the relationship-data home (over parsing context-map.md prose, over a separate relationships.yaml). New dependency: `serde_yaml` (Cargo). No bounces, no escalations, no concept candidates. **todo/, doing/, backlog/ now empty in every BC.** Orchestrator's INDEX.md / protocol.md bookkeeping + the commit-SHA frontmatter back-fills are uncommitted on the working tree — a separate `chore(work)` commit folds them in (matches the prior session pattern). **One surprising thing worth flagging:** the worker handled the cross-BC frontmatter bootstrap cleanly under the orchestrator's "exception" override — all 6 non-project-registry BC READMEs received only YAML frontmatter prepended above original prose, with zero prose edits (verifier confirmed). The exception mechanism worked; this pattern is reusable for future "one task touches many BCs at the structural layer" cases (e.g., a future task that adds a shared field to every BC's frontmatter would use the same shape).
+
+---
+
+## 2026-05-16 -- Task verified and completed: project-registry-004-bc-relationships-and-positions - BC relationships + per-BC position storage
+
+**Type:** Work / Task completion
+**Task:** project-registry-004-bc-relationships-and-positions - BC relationships + per-BC position storage
+**Summary:** Landed the two structural prerequisites for `canvas-007-project-as-frame`. (1) BC↔BC relationships now flow from per-BC `README.md` YAML frontmatter (`relationships:` block carrying `to` / `type` / `direction`) into `BoundedContext.relationships: Vec<Relationship>` on `ProjectSnapshot` via `serde_yaml`; `BcSnapshot` renamed to `BoundedContext` across `project.rs`, `lib.rs`, the TS mirror, and all call sites. Malformed frontmatter degrades gracefully (single warning, empty relationships, BC still enumerates); cross-project `to` references dropped at v1 with a warning. (2) New fine-grained `BcRelationshipsChanged { project_id, bc_name }` domain event fires from `AgentheimWatcher` only when the parsed relationship set actually changes — deep-equal change-detection cache keeps prose-only README edits from triggering spurious relayouts (canvas-007 consumes this directly). (3) Schema v3→v4 adds `bc_positions(project_id, bc_name, x, y)` with `ON DELETE CASCADE` on `projects(id)`; mirrors `tile_positions`' soft-delete preservation semantics. (4) Three new IPC commands — `save_bc_position` / `load_bc_position` / `load_bc_positions` — round-trip via `INSERT … ON CONFLICT(project_id, bc_name) DO UPDATE` atomic upsert (race-free under concurrent saves). (5) GUPPI's seven BC READMEs carry hand-curated `relationships:` frontmatter translated from `.agentheim/context-map.md`'s Relationships section: canvas → project-registry + agent-awareness + infrastructure; agent-awareness → claude-runner (CS-upstream) + project-registry (conformist) + infrastructure; voice → infrastructure only (Whisperheim/Utterheim ACL is cross-project, omitted at v1); claude-runner / design-system / project-registry → infrastructure (shared-kernel); infrastructure stays edge-free.
+**Verification:** PASS (iteration 1)
+**Commit:** b3727f5
+**Files changed:** 19 (Cargo.toml + Cargo.lock + project.rs + db.rs + events.rs + watcher.rs + lib.rs + types.ts + ipc.ts + snapshot-patch.ts + 7 BC READMEs + ADR-014 + moved task file)
+**Tests added:** 27 — `cargo test --lib` 117/117 (was 89). Coverage: parser (`relationships:` parses; missing frontmatter / malformed YAML degrade gracefully); change-detection (event fires on real change, NOT on prose-only edit — both asserted in one e2e); migration (fresh DB at v4; v3→v4 upgrade preserves rows); IPC round-trip + concurrency (atomic upsert under interleaved writes); CASCADE on hard-delete + preservation through soft-delete. `pnpm check` 0/0/0 (938 files, unchanged from baseline).
+**ADRs written:** ADR-014 (scope: bc, bc: project-registry) — per-BC README frontmatter chosen over parsing `context-map.md` prose (brittle) and separate `relationships.yaml` (truth too far from prose); `context-map.md` stays as the human-readable narrative.
+**Carry-forward note (Agentheim follow-up tracked elsewhere):** brainstorm/model eventually need to write/maintain `relationships:` frontmatter automatically — captured at `agentheim/.agentheim/backlog/brainstorm-model-maintain-bc-relationships-frontmatter.md` from the 2026-05-15 refinement.
+
+---
+
+## 2026-05-16 -- Batch started: [project-registry-004-bc-relationships-and-positions]
+
+**Type:** Work / Batch start
+**Tasks:** project-registry-004-bc-relationships-and-positions - BC relationships + per-BC position storage
+**Parallel:** no (1 worker — sole ready task after design-system-002 completed; touches all 7 BC READMEs for the relationship-frontmatter bootstrap, so a parallel partner would conflict regardless.)
+
+---
+
+## 2026-05-16 -- Task verified and completed: design-system-002-project-frame-vocabulary - Project-as-frame visual vocabulary
+
+**Type:** Work / Task completion
+**Task:** design-system-002-project-frame-vocabulary - Project-as-frame visual vocabulary
+**Summary:** Landed the project-as-frame visual vocabulary in `STYLEGUIDE.md` — §3.6 Project frame (frameFill/frameBorder/frameHeaderFill/frameHeaderDivider tokens, header-bar drag/right-click target, empty-frame placeholder, PixiJS pseudocode); §3.7 BC bubble (inside frame) — denser variant with title + counts pill in one row at default zoom, status badge slot retained; §3.8 Intra-project edges — four variants (customer-supplier directional w/ arrowhead, mutual/shared-kernel/partnership non-directional, ACL directional w/ midpoint triangle notch, conformist lighter weight); single-neutral `fgMuted` palette, geometry distinguishes types. 17 new colour tokens + 17 new shape tokens mirrored name-for-name across `src/lib/design/tokens.ts` (canonical, PixiJS-ready) and `src/lib/design/tokens.css` (CSS custom properties). `references/project-frame-sketch.md` added as an ASCII layout reference for Marco's sign-off conversation. Q4–Q8 defaults documented with override paths per the styleguide-001 pattern; Marco's in-person sign-off remains a deferred human gate.
+**Verification:** PASS (iteration 1)
+**Commit:** 38f48ab
+**Files changed:** 5 (STYLEGUIDE.md, README.md, references/project-frame-sketch.md new, tokens.ts, tokens.css) + moved task file
+**Tests added:** 0 — pure styleguide + tokens + documentation task; `pnpm check` 0/0/0 (938 files) confirms tokens compile cleanly. No `Canvas.svelte` change (canvas-007 is the consumer).
+**ADRs written:** none — every decision sits inside ADR-002 (Svelte 5 + SvelteKit) + ADR-003 (PixiJS v8 + HTML overlay split, which the new pseudocode honours); aesthetic defaults documented as override paths in `STYLEGUIDE.md` §5 rather than ADRs (the §5 table answers "why this, not the obvious alternative?" directly).
+
+---
+
+## 2026-05-16 -- Batch started: [design-system-002-project-frame-vocabulary]
+
+**Type:** Work / Batch start
+**Tasks:** design-system-002-project-frame-vocabulary - Project-as-frame visual vocabulary
+**Parallel:** no (1 worker — design-system-002 + project-registry-004 both touch the design-system BC README; serialised. design-system-002 first, lower-numbered.)
+
+---
+
+## 2026-05-15 13:45 -- Model / Refined: canvas-007-project-as-frame — Suggestor pass landed full decomposition
+
+**Type:** Model / Refine
+**BC:** canvas (+ spawn into project-registry, design-system, + Agentheim repo)
+**Status after:** canvas-007 backlog (the integration); project-registry-004 + design-system-002 promoted to todo
+**Mode:** Suggestor (Marco switched mid-refinement)
+**Summary:** Took the canvas-007 redesign from "lots of open questions" to "fully decomposed, two upstream tasks promoted to todo" in one Suggestor pass. **Locked decisions:** (1) **Data source = per-BC README YAML frontmatter** — each `contexts/<bc>/README.md` grows a `relationships:` block with `to` (sibling BC name), `type` (customer-supplier / shared-kernel / partnership / anti-corruption-layer / conformist), `direction` (upstream/downstream, only for directional types). Chosen over parsing `context-map.md` (brittle prose) and a separate `relationships.yaml` (truth too far from prose). `context-map.md` stays as the human-readable narrative; brainstorm/model eventually keep both in sync (captured as a follow-up in the Agentheim repo). (2) **Layout inside frame = deterministic force-directed initial layout** seeded by the relationship graph; per-BC manual drag overrides persisted via new `bc_positions` table; relayout fires only on add/remove/relationship-change (no continuous animation). (3) **Frame sizing = auto-fit content, no user-resize at v1**. (4) **Edge vocabulary = four types** (upstream/downstream directional w/ arrowhead, mutual/shared-kernel/partnership non-directional, ACL directional w/ notch glyph, conformist directional lighter weight); single neutral palette, geometry distinguishes; `design-system-002` finalises. (5) **Project header = frame's top edge** carrying project name, status badges, task counts; right-click on title bar opens existing tile context menu. (6) **Schema migration = v3→v4** with `bc_positions(project_id, bc_name, x, y)` table, `ON DELETE CASCADE`, mirroring `tile_positions` semantics. (7) **Cross-project edges = v2+, locked out of scope**. (8) **Migration path = hard cutover** (v1 unshipped, no users). (9) **Bootstrap data**: hand-curate GUPPI's seven BC READMEs in-task as part of `project-registry-004`; other Agentheim projects render zero edges in GUPPI's canvas until the upstream Agentheim work lands (graceful degradation). **Decomposition (three tasks):** **`project-registry-004`** (todo) — frontmatter parser via `serde_yaml`, `BoundedContext.relationships: Vec<Relationship>` on `ProjectSnapshot`, new `bc_relationships_changed { project_id, bc_name }` fine-grained event with deep-equal change-detection cache to avoid spurious relayouts on prose edits, schema v4, three new IPC commands (`save_bc_position` / `load_bc_position` / `load_bc_positions`), bootstrap 7 GUPPI READMEs. **`design-system-002`** (todo) — `STYLEGUIDE.md` gains §"Project frame" + §"BC bubble (inside frame)" + §"Intra-project edges"; new `frame.*` + `edge*` tokens in `tokens.ts` / `tokens.css`; aesthetic defaults proposed for Marco's in-person sign-off (1px solid `tileBorder` frame w/ integrated header bar at `spacing.xl`, rounded-rectangle BC bubble, ACL notch as midpoint triangle, single-neutral `fgMuted` edge palette letting geometry differentiate). **`canvas-007`** (stays backlog) — the integration; replace orbit rendering with frame + interior bubbles + intra-project edges, consume the upstream data, persist per-BC drag, keep canvas-001 targeted updates / canvas-005a-005b right-click affordances + missing-tile / canvas-006 live-add serialisation working; force-directed initial layout in a new pure module (test surface alongside `tile-layout.ts`); promotes to todo once both upstream tasks complete. **Agentheim-repo follow-up captured** at `C:\src\heimeshoff\agentic\agentheim\.agentheim\backlog\brainstorm-model-maintain-bc-relationships-frontmatter.md` — brainstorm writes `relationships:` frontmatter on BC creation; model updates it on capture/refine; schema + symmetry rule documented in a new `references/` doc. **Frontend gate:** canvas-007 + design-system-002 + project-registry-004 are coherent because `STYLEGUIDE.md` is the single source of truth design-system-002 extends and canvas-007 consumes. **No orchestrator round** — every decision resolvable from styleguide-001 + ADR-003 + ADR-004 + ADR-008 + ADR-009 + the existing Rust IPC surface; no architect / strategic-modeler / tactical-modeler delegation needed. **No ADRs written** — every decision sits inside existing ADRs (ADR-003 PixiJS rendering structure shifts inside, ADR-004 schema gets a v4 migration, ADR-008 watcher fires the new event variant, ADR-009 gains one event variant in the existing typed enum). `canvas-003-focus-zoom` continues to `depends_on` `canvas-007`.
+**Split into:** canvas-007 (stays backlog), project-registry-004 (todo), design-system-002 (todo)
+**Spawned external task:** `agentheim/.agentheim/backlog/brainstorm-model-maintain-bc-relationships-frontmatter.md`
+**ADRs written:** none
+
+---
+
+## 2026-05-15 13:30 -- Model / Refined: canvas-003-focus-zoom — locked "B" + spawned canvas-007
+
+**Type:** Model / Refine
+**BC:** canvas
+**Status after:** backlog (both canvas-003 and canvas-007)
+**Summary:** Refining canvas-003 surfaced a much bigger structural redesign. Locked the focus-zoom *frame target*: focusing a project frames the **project's bounded region including its BCs** (option B). That answer is stable across today's orbit model and the redesign captured below — in both, focus = "the union of project + its BCs", which is the same `Camera.fitTo(box)` machinery the styleguide already names. The styleguide ships `Camera.fitTo` + `Camera.lerpTo` + the 320ms `durationCamera` budget; the focus task is mostly wiring the trigger and answering the input-scheme / persistence / ESC questions. **More importantly:** Marco wants the canvas to abandon the "project = bubble with orbiting BCs" rendering altogether. New model: **project = surrounding frame, BCs = bubbles inside the frame, edges between BCs drawn by context-map relationship type** (upstream/downstream/mutual/none). That's a visual + data redesign, not a focus-zoom subset, so it gets its own task — `canvas-007-project-as-frame` — captured to `backlog/` with the open questions explicitly catalogued (data source for BC↔BC relationships, layout inside the frame, frame sizing, edge visual vocabulary, project header placement, schema migration for per-BC positions, cross-project edges, migration path). canvas-003 is now hard-`depends_on` canvas-007 — the redesign ships first so canvas-003's open questions (keyboard scheme, BC-as-focus-target) get answered against frames-and-bubbles rather than tiles-and-orbits. Likely task spawns during canvas-007 refinement: a `project-registry-NNN` for the data source and a `design-system-NNN` for the edge vocabulary; possibly an infrastructure schema-migration task. No ADRs written — every decision sits inside ADR-003 (PixiJS + HTML overlay, rendering structure changes inside the existing stance). Refinement continues on canvas-007 next turn.
+**Split into:** *(none — canvas-003 itself not split; canvas-007 captured as a new sibling task surfaced by canvas-003's "frame what?" question.)*
+**Spawned dependency:** canvas-007-project-as-frame (backlog)
+**ADRs written:** none
+
+---
+
 ## 2026-05-15 13:00 -- Work session ended
 
 **Type:** Work / Session end

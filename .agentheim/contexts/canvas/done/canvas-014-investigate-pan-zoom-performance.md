@@ -6,7 +6,7 @@ type: spike
 context: canvas
 created: 2026-05-17
 completed: 2026-05-18
-commit:
+commit: eea3d09
 depends_on: []
 blocks: []
 tags: [performance, rendering, pixi, gpu, profiling, spike]
