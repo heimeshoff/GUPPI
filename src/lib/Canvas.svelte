@@ -1290,7 +1290,10 @@
 						);
 						// `entry.snapshot` is part of Svelte 5 `$state`
 						// (deeply reactive). The mutation is picked up by
-						// the ticker's `renderScene()` on the next frame.
+						// the explicit `renderScene()` call at the end of
+						// this branch (canvas-014 retired the unconditional
+						// ticker-tick rebuild that previously covered for
+						// the dispatcher's missing render).
 						//
 						// BC topology changes (appear / disappear) require
 						// a one-shot layout recompute so the frame auto-
@@ -1311,6 +1314,12 @@
 							// frame coherent.
 							recomputeBcLayout(entry);
 						}
+						// Repaint so the snapshot mutation (count tick, new
+						// BC bubble, etc.) becomes visible. Before
+						// canvas-014's ticker fix this was implicit on the
+						// next animation frame; with the ticker dormant
+						// we must drive the render explicitly.
+						renderScene();
 						return;
 					}
 				}
@@ -1318,11 +1327,30 @@
 
 			renderScene();
 
-			// Re-render on PixiJS ticker so a window resize re-projects, and
-			// step any in-progress eased camera transition.
+			// canvas-014: the previous implementation re-ran the FULL scene
+			// graph rebuild (`renderScene` → `world.removeChildren()` +
+			// rebuild every Graphics/Text) on every ticker tick (~60 Hz),
+			// even when the camera was idle and no input was happening.
+			// Combined with the fact that every interactive path (pan,
+			// wheel, drag, hover) already calls `renderScene()` explicitly,
+			// the ticker rebuild was pure waste and the dominant per-frame
+			// cost. Switch the ticker to a conditional step that only fires
+			// during an active eased camera transition; the resize listener
+			// below covers the window-resize case the old comment named.
 			app.ticker.add(() => {
-				if (cameraTarget) stepCameraTransition();
-				renderScene();
+				if (cameraTarget) {
+					stepCameraTransition();
+					renderScene();
+				}
+			});
+
+			// Re-render on window resize so the screen-space scene (and the
+			// bottom-right voice indicator that reads `app.renderer.width/height`)
+			// reflows. Previously the ticker's unconditional `renderScene` did
+			// double duty here; an explicit `resize` listener is cheaper and
+			// makes the contract obvious.
+			window.addEventListener('resize', () => {
+				if (!disposed) renderScene();
 			});
 		})();
 

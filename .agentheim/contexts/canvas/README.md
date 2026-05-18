@@ -88,7 +88,18 @@ The canvas holds a keyed collection of project entries
 (`{ id, snapshot, pos, bcLayout, bcPositions }` per project, keyed off
 `ProjectSnapshot.id`); `Canvas.svelte`'s `renderScene` iterates and draws one
 project frame per entry — frame border + header bar + interior BC bubbles +
-intra-project BC↔BC edges. Per-frame state — saved frame position, persisted
+intra-project BC↔BC edges. `renderScene` is **event-driven** (`canvas-014`):
+every interactive path (pan, wheel, drag, hover) and every domain event
+(`task_*`, `bc_*`, `project_added`, `project_removed`,
+`bc_relationships_changed`, `resync_required`, theme flip) calls
+`renderScene()` explicitly. The PixiJS ticker is dormant in steady state
+and only stepped while an eased camera transition (`f` zoom-to-fit) is in
+flight — the previous unconditional per-tick rebuild was the dominant
+per-frame cost the `canvas-perf-2026-05-17` spike retired. Window-resize
+re-projection is served by an explicit `resize` listener. The substantive
+follow-up to that spike (`canvas-015`) lands persistent display objects
+and a camera-as-stage-transform pan so individual events no longer pay a
+full-rebuild cost either. Per-frame state — saved frame position, persisted
 per-BC drag positions, the deterministic BC layout output, drag target,
 fine-grained event routing — is all keyed by id; no single-valued `projectId`
 scalar exists. A **shared drag controller** owns the one set of `window`
