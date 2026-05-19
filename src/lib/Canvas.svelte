@@ -483,6 +483,40 @@
 		return 'idle';
 	}
 
+	/**
+	 * Truncate a Pixi `Text`'s displayed string so it fits within
+	 * `maxWidth` pixels. Binary-searches the largest prefix of `fullText`
+	 * whose rendered width (with ellipsis appended) is <= maxWidth. If
+	 * even the ellipsis alone doesn't fit, renders an empty string.
+	 *
+	 * canvas-013 (revised 2026-05-19) — used by both `drawProjectFrame`
+	 * (project title) and `makeBcBubble` (BC title) to keep titles inside
+	 * their respective frames at every zoom.
+	 */
+	function truncateTextToWidth(t: Text, fullText: string, maxWidth: number) {
+		if (maxWidth <= 0) {
+			t.text = '';
+			return;
+		}
+		t.text = fullText;
+		if (t.width <= maxWidth) return;
+		const ellipsis = '…';
+		t.text = ellipsis;
+		if (t.width > maxWidth) {
+			t.text = '';
+			return;
+		}
+		let lo = 0;
+		let hi = fullText.length;
+		while (lo < hi) {
+			const mid = (lo + hi + 1) >> 1;
+			t.text = fullText.slice(0, mid) + ellipsis;
+			if (t.width <= maxWidth) lo = mid;
+			else hi = mid - 1;
+		}
+		t.text = fullText.slice(0, lo) + ellipsis;
+	}
+
 	onMount(() => {
 		let app: Application | null = null;
 		let unlistenEvent: (() => void) | null = null;
@@ -923,19 +957,14 @@
 				frame.addChild(header);
 
 				// --- Header content: project title + total task count -------
-				// canvas-013 — the project frame title is rendered as an
-				// HTML overlay (ADR-003 extension 2026-05-19) so it stays
-				// at a CONSTANT screen-space CSS pixel size at every zoom
-				// (Miro-style frame title — the overview is the use case
-				// that needs the title most). The overlay subscribes to
-				// `camera` + `projects` via Svelte 5 runes; the template
-				// at the bottom of this component owns its DOM. The Pixi
-				// `Text` allocation that used to live here was the only
-				// one that scaled with `z`, and removing it also sheds a
-				// per-render Pixi text rasterisation from `renderScene`.
-				// The counts label below stays in Pixi `Text` (BC text +
-				// header counts are NOT constant-size by AC #2 + #4) and
-				// gains crispness from the DPR fix above.
+				// canvas-013 (revised 2026-05-19, hands-on): project title
+				// is a Pixi `Text` that scales with zoom — same relative
+				// size to its frame as the BC titles inside it. The
+				// constant-screen-size HTML overlay tried in the original
+				// canvas-013 commit was reverted after hands-on verification.
+				// Truncation is container-width-based (end-ellipsis when the
+				// title exceeds the available header width), NOT zoom-based.
+				// DPR fix + screen-space stroke widths are retained.
 				const totalTasks = entry.snapshot.bcs.reduce(
 					(acc, b) =>
 						acc +
@@ -946,7 +975,8 @@
 					0
 				);
 
-				// Counts pill right-aligned in the header.
+				// Counts pill right-aligned in the header. Created first
+				// so the title can measure the remaining width.
 				const countsLabel = `${totalTasks} task${totalTasks === 1 ? '' : 's'}`;
 				const countsText = new Text({
 					text: countsLabel,
@@ -961,6 +991,31 @@
 					frameScreen.x + fw - shape.framePadding * z,
 					frameScreen.y + headerH / 2
 				);
+
+				// Project title — scales with zoom; end-ellipsis if it
+				// would exceed the available header width
+				// (`fw - 2 * framePadding - countsText.width - gap`).
+				const titleX = frameScreen.x + shape.framePadding * z;
+				const titleGap = shape.framePadding * z * 0.5;
+				const titleMaxW = Math.max(
+					0,
+					fw - shape.framePadding * z * 2 - countsText.width - titleGap
+				);
+				const titleText = new Text({
+					text: entry.snapshot.name,
+					style: {
+						fill: color.frameTitleText,
+						fontFamily: typography.fontFamily,
+						fontSize: Math.max(8, typography.sizeTitle * z),
+						fontWeight: String(typography.weightBold) as '700'
+					}
+				});
+				truncateTextToWidth(titleText, entry.snapshot.name, titleMaxW);
+				titleText.position.set(
+					titleX,
+					frameScreen.y + (headerH - typography.sizeTitle * z) / 2
+				);
+				frame.addChild(titleText);
 				frame.addChild(countsText);
 
 				// Missing-tile glyph in the header right corner (above the
@@ -1765,31 +1820,14 @@
 			}
 			node.addChild(g);
 
-			// Title (BC name) — left of the row. §3.7 calls for
-			// `weightMedium` (denser interior variant, not the orbit BC's
-			// bold title).
-			const titleText = new Text({
-				text: bc.name,
-				style: {
-					fill: color.bcInsideText,
-					fontFamily: typography.fontFamily,
-					fontSize: Math.max(8, typography.sizeBody * z),
-					fontWeight: String(typography.weightMedium) as '500'
-				}
-			});
-			titleText.position.set(
-				screenX + shape.framePadding * z * 0.5,
-				screenY + shape.framePadding * z * 0.5
-			);
-			node.addChild(titleText);
-
-			// Counts pill — right-aligned, in the title row. §3.7 mandates
+			// Counts pill — right-aligned in the title row. §3.7 mandates
 			// a `bcInsidePillFill` rounded rect carrying the count glyph;
 			// `bcInsidePillRadius` / `bcInsidePillHeight` / `bcInsidePillMinWidth`
 			// drive the shape. The pill is anchored to the bubble's right
 			// edge inset by `framePadding * 0.5` to match the title's left
 			// inset; horizontally the count `Text` is centred over the
-			// rounded-rect.
+			// rounded-rect. Built first so the title can measure the
+			// remaining width (canvas-013 revision 2026-05-19).
 			const c = bc.task_counts;
 			const countsLabel =
 				`b${c.backlog} t${c.todo} d${c.doing} ✓${c.done}`;
@@ -1817,6 +1855,31 @@
 			pillText.anchor.set(0.5);
 			pillText.position.set(pillX + pillW / 2, pillY + pillH / 2);
 			node.addChild(pillText);
+
+			// Title (BC name) — left of the row. §3.7 calls for
+			// `weightMedium` (denser interior variant, not the orbit BC's
+			// bold title). Scales with zoom; end-ellipsis if it would
+			// exceed the available width (from the title's left inset to
+			// the pill's left edge, minus a small gap). canvas-013
+			// revision 2026-05-19.
+			const bcTitleX = screenX + shape.framePadding * z * 0.5;
+			const bcTitleGap = shape.framePadding * z * 0.5;
+			const bcTitleMaxW = Math.max(0, pillX - bcTitleX - bcTitleGap);
+			const titleText = new Text({
+				text: bc.name,
+				style: {
+					fill: color.bcInsideText,
+					fontFamily: typography.fontFamily,
+					fontSize: Math.max(8, typography.sizeBody * z),
+					fontWeight: String(typography.weightMedium) as '500'
+				}
+			});
+			truncateTextToWidth(titleText, bc.name, bcTitleMaxW);
+			titleText.position.set(
+				bcTitleX,
+				screenY + shape.framePadding * z * 0.5
+			);
+			node.addChild(titleText);
 
 			// Status badge slot — colourblind-friendly colour + glyph.
 			// `agent-awareness` drives this later; for now derived from
@@ -2051,49 +2114,6 @@
 </script>
 
 <div class="canvas-host" bind:this={host}></div>
-
-<!--
-	Project frame titles (canvas-013). HTML overlays positioned over the
-	PixiJS canvas — ADR-003 extension 2026-05-19. CONSTANT screen-space
-	CSS pixel size at every zoom (Miro-style: the overview is the use case
-	that needs the title most). The Svelte 5 reactive template reads
-	`projects` (the keyed-by-id snapshot collection), `camera.pan_x` /
-	`camera.pan_y` / `camera.zoom` (the reactive camera runes), and the
-	active theme palette via tokens, so a pan / zoom / theme-flip / live-
-	add / live-remove re-evaluates this block automatically — no per-tick
-	push from `renderScene` required (and per the canvas-014 perf report,
-	the ticker is dormant in steady state; the overlay rides camera-event
-	updates the same way the Pixi scene does).
-
-	`pointer-events: none` so a title never swallows the canvas's pan
-	gesture or a right-click intended for the underlying frame header.
-	`z-index: 5` sits ABOVE the canvas (default 0) but BELOW the
-	interactive overlay band (`.context-menu` at 10, `.error-toast` at
-	11, `.modal-backdrop` at 20) so an open menu / toast / modal always
-	wins over a title.
-
-	Truncation: CSS `text-overflow: ellipsis` on a width-bound element
-	(width = current frame header CSS width = `bcLayout.width * zoom`).
-	The browser handles the measurement; no per-frame JS layout cost.
--->
-<div class="frame-title-overlay" aria-hidden="true">
-	{#each projects as entry (entry.id)}
-		{@const screen = camera.worldToScreen(entry.pos.x, entry.pos.y)}
-		{@const fw = entry.bcLayout.width * camera.zoom}
-		{@const dim = entry.snapshot.missing ? 0.5 : 1}
-		<div
-			class="frame-title"
-			style="
-				left: {screen.x + shape.framePadding}px;
-				top: {screen.y + shape.framePadding / 2}px;
-				width: {Math.max(0, fw - shape.framePadding * 2)}px;
-				opacity: {dim};
-			"
-		>
-			{entry.snapshot.name}
-		</div>
-	{/each}
-</div>
 
 <div class="status">{status}</div>
 
@@ -2433,52 +2453,6 @@
 		inset: 0;
 		overflow: hidden;
 		background: var(--guppi-canvas-bg);
-	}
-
-	/*
-	 * Project frame titles (canvas-013) — HTML overlay container.
-	 * `position: absolute; inset: 0` covers the full canvas region; the
-	 * per-frame title divs are absolutely positioned children. Pointer
-	 * events pass through so a title never blocks the camera pan, drag,
-	 * right-click, or wheel-zoom on the underlying canvas / frame
-	 * header. `z-index: 5` sits ABOVE the canvas but BELOW the
-	 * interactive overlay band (`.context-menu` z-index 10, `.error-toast`
-	 * z-index 11, `.modal-backdrop` z-index 20) so an open menu / toast
-	 * / modal always wins over a title (canvas-013 AC #7).
-	 */
-	.frame-title-overlay {
-		position: absolute;
-		inset: 0;
-		overflow: hidden;
-		pointer-events: none;
-		z-index: 5;
-	}
-
-	/*
-	 * One project's frame title — constant CSS size at every camera zoom
-	 * (canvas-013 AC #2 / Miro-style). CSS `text-overflow: ellipsis` on
-	 * a width-bound element handles end-truncation when the project name
-	 * exceeds the current header CSS width — the browser re-measures on
-	 * every style change (the inline `width:` rebound by the reactive
-	 * template on every camera move), so no per-frame JS measurement.
-	 * Tokens drive every value (typography + colour) so the dark/light
-	 * theme flip repaints the title without per-element work
-	 * (design-system-004 path; canvas-013 AC #9).
-	 */
-	.frame-title {
-		position: absolute;
-		font-family: var(--guppi-font-family);
-		font-size: var(--guppi-size-title);
-		font-weight: var(--guppi-weight-bold);
-		color: var(--guppi-frame-title-text);
-		line-height: 1.2;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		/* Constant baseline regardless of theme; transitions are reserved
-		   for affordance changes (focus ring), not for a property that
-		   updates on every camera move. */
-		will-change: left, top, width;
 	}
 
 	.status {

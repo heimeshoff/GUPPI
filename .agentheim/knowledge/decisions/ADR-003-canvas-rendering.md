@@ -71,17 +71,46 @@ non-trivial rework.
 
 ---
 
-## Extension 2026-05-19 — Crispness invariant + constant-size project titles
+## Extension 2026-05-19 — Crispness invariant + zoom-scaling project titles
 
 **Status:** Accepted (extension)
 **Scope:** global (unchanged)
 **Driver:** [canvas-013-crisp-rendering-constant-size-project-titles](../../contexts/canvas/done/canvas-013-crisp-rendering-constant-size-project-titles.md)
 **Companion:** the [`canvas-perf-2026-05-17`](../research/canvas-perf-2026-05-17/README.md)
-spike report (canvas-014) confirmed that nothing in the per-frame budget
-contradicts the HTML-overlay-for-titles strategy — Pixi `Text`
-allocations are part of the per-render cost; HTML overlays positioned
-via the camera transform ride CSS layer compositing on the GPU without
-re-rasterising on every camera change.
+spike report (canvas-014) — referenced for the per-frame cost baseline.
+
+### Same-day revision (2026-05-19, hands-on)
+
+The first draft of this extension specified project frame titles at a
+**constant screen-space size** (Miro-style HTML overlay). Marco ran the
+shipped commit (`3315a10`) in `pnpm tauri dev` the same afternoon and
+reverted that choice: project titles read out of place when they
+don't scale with their frame at zoom — the visual rhyme with the BC
+titles inside the frame matters more than the Miro-style overview
+affordance. Same-day revision lands as:
+
+- **Project titles scale with zoom**, like BC titles do — same
+  relative size to their frame. Project titles are Pixi `Text` (not
+  HTML overlays); the title-overlay sub-layer / z-band / `frame-title*`
+  CSS are removed.
+- **Truncation is container-width-based, not zoom-based.** Both
+  project titles and BC titles end-truncate with an ellipsis when
+  their rendered width would exceed the available container width
+  (project: frame header width minus padding minus counts pill;
+  BC: bubble width minus padding minus counts pill). Implemented via
+  a small `truncateTextToWidth(text, fullText, maxWidth)` helper that
+  binary-searches the largest prefix that fits with `…` appended.
+- **Crispness invariant (DPR fix) is unchanged.** Invariant #1 below
+  still holds; it was the load-bearing fix and is what makes the
+  zoom-scaling titles + BC titles render crisply at every zoom in the
+  first place.
+- **Screen-space stroke widths are unchanged.** Invariants #4 / #5 /
+  #6 below also hold; the only invariants touched by this revision
+  are #2 and #3.
+
+The body below has been rewritten in place — invariants #2 and #3 carry
+the revised wording. The "first draft" wording lives in git history at
+commit `3315a10`.
 
 ### Context (refinement)
 
@@ -123,59 +152,68 @@ the render path:
 The fix is implemented at the single boot site (`Canvas.svelte`'s
 `app.init({ … })` call).
 
-#### 2. Constant-screen-size project titles (Miro-style)
+#### 2. Project titles scale with zoom (same relative size to frame)
 
-Project frame titles render as **HTML overlays** positioned over the
-PixiJS canvas, at a CONSTANT screen-space CSS pixel size at every
-camera zoom (`var(--guppi-size-title)`, currently 16px). BC titles,
-counts, and the frame header's "N tasks" label are NOT subject to this
-— they stay in Pixi `Text` and scale with the camera (smaller when
-zoomed out, larger when zoomed in) but stay crisp per invariant 1.
+Project frame titles render as Pixi `Text` with `fontSize:
+Math.max(8, typography.sizeTitle * z)` — same scaling convention as
+BC titles inside the frame (`Math.max(8, typography.sizeBody * z)`).
+The visual rhyme between a frame's title and its child BC titles is
+load-bearing: a project that grows visually when zoomed in and
+shrinks when zoomed out reads as one coherent object; a project whose
+title stays the same size while its body grows / shrinks reads as
+two unrelated UI layers stacked on top of each other.
 
-The title overlay lives in the existing ADR-003 overlay container
-(same DOM root as modals / menus / toasts) in its own sub-layer with
-a dedicated z-index band:
+The `Math.max(…, 8)` floor catches extreme zoom-out so the title
+doesn't shrink to sub-pixel; below the floor the title is rendered at
+8 CSS px (still crisp via the DPR fix below). This matches what the
+BC titles do.
 
-| Layer | z-index | Notes |
-| --- | --- | --- |
-| PixiJS canvas | (default 0) | The underlying scene |
-| **Project title overlay** | **5** | Above canvas, below interactive overlays |
-| Context menus | 10 | (canvas-005a) |
-| Error toasts | 11 | (canvas-005a) |
-| Modal backdrops | 20 | (canvas-005b) |
+No HTML overlay, no separate z-band. The Pixi `Text` allocation is
+inside `drawProjectFrame`, immediately after the counts pill is
+measured (the title's truncation budget — see invariant #3 — depends
+on the pill's rendered width). Per-render cost: one Pixi `Text`
+allocation per project (matches the BC bubbles' per-render cost
+profile).
 
-`pointer-events: none` on the overlay container so a title never
-swallows the canvas's pan gesture, a right-click on the frame header,
-or a wheel-zoom.
+#### 3. Title overflow — end-ellipsis at the container width
 
-The overlay subscribes to camera + project + theme reactive state via
-Svelte 5 runes — `camera.pan_x` / `camera.pan_y` / `camera.zoom`, the
-`projects` `$state` array, and the active CSS-token palette flipped by
-the `[data-theme="light"]` attribute. Pan / zoom / theme flip / live-
-add / live-remove re-evaluates the template automatically; no per-tick
-push from `renderScene` required, and per the `canvas-perf-2026-05-17`
-report the ticker is dormant in steady state anyway.
+Both project titles and BC titles **end-truncate with an ellipsis
+(`…`)** when their rendered width would exceed the available
+container width:
 
-#### 3. Title overflow — end-ellipsis at the current header width
+- **Project title:** available width = `fw - 2 * framePadding -
+  countsText.width - gap`, where `fw` is the frame header's screen
+  width, `framePadding` is `shape.framePadding * z` (zoom-scaled),
+  `countsText` is the right-aligned "N tasks" pill that gets measured
+  before the title is built, and `gap` is `framePadding * 0.5`
+  (breathing room between title and pill).
+- **BC title:** available width = `pillX - bcTitleX - gap`, where
+  `pillX` is the BC counts pill's left edge (the pill is measured
+  first inside `makeBcBubble`, the title's truncation budget reads
+  off `pillX`), and `gap` is the same `framePadding * 0.5`.
 
-When a project's name exceeds the frame header width at the constant
-title size (reproducible at zoom ~38% with a long project name), the
-title truncates with an **end-ellipsis** at the current header CSS
-width.
+Truncation is implemented via a small helper, `truncateTextToWidth(t,
+fullText, maxWidth)`, that binary-searches the largest prefix of
+`fullText` whose rendered width (with `…` appended) is `<= maxWidth`.
+If even the ellipsis alone doesn't fit (a degenerate zoom-out), the
+text renders empty (the bubble / frame still draws, just without a
+label — the title is never allowed to overflow). The helper is a
+sibling of `deriveBcStatus` in `Canvas.svelte`.
 
-The implementation uses CSS `text-overflow: ellipsis` on a width-bound
-element. The element's `width` is rebound on every camera change by
-the reactive template (Svelte updates the inline `style="width: …px"`
-string), and the browser re-measures synchronously on the next style
-recalc. **No per-frame JavaScript measurement.**
+The cost is amortised: the Pixi `Text`'s `.width` getter triggers a
+layout, but each truncation iteration is O(log N) in the label length,
+and titles are typically short (10–40 characters). Per the
+`canvas-perf-2026-05-17` report, per-frame Pixi `Text` rasterisation
+is part of the existing render cost — the truncation helper does not
+add any rasterisations the title would not have triggered anyway. If
+a future profile flags the binary-search measurement as material, a
+straightforward optimisation is to cache `lastFullText → truncated`
+keyed by `(maxWidth, fontSize)` per BC / per project across renders;
+not done today.
 
-The explicit per-frame JS measurement path remains the documented
-fallback if a future profile flags browser layout cost as material
-during pan. The handoff signal is "ellipsis lag becomes visible during
-a pan gesture" — at that point, replace the CSS path with a manual
-`measureText` against the current zoom + frame width and set the
-displayed string explicitly. Not done today; not expected to be
-needed.
+The pre-revision wording (HTML overlay + CSS `text-overflow:
+ellipsis`) is left behind in commit `3315a10`'s ADR diff; the same-day
+hands-on revert is the reason invariants #2 and #3 are JS-side now.
 
 #### 4. Screen-space stroke widths for the borders category
 
@@ -229,48 +267,51 @@ performance-driven rework; no current code path violates it.
 
 ### Consequences
 
-- (+) The overview reads at every zoom. The DPR fix is universal
-  crispness for a one-line change; the constant-size title is the
-  Miro-style affordance the canvas was missing.
-- (+) The per-frame cost of rendering a project title drops to zero
-  — the HTML overlay rides CSS compositing; no Pixi `Text`
-  rasterisation per render; no per-frame allocation for the title.
+- (+) The overview reads crisply at every zoom. The DPR fix is
+  universal crispness for a one-line change.
+- (+) Project titles + BC titles share one rendering model (Pixi
+  `Text`, zoom-scaled, end-truncated to container width). A future
+  reader of the canvas code does not have to remember which titles
+  are HTML and which are Pixi.
 - (+) Theme-flip continues to repaint titles, borders, and counts in
-  the right palette: the title overlay reads CSS custom properties
-  (which flip atomically under `[data-theme="light"]`); Pixi
-  `renderScene` reruns on the `onThemeChange` listener
-  (design-system-004 path, unchanged).
-- (–) The title overlay is a second source of truth for project
-  identity in the DOM (alongside what the Pixi scene knows). The
-  divergence risk is small — both subscribe to the same `projects`
-  `$state` array — but a future bug where one updates and the other
-  doesn't would surface as a stale title floating over the wrong
-  frame. Mitigation: both paths are keyed by `entry.id` and read the
-  same `entry.snapshot.name`, with no intermediate caching.
-- (–) The overlay container's `position: absolute; inset: 0` covers
-  the full canvas region; the per-frame title divs are absolutely
-  positioned children. Many projects (hundreds) means many child
-  divs in the DOM. Acceptable for v1 (Marco's machine handles N≈10
-  in profiling); a future cull-by-visible-viewport optimisation is
-  the obvious knob if N grows to thousands.
+  the right palette: all title `Text` instances read `color.*` tokens
+  built from the active palette, and the Pixi scene reruns
+  `renderScene` on the `onThemeChange` listener (design-system-004
+  path, unchanged).
+- (–) Titles below ~8 CSS px (extreme zoom-out) clamp to the 8-px
+  floor and stop scaling proportionally, matching the BC titles'
+  behaviour. Acceptable; this is the same floor the BC titles already
+  have. Removing the floor would let titles shrink to true sub-pixel,
+  which the DPR fix can't save (Pixi rasterises at the configured
+  font size, not below it).
+- (–) The per-render cost of a project title is one Pixi `Text`
+  allocation (returned by the HTML overlay revert). The
+  `canvas-perf-2026-05-17` report has this in the "no top-3 hotspot"
+  zone; the BitmapText follow-up is still the documented escape hatch
+  (invariant #5).
 
 ### Reversibility
 
-The HTML-overlay-for-titles strategy is straightforward to revert: the
-overlay template block is one `{#each projects}` in the template plus
-one CSS rule pair; the Pixi `Text`-based title path is the
-`drawProjectFrame` body's previous form (one diff hunk to restore).
-The DPR fix is a two-property change at the `app.init({ … })` site.
-The screen-space stroke-width policy is a search-and-replace from
-`shape.borderWidth* * z` back to the `* z` form. Each piece is
-independently reversible.
+Each invariant is independently reversible. The zoom-scaling title
+revert is a small diff in `drawProjectFrame` (the pre-revision form
+is in commit `3315a10`'s ADR diff). The DPR fix is a two-property
+change at the `app.init({ … })` site. The screen-space stroke-width
+policy is a search-and-replace from `shape.borderWidth* * z` back to
+the `* z` form. The `truncateTextToWidth` helper is one function with
+no callers outside the two title sites.
 
 ### Implementation pointers
 
-- `src/lib/Canvas.svelte` (the `app.init({ … })` call, the
-  `drawProjectFrame` body, the `drawIntraProjectEdges` / arrowhead /
-  ACL-notch helpers, the `makeBcBubble` border path, the
-  `.frame-title-overlay` / `.frame-title` template + CSS).
-- The HTML overlay layer in the same component (alongside
-  `.context-menu` / `.error-toast` / `Modal` consumers); no separate
-  file.
+- `src/lib/Canvas.svelte`:
+  - `app.init({ … })` call (the DPR fix).
+  - `truncateTextToWidth(...)` helper — script-level, sibling of
+    `deriveBcStatus`.
+  - `drawProjectFrame` body — project title creation now follows the
+    counts pill so the title's `maxWidth` can read off the pill's
+    measured width.
+  - `makeBcBubble` body — pill block now precedes title block for the
+    same measure-then-truncate reason.
+  - `drawIntraProjectEdges` / `drawArrowhead` / `drawAclNotch` —
+    screen-space stroke widths.
+  - `makeBcBubble` border path — screen-space stroke widths.
+- No separate file; no HTML overlay layer for titles.
