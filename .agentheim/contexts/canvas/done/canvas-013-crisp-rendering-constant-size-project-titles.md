@@ -6,7 +6,7 @@ type: feature
 context: canvas
 created: 2026-05-17
 completed: 2026-05-19
-commit:
+commit: 3315a10
 depends_on: [design-system-001-styleguide, canvas-014-investigate-pan-zoom-performance]
 blocks: []
 tags: [rendering, text, borders, zoom, pixi, html-overlay, crispness, dpr]

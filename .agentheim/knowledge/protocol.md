@@ -5,6 +5,40 @@ Newest entries on top.
 
 ---
 
+## 2026-05-19 13:30 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 1, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 1 (3315a10 canvas-013) + 1 fix-up
+
+---
+
+## 2026-05-19 13:30 -- Task verified and completed: canvas-013 - Crisp rendering at any zoom + Miro-style constant-size project titles
+
+**Type:** Work / Task completion
+**Task:** canvas-013-crisp-rendering-constant-size-project-titles - Crisp rendering at any zoom + Miro-style constant-size project titles
+**Summary:** Three canvas-rendering invariants landed as an **extension to ADR-003** (scope `global`, unchanged): (1) **Crispness** — `app.init({ resolution: window.devicePixelRatio, autoDensity: true, … })` at the single Pixi boot site (Canvas.svelte L534-553), the load-bearing AC #1 fix; every Text and Graphics now rasterises at the framebuffer's real resolution rather than the previous default-1×-and-GPU-upscale path that was producing bilinear-smear blur halos at zoom-out. (2) **Constant-screen-size project titles (Miro-style)** — project frame titles render as HTML overlays in the existing ADR-003 overlay container at `var(--guppi-size-title)` constant CSS pixel size at every zoom; end-truncates via CSS `text-overflow: ellipsis` against the current header width (no per-frame JS measurement); z-index 5 (above canvas, below context-menu 10 / error-toast 11 / modal-backdrop 20); `pointer-events: none` so the overlay never swallows pan/drag/right-click/wheel-zoom; subscribes to camera + projects + theme runes the same way the Pixi scene does. The Pixi `Text` allocation that used to draw the title in `drawProjectFrame` is removed — one per-project per-render rasterisation shed. (3) **Screen-space stroke widths for the borders category** — frame border, BC bubble border, header divider, focus ring (project + BC), and all four intra-project edge variants (incl. arrowheads `headLen`/`headW` + ACL notch size) drop the `* z` multiplier; widths are constant CSS px (autoDensity handles device-px conversion). Caveats baked in: focus-ring **inset** stays world-space (proportional to the shape); arrowhead `pullBack` stays world-space because the bubble it pulls back from is drawn at `bcInsideWidth * z` in screen space. BC bubble title + task-count pill + frame header counts label stay in Pixi `Text` and scale with the camera — crispness comes from the DPR fix; BitmapText deferred (no backlog item filed — trigger is "BitmapText shows up as a top-3 hotspot in a future profile", not "we have time"). BC-text-floor invariant ("every BC always shows its name, if you squint") formally documented in the ADR. canvas/README.md gains two new vocabulary entries (Project-title overlay, Crispness invariant) and annotates Missing tile with the title-overlay 50%-opacity link. ADR-003 extension dated `## Extension 2026-05-19 — Crispness invariant + constant-size project titles` with full Context/Decision/Consequences/Reversibility/Implementation pointers; the second-source-of-truth risk (title overlay alongside the Pixi scene) is acknowledged + mitigated (both keyed by `entry.id`, both read `entry.snapshot.name`, no intermediate caching).
+**Verification:** PASS (iteration 1)
+**Commit:** 3315a10
+**Files changed:** 4 (src/lib/Canvas.svelte; .agentheim/knowledge/decisions/ADR-003-canvas-rendering.md; .agentheim/contexts/canvas/README.md; .agentheim/contexts/canvas/done/canvas-013-…md NEW)
+**Tests added:** 0 — `type: feature` UI task, legitimate TDD-skip per the doctrine's "UI tasks where the project has no UI test infrastructure" category (canvas-007 / canvas-008 precedent; `infrastructure-017-frontend-test-infrastructure` already in backlog tracks the gap). Test-surface artefacts: none — the new code lives entirely inside `Canvas.svelte` (Svelte component + Pixi imperative paths) and `.frame-title*` CSS. `pnpm check` clean (940 files, 0 errors, 0 warnings); `cargo test --lib` 122/122.
+**ADRs written:** ADR-003 extended (no new ADR file — extension to existing global ADR; bidirectional backlink added: ADR-003 `related_tasks` gains canvas-013, canvas-013's `related_adrs` already included ADR-003).
+**New backlog items:** none.
+**Note:** Sharp first-try PASS on a six-AC, four-files-changed task with one load-bearing DPR fix + a structural new rendering path (HTML overlay) + a screen-space-stroke-widths sweep across 9 `.stroke({ width: ... })` call sites. The pre-loaded prior art (canvas-002, canvas-007, canvas-008) and the verbatim ADR-003 paste in the worker prompt paid off — the worker authored the ADR extension as an **extension** (not a new ADR) per the task's explicit instruction, with correct status/scope/date frontmatter, and the screen-space-stroke-widths grep was clean on the verifier's audit pass. The canvas-007 "tokens defined but not consumed" lever continued to apply — the new `.frame-title` CSS reads tokens (`--guppi-font-family`, `--guppi-size-title`, `--guppi-weight-bold`, `--guppi-frame-title-text`) instead of inline values, and the verifier confirmed all four tokens exist in `tokens.css` with both dark + light definitions where applicable. The canvas-014 perf-spike companion held — the report explicitly noted that HTML-overlay-for-titles is strengthened by the hotspot ranking, and canvas-013's strategy adds zero new per-frame cost (CSS truncation is browser-internal on style change; the overlay rides camera-event updates the same way the Pixi scene does, not per-tick from `renderScene`). **v1 design-refresh blocker triad now 2/3 done** — canvas-014 (perf spike, 2026-05-18) + canvas-013 (this commit) shipped; canvas-012 (drag-state-stickiness bug) remains in backlog. **Outstanding human gate:** Marco's in-person `pnpm tauri dev` sign-off of the new rendering invariants — the AC's eyeball + measurement steps (38%/100%/110% title-size cross-check, long-name ellipsis at zoom 38%, hairline crispness at zoom-out) need a side-by-side against the current production canvas before this counts as visually verified in addition to type-checked.
+
+---
+
+## 2026-05-19 13:14 -- Batch started: [canvas-013-crisp-rendering-constant-size-project-titles]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-013-crisp-rendering-constant-size-project-titles - Crisp rendering at any zoom + Miro-style constant-size project titles
+**Parallel:** no (1 worker — sole ready task; v1 blocker; both deps (design-system-001, canvas-014) in done/)
+
+---
+
 ## 2026-05-18 -- Work session ended
 
 **Type:** Work / Session end

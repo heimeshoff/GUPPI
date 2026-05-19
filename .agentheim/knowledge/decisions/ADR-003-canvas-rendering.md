@@ -5,7 +5,7 @@ status: Accepted
 scope: global
 bc: infrastructure
 date: 2026-05-14
-related_tasks: [infrastructure-003-canvas-rendering]
+related_tasks: [infrastructure-003-canvas-rendering, canvas-013-crisp-rendering-constant-size-project-titles]
 related_adrs: [ADR-002]
 ---
 
