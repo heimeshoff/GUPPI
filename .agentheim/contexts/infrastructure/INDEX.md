@@ -17,7 +17,6 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-- [infrastructure-017-frontend-test-infrastructure](todo/infrastructure-017-frontend-test-infrastructure.md) — `type: feature`. Add a frontend test runner (vitest) + a first set of unit tests covering the pure `src/lib/*.ts` modules (`tile-layout.ts`, `snapshot-patch.ts`, `bc-layout.ts`). Surfaced from `canvas-007` — these pure modules were built test-ready but the project has no test infra yet; right now only `pnpm check` (svelte-check) catches regressions. Promoted 2026-05-19. Unblocks the eventual unit-test surface for `src/lib/drag-controller.ts` (canvas-012's extraction target).
 <!-- todo-list:end -->
 
 **Todo count:** 0
@@ -31,6 +30,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Done
 
 <!-- done-list:start -->
+- [infrastructure-017-frontend-test-infrastructure](done/infrastructure-017-frontend-test-infrastructure.md) — `feature` — Vitest 2 stood up as GUPPI's frontend test runner for pure modules; 29 characterisation tests across `snapshot-patch.ts` (10), `tile-layout.ts` (9), `bc-layout.ts` (10) codifying the load-bearing invariants captured during canvas-001 / canvas-002 / canvas-007. `vitest.config.ts` keeps the SvelteKit pipeline out (node env, no `@sveltejs/kit/vite` plugin) per the ADR-002 lean-runtime stance. `package.json` gains `"test": "vitest run"`. README adds two new vocab entries (Pure module, Characterisation test). `pnpm test` green 29/29 (~811ms); `pnpm check` 0/0 (990 files). Verifier: PASS iter 1. Unblocks future backfill of `src/lib/drag-controller.ts` tests (canvas-012's pure extract). (2026-05-19)
 - [infrastructure-016-readme-resync-required-rename](done/infrastructure-016-readme-resync-required-rename.md) — `type: chore`. Resynced the BC README's event taxonomy: dropped the stale live `AgentheimChanged` "compatibility seam" entry, added a `ResyncRequired` entry (lag-only signal, emitted solely by `lib.rs`'s `Lagged` arm), labelled the fine-grained FS events as the normal path. Doc-only; the code + ADR-009 were already done by `canvas-001`.
 - [infrastructure-015-log-retention-sweep](done/infrastructure-015-log-retention-sweep.md) — `type: feature`. Startup-only retention sweep in `logging.rs` (`sweep_retention`, called from `init()`): deletes rotated `guppi.log.YYYY-MM-DD` files older than the `RETENTION_DAYS` window (default 7), dated by filename not mtime; non-matching files untouched, failed deletions log+continue. Wires ADR-010's retention half.
 - [infrastructure-014-fine-grained-fs-events](done/infrastructure-014-fine-grained-fs-events.md) — `type: feature`. Single-project watcher correlates each debounced batch into the fine-grained taxonomy (`TaskMoved`/`TaskAdded`/`TaskRemoved`/`BCAppeared`/`BCDisappeared`); ADR-008↔ADR-009 reconciled in place; `AgentheimChanged` kept alive as a compatibility seam. Frontend reaction → `canvas-001`.

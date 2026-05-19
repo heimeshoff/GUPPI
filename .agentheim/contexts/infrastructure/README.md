@@ -111,6 +111,20 @@ Run command: `pnpm tauri dev`. Release + MSI: `pnpm tauri build`.
   startup. Startup-only by deliberate decision: GUPPI restarts often enough
   that a background timer is unwarranted.
 
+## Ubiquitous language (frontend test infra additions)
+
+- **Pure module** — a frontend `*.ts` under `src/lib/` that imports nothing
+  from Svelte, SvelteKit, or PixiJS. The three current pure modules
+  (`snapshot-patch.ts`, `tile-layout.ts`, `bc-layout.ts`) were extracted
+  from `Canvas.svelte` specifically so they are reviewable and unit-testable
+  in isolation. The `vitest.config.ts` test surface is restricted to these
+  (`infrastructure-017`); Svelte component / E2E coverage is deliberately
+  out of scope (components are exercised manually via `pnpm tauri dev`).
+- **Characterisation test** — a `*.test.ts` peer of a pure module that
+  codifies the module's load-bearing invariants as documented in its
+  originating task's Outcome section. Runs via `pnpm test` (vitest 2,
+  node environment, no SvelteKit pipeline).
+
 ## Ubiquitous language (PTY spike additions)
 
 - **ClaudeSession** — the ADR-006 actor for one managed `claude.exe` process:
