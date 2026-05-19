@@ -447,6 +447,44 @@
 	}
 	let projects = $state<ProjectEntry[]>([]);
 
+	// --- Persistent scene-graph display objects (canvas-015) ----------
+	// One `FrameDisplayObjects` per rendered project, kept across renders
+	// and updated in place. Instantiated on `project_added` or initial
+	// `refresh`; removed on `project_removed`. Children live in world
+	// coordinates — `world.position` and `world.scale` carry the camera
+	// transform on the parent container so pan/zoom never rebuild children.
+	//
+	// `Map<number, FrameDisplayObjects>` keyed by `entry.id`. Kept OUTSIDE
+	// `$state` — these are imperative Pixi handles, not reactive data.
+	interface BcDisplayObjects {
+		container: Container; // BC bubble container (frame-local coords)
+		body: Graphics;       // bubble body (fill + border)
+		focusRing: Graphics;  // hover focus ring (toggled via .visible)
+		pillBg: Graphics;     // counts pill background
+		pillText: Text;       // counts label
+		title: Text;          // BC name
+		badge: BadgeDisplayObjects;
+	}
+	interface BadgeDisplayObjects {
+		container: Container;
+		body: Graphics;
+		glyph: Text;
+	}
+	interface FrameDisplayObjects {
+		container: Container;          // parent of everything for one project; positioned at entry.pos
+		body: Graphics;                // frame body (fill + border)
+		header: Graphics;              // header fill + divider
+		title: Text;                   // project title
+		counts: Text;                  // total task count
+		focusRing: Graphics;           // hover halo (toggled via .visible)
+		missingGlyph: Text;            // missing-tile ✕ glyph (toggled via .visible)
+		emptyText: Text;               // "No bounded contexts yet" placeholder (toggled via .visible)
+		edges: Graphics;               // all intra-project edges in one Graphics (cleared+redrawn on layout change)
+		bcsRoot: Container;            // parent of BC bubbles
+		bcs: Map<string, BcDisplayObjects>; // BC name -> display objects
+	}
+	const frameObjects = new Map<number, FrameDisplayObjects>();
+
 	let status = $state('starting…');
 
 	// Voice-state affordance — a single ambient indicator. The voice BC will
@@ -493,14 +531,43 @@
 	}
 
 	/**
+	 * Screen-space text-floor counter-scale (ADR-003 Extension 2026-05-19
+	 * invariant #6 — "BC text floor — no hiding").
+	 *
+	 * Under canvas-015's camera-as-stage-transform model, on-screen CSS-px
+	 * size of a `Text` child of `world` is `fontSize * world.scale`. To
+	 * honour "every BC always shows its name (if you squint)" we counter-
+	 * scale a title `Text` upward in local space when the nominal screen
+	 * size would fall below `floorPx`. Returns the multiplier to apply via
+	 * `t.scale.set(s)`; returns 1 at default zoom and above so there is no
+	 * cost in the common case.
+	 *
+	 * Pure / side-effect-free. Sites that apply it:
+	 *   - project frame title          (fontSize = typography.sizeTitle)
+	 *   - project missing-tile glyph   (fontSize = typography.sizeTitle)
+	 *   - BC bubble title              (fontSize = typography.sizeBody)
+	 *   - BC counts pill text          (fontSize = typography.sizeCaption)
+	 *
+	 * truncateTextToWidth must run AFTER applying this scale so the
+	 * binary-search measures `t.width` (which is `baselineWidth * s`)
+	 * against the world-space maxWidth budget.
+	 */
+	function screenSpaceTitleScale(fontSize: number, z: number, floorPx = 8): number {
+		const nominal = fontSize * z;
+		if (nominal >= floorPx) return 1;
+		return floorPx / nominal;
+	}
+
+	/**
 	 * Truncate a Pixi `Text`'s displayed string so it fits within
 	 * `maxWidth` pixels. Binary-searches the largest prefix of `fullText`
 	 * whose rendered width (with ellipsis appended) is <= maxWidth. If
 	 * even the ellipsis alone doesn't fit, renders an empty string.
 	 *
-	 * canvas-013 (revised 2026-05-19) — used by both `drawProjectFrame`
-	 * (project title) and `makeBcBubble` (BC title) to keep titles inside
-	 * their respective frames at every zoom.
+	 * canvas-013 (revised 2026-05-19) — used by both the project frame
+	 * title (`updateFrameDisplayObjects`) and the BC bubble title
+	 * (`updateBcDisplayObjects`) to keep titles inside their respective
+	 * frames at every zoom.
 	 */
 	function truncateTextToWidth(t: Text, fullText: string, maxWidth: number) {
 		if (maxWidth <= 0) {
@@ -612,44 +679,85 @@
 			// edges drawn between BCs by relationship type. Project->BC
 			// orbit edges are retired; containment (BC inside frame)
 			// replaces the line.
+			// canvas-015: persistent scene graph + camera as stage transform.
+			// The world container's `position` and `scale` carry the camera
+			// transform — pan moves `world.position`, zoom multiplies
+			// `world.scale`, and the GPU rasterises every child once per
+			// frame against that transform. Children are drawn in WORLD
+			// coordinates and instantiated once per project (kept across
+			// renders in `frameObjects`); pan does not allocate. Stroke
+			// widths are pre-divided by zoom so the on-screen border stays
+			// constant CSS px (ADR-003 Extension 2026-05-19, invariant #4)
+			// — `repaint(z)` updates them on zoom change.
 			renderScene = () => {
 				if (!app) return;
-				world.removeChildren();
-
 				const z = camera.zoom;
 
-				// Intra-project edges first (per project), so BC bubbles
-				// draw on top. Each project's edge set comes from the union
-				// of its BCs' `relationships[]` (deduplicated by unordered
-				// endpoint pair, with type and direction preserved from the
-				// FIRST occurrence we hit — same as `bc-layout.ts`'s edge
-				// extraction). The four edge variants share the
-				// `fgMuted`-family palette; geometry distinguishes them.
-				for (const entry of projects) {
-					drawIntraProjectEdges(entry, z);
+				// Camera-as-stage-transform: world.position is the pan in
+				// screen pixels, world.scale is the zoom. With these set,
+				// every child rendered in world coordinates appears at the
+				// right place on screen WITHOUT a per-render rebuild.
+				world.position.set(camera.pan_x, camera.pan_y);
+				world.scale.set(z);
+
+				// Add the screen-space voice indicator to the stage (not
+				// world, so it does not pan/zoom). Instantiated once at
+				// mount; only its content updates here.
+				ensureVoiceIndicator();
+				updateVoiceIndicator();
+
+				// Reconcile per-project display objects against `projects`.
+				// 1) Drop frames that no longer exist (project_removed).
+				const liveIds = new Set(projects.map((p) => p.id));
+				for (const id of Array.from(frameObjects.keys())) {
+					if (!liveIds.has(id)) {
+						const obj = frameObjects.get(id)!;
+						world.removeChild(obj.container);
+						obj.container.destroy({ children: true });
+						frameObjects.delete(id);
+					}
 				}
 
-				// Project frames + interior BCs, per entry. Node keys are
-				// project-scoped so hover/focus rings do not collide across
-				// frames even when two projects share a BC name.
+				// 2) Create or update each project's persistent objects.
+				// Geometry and text are updated in place; per-zoom stroke
+				// widths are derived from `z` so the screen-space invariant
+				// holds.
 				for (const entry of projects) {
-					drawProjectFrame(entry, z);
+					let obj = frameObjects.get(entry.id);
+					if (!obj) {
+						obj = createFrameDisplayObjects(entry);
+						frameObjects.set(entry.id, obj);
+						world.addChild(obj.container);
+					}
+					updateFrameDisplayObjects(entry, obj, z);
 				}
-
-				// Voice-state affordance — a single ambient glyph pinned to
-				// the bottom-right of the viewport (screen space, not world
-				// space, so it stays put while the canvas pans).
-				world.addChild(makeVoiceIndicator());
 			};
 
-			// --- theme flip → re-render the scene (design-system-004) ----
+			/** Repaint all persistent geometry that depends on zoom-derived
+			 *  values (stroke widths in world-space) and on the active
+			 *  palette. Called on theme flip and on zoom-change; does NOT
+			 *  re-instantiate any Pixi object. */
+			function repaint() {
+				if (!app) return;
+				const z = camera.zoom;
+				for (const entry of projects) {
+					const obj = frameObjects.get(entry.id);
+					if (!obj) continue;
+					updateFrameDisplayObjects(entry, obj, z);
+				}
+				updateVoiceIndicator();
+			}
+
+			// --- theme flip → repaint persistent geometry (design-system-004) -
 			// PixiJS objects hold colour numerics at instantiation, so a
 			// palette flip after the scene is built has no visible effect
 			// unless we redraw. `applyPalette()` has already mutated the
 			// active `color` / `statusColor` / `glow` objects by the time
-			// this listener fires; we just retrigger the draw, plus update
-			// the WebGL renderer's clear colour so the canvas backdrop
-			// flips alongside the world contents.
+			// this listener fires; `repaint()` clears+restrokes/refills the
+			// persistent Graphics with the new palette in place (NOT a
+			// re-instantiation — canvas-015 invariant). We also update the
+			// WebGL renderer's clear colour so the canvas backdrop flips
+			// alongside the world contents.
 			unlistenTheme = onThemeChange(() => {
 				if (!app) return;
 				try {
@@ -662,151 +770,34 @@
 					// Best-effort — older renderer versions or a partial
 					// init shouldn't block the scene redraw.
 				}
-				renderScene();
+				repaint();
 			});
 
-			/** Draw one project's intra-project BC↔BC edges. Walks each BC's
-			 *  `relationships[]`, resolves the `to` name to a sibling BC
-			 *  inside the same project (cross-project references already
-			 *  dropped by the registry parser, defensive double-check
-			 *  here), deduplicates by unordered endpoint pair, then routes
-			 *  the four variants to their geometry. */
-			function drawIntraProjectEdges(entry: ProjectEntry, z: number) {
-				const bcs = entry.snapshot.bcs;
-				if (bcs.length < 2) return; // no pairs possible
-
-				const indexByName = new Map<string, number>();
-				bcs.forEach((bc, i) => indexByName.set(bc.name, i));
-
-				const seen = new Set<string>();
-				for (const bc of bcs) {
-					for (const rel of bc.relationships) {
-						const otherIdx = indexByName.get(rel.to);
-						if (otherIdx === undefined) continue;
-						const ownIdx = indexByName.get(bc.name);
-						if (ownIdx === undefined || ownIdx === otherIdx) continue;
-						const lo = Math.min(ownIdx, otherIdx);
-						const hi = Math.max(ownIdx, otherIdx);
-						const key = `${lo}-${hi}`;
-						if (seen.has(key)) continue;
-						seen.add(key);
-
-						drawRelationshipEdge(entry, bc, rel, z);
-					}
-				}
-			}
-
-			/** Draw one BC↔BC edge of the given relationship type. The
-			 *  `from` BC is the BC whose README declared the relationship;
-			 *  `rel.to` is the sibling. For directional types
-			 *  (`customer-supplier`, `anticorruption-layer`, `conformist`),
-			 *  `rel.direction` decides which end is upstream:
-			 *    - `direction: 'upstream'`   -> rel.to is upstream of from
-			 *    - `direction: 'downstream'` -> rel.to is downstream of from
-			 *  Arrowheads point AT the downstream end. */
-			function drawRelationshipEdge(
-				entry: ProjectEntry,
-				from: BoundedContext,
-				rel: Relationship,
-				z: number
-			) {
-				const fromCenter = bcCenterScreen(entry, from.name, z);
-				const toCenter = bcCenterScreen(entry, rel.to, z);
-				if (!fromCenter || !toCenter) return;
-
-				const g = new Graphics();
-				// canvas-013 — Crispness invariant. Stroke widths are
-				// CONSTANT in screen-space CSS pixels; the `* z` multiply
-				// was producing sub-pixel hairlines at zoom-out (smeared
-				// into halos by the GPU upscale) and chunky strokes at
-				// zoom-in (out of line with the rest of the stroke
-				// vocabulary). Suppress unused-`z` after this change by
-				// keeping the parameter for symmetry with other geometry
-				// helpers (arrowhead/notch still scale their *size* with
-				// `z` so the geometry-as-type-distinction reads at every
-				// zoom).
-				const w = shape.edgeWeight;
-				const wConf = shape.edgeWeightConformist;
-
-				switch (rel.type) {
-					case 'shared-kernel':
-					case 'partnership': {
-						// Non-directional line, no arrowhead, no notch.
-						g.moveTo(fromCenter.x, fromCenter.y).lineTo(toCenter.x, toCenter.y);
-						g.stroke({
-							width: Math.max(1, w),
-							color: color.edgeMutual
-						});
-						break;
-					}
-					case 'customer-supplier': {
-						// Directional line + arrowhead at downstream end.
-						const downstream =
-							rel.direction === 'upstream' ? fromCenter : toCenter;
-						const upstream =
-							rel.direction === 'upstream' ? toCenter : fromCenter;
-						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
-						g.stroke({
-							width: Math.max(1, w),
-							color: color.edgeUpstream
-						});
-						drawArrowhead(g, upstream, downstream, z, color.edgeUpstream);
-						break;
-					}
-					case 'anticorruption-layer': {
-						// Directional line + arrowhead at downstream end +
-						// triangle notch at midpoint pointing toward the
-						// upstream end (per design-system-002 §3.8).
-						const downstream =
-							rel.direction === 'upstream' ? fromCenter : toCenter;
-						const upstream =
-							rel.direction === 'upstream' ? toCenter : fromCenter;
-						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
-						g.stroke({
-							width: Math.max(1, w),
-							color: color.edgeACL
-						});
-						drawArrowhead(g, upstream, downstream, z, color.edgeACL);
-						drawAclNotch(g, upstream, downstream, z, color.edgeACL);
-						break;
-					}
-					case 'conformist': {
-						// Directional line at the lighter weight + arrowhead.
-						const downstream =
-							rel.direction === 'upstream' ? fromCenter : toCenter;
-						const upstream =
-							rel.direction === 'upstream' ? toCenter : fromCenter;
-						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
-						g.stroke({
-							width: Math.max(1, wConf),
-							color: color.edgeConformist
-						});
-						drawArrowhead(g, upstream, downstream, z, color.edgeConformist);
-						break;
-					}
-				}
-
-				world.addChild(g);
-			}
-
-			/** Screen-space center of one BC inside its project frame. The
+			/** World-space center of one BC inside its project frame. The
 			 *  layout's `positions` map carries frame-local coords; we add
-			 *  the frame's world-space origin (`entry.pos`) then project via
-			 *  the camera. */
-			function bcCenterScreen(
+			 *  the frame's world-space origin (`entry.pos`). Edges now live
+			 *  in world space, so no camera projection is applied —
+			 *  `world.scale` carries the on-screen zoom (canvas-015). */
+			function bcCenterWorld(
 				entry: ProjectEntry,
-				bcName: string,
-				z: number
+				bcName: string
 			): Point | null {
 				const local = entry.bcLayout.positions.get(bcName);
 				if (!local) return null;
-				const worldX = entry.pos.x + local.x + shape.bcInsideWidth / 2;
-				const worldY = entry.pos.y + local.y + shape.bcInsideHeight / 2;
-				return camera.worldToScreen(worldX, worldY);
+				return {
+					x: entry.pos.x + local.x + shape.bcInsideWidth / 2,
+					y: entry.pos.y + local.y + shape.bcInsideHeight / 2
+				};
 			}
 
 			/** Draw a filled triangular arrowhead at `to`, pointing from
-			 *  `from -> to`. Size driven by §3.8 tokens. */
+			 *  `from -> to`. Coordinates are in WORLD space; geometry that
+			 *  must read at constant screen-space CSS px (head length / head
+			 *  width) is pre-divided by `z` so the parent `world.scale`'s
+			 *  multiplication restores the token value on screen.
+			 *  pullBack stays in world-space (`shape.bcInsideWidth / 2`)
+			 *  because it is the distance from the BC bubble's edge — the
+			 *  bubble itself lives in world space now (canvas-015). */
 			function drawArrowhead(
 				g: Graphics,
 				from: Point,
@@ -820,15 +811,14 @@
 				if (len < 0.0001) return;
 				const ux = dx / len;
 				const uy = dy / len;
-				// canvas-013 — arrowhead size is the edge stroke's terminator;
-				// kept at constant screen-space CSS pixels, same policy as
-				// the stroke widths above. The pullBack distance, in
-				// contrast, must STAY zoom-scaled because the bubble it
-				// pulls the tip away from is itself drawn at `bcInsideWidth
-				// * z` in screen space.
-				const headLen = shape.arrowheadLength;
-				const headW = shape.arrowheadWidth;
-				const pullBack = (shape.bcInsideWidth / 2) * z;
+				// canvas-015: world-space arrowhead size = screen-px / z so the
+				// world.scale = z multiplication makes the on-screen size match
+				// the design token. pullBack is the world-space distance from
+				// the bubble edge — bubble is now drawn in world coords, so
+				// pullBack is a world-space token value (no `* z` and no `/ z`).
+				const headLen = shape.arrowheadLength / z;
+				const headW = shape.arrowheadWidth / z;
+				const pullBack = shape.bcInsideWidth / 2;
 				const tipX = to.x - ux * pullBack;
 				const tipY = to.y - uy * pullBack;
 				const baseX = tipX - ux * headLen;
@@ -848,7 +838,9 @@
 			}
 
 			/** Draw the ACL notch — a small filled triangle at the midpoint
-			 *  pointing toward the upstream end of the edge. */
+			 *  pointing toward the upstream end of the edge. World-space
+			 *  coordinates with size pre-divided by `z` for the same reason
+			 *  as `drawArrowhead`. */
 			function drawAclNotch(
 				g: Graphics,
 				upstream: Point,
@@ -864,11 +856,8 @@
 				const uy = dy / len;
 				const midX = (upstream.x + downstream.x) / 2;
 				const midY = (upstream.y + downstream.y) / 2;
-				// canvas-013 — notch glyph is constant screen-space CSS px,
-				// same policy as arrowheads / stroke widths. `z` retained
-				// on the signature for symmetry with `drawArrowhead`.
-				void z;
-				const size = shape.aclNotchSize;
+				// canvas-015 — world-space notch size = screen-px / z.
+				const size = shape.aclNotchSize / z;
 				// Tip points toward upstream.
 				const tipX = midX - ux * (size / 2);
 				const tipY = midY - uy * (size / 2);
@@ -887,89 +876,149 @@
 					.fill(col);
 			}
 
-			/** Draw one project frame: rounded-rect body, header bar with
-			 *  divider line, header text (name + status badges + total
-			 *  task count), then every BC bubble inside. The frame's
-			 *  header bar is the project's drag handle and right-click
-			 *  target (replaces the orbit-baseline tile body for both).
-			 *  Missing-tile (`canvas-005a`) state recolors the border to
-			 *  `statusMissing` and dims the body. */
-			function drawProjectFrame(entry: ProjectEntry, z: number) {
-				const frameScreen = camera.worldToScreen(entry.pos.x, entry.pos.y);
-				const fw = entry.bcLayout.width * z;
-				const fh = entry.bcLayout.height * z;
-				const headerH = shape.frameHeaderHeight * z;
+			// --- canvas-015: persistent project frame lifecycle --------------
+			// `createFrameDisplayObjects` instantiates each Pixi object ONCE
+			// per project (body, header, title, counts, focus ring, missing
+			// glyph, empty-state text, edges Graphics, BC bubbles parent).
+			// `updateFrameDisplayObjects` updates them in place every render
+			// — geometry (.clear() + redraw) + text contents + visibility
+			// flags. NO `world.removeChildren()`; NO per-render `new
+			// Graphics()`. Pan path skips this function entirely (camera
+			// transform is on `world` directly); zoom and topology-change
+			// paths run through it.
+
+			function createFrameDisplayObjects(entry: ProjectEntry): FrameDisplayObjects {
+				const container = new Container();
+				const body = new Graphics();
+				const header = new Graphics();
+				const focusRing = new Graphics();
+				focusRing.visible = false;
+				const edges = new Graphics();
+				const bcsRoot = new Container();
+				const missingGlyph = new Text({
+					text: statusGlyph.missing,
+					style: {
+						fill: color.statusMissing,
+						fontFamily: typography.fontFamily,
+						fontSize: typography.sizeTitle,
+						fontWeight: String(typography.weightBold) as '700'
+					}
+				});
+				missingGlyph.anchor.set(1, 0);
+				missingGlyph.visible = false;
+				const title = new Text({
+					text: entry.snapshot.name,
+					style: {
+						fill: color.frameTitleText,
+						fontFamily: typography.fontFamily,
+						fontSize: typography.sizeTitle,
+						fontWeight: String(typography.weightBold) as '700'
+					}
+				});
+				const counts = new Text({
+					text: '',
+					style: {
+						fill: color.frameTitleTextMuted,
+						fontFamily: typography.fontFamilyMono,
+						fontSize: typography.sizeCaption
+					}
+				});
+				counts.anchor.set(1, 0.5);
+				const emptyText = new Text({
+					text: 'No bounded contexts yet',
+					style: {
+						fill: color.frameEmptyText,
+						fontFamily: typography.fontFamily,
+						fontSize: typography.sizeBody
+					}
+				});
+				emptyText.anchor.set(0.5, 0.5);
+				emptyText.visible = false;
+
+				// Edges live ABOVE the body/header so they aren't occluded by
+				// the body fill, but BELOW BC bubbles so the bubble bodies
+				// cover the edge endpoints.
+				container.addChild(body);
+				container.addChild(header);
+				container.addChild(title);
+				container.addChild(counts);
+				container.addChild(missingGlyph);
+				container.addChild(emptyText);
+				container.addChild(focusRing);
+				container.addChild(edges);
+				container.addChild(bcsRoot);
+
+				// Header bar drag + hover wiring. The hit area is updated in
+				// `updateFrameDisplayObjects` whenever the frame size changes
+				// (BC topology change re-runs layout).
+				attachFrameHeaderInteractivity(container, entry.id);
+
+				return {
+					container,
+					body,
+					header,
+					title,
+					counts,
+					focusRing,
+					missingGlyph,
+					emptyText,
+					edges,
+					bcsRoot,
+					bcs: new Map()
+				};
+			}
+
+			function updateFrameDisplayObjects(
+				entry: ProjectEntry,
+				obj: FrameDisplayObjects,
+				z: number
+			) {
+				const fw = entry.bcLayout.width;
+				const fh = entry.bcLayout.height;
+				const headerH = shape.frameHeaderHeight;
 				const isMissing = entry.snapshot.missing;
 				const borderCol = isMissing ? color.statusMissing : color.frameBorder;
 
-				// --- Frame body (rounded rect, frame fill, frame border) ----
-				const frame = new Container();
-				frame.alpha = isMissing ? 0.5 : 1;
+				// Position the per-frame container at the entry's world
+				// coords. The parent `world` carries the camera transform.
+				obj.container.position.set(entry.pos.x, entry.pos.y);
+				obj.container.alpha = isMissing ? 0.5 : 1;
 
-				const body = new Graphics();
-				body.roundRect(frameScreen.x, frameScreen.y, fw, fh, shape.radiusFrame * z)
+				// canvas-013 / canvas-015 stroke-width policy: world-space
+				// stroke widths are pre-divided by z so the parent's
+				// `world.scale = z` multiplication restores the constant
+				// CSS-pixel value on screen.
+				const strokeFrame = Math.max(1 / z, shape.borderWidthFrame / z);
+				const strokeFocus = Math.max(1 / z, shape.borderWidthFocus / z);
+
+				// --- Body (frame fill + border) ---
+				obj.body.clear();
+				obj.body
+					.roundRect(0, 0, fw, fh, shape.radiusFrame)
 					.fill(color.frameFill)
-					.stroke({
-						// canvas-013 — constant screen-space CSS pixels.
-						// `autoDensity` handles the DPR conversion to
-						// device pixels, so a 1px CSS width is a true
-						// 1-device-px hairline on a HiDPI display, not a
-						// sub-pixel smear at low zoom.
-						width: shape.borderWidthFrame,
-						color: borderCol
-					});
-				frame.addChild(body);
+					.stroke({ width: strokeFrame, color: borderCol });
 
-				// --- Header bar fill + divider line -------------------------
-				// The header is the same rounded-top region; clipping the
-				// fill to the rounded top would require a mask. The body's
-				// frameFill already shows through where the header doesn't
-				// reach the corners; the header fill paints the top band as
-				// a separate rounded rect that covers only the band's
-				// vertical extent, leaving the bottom corners square — they
-				// sit inside the frame's outer rounded rect so the visible
-				// silhouette stays correct.
-				const header = new Graphics();
-				header
-					.roundRect(
-						frameScreen.x,
-						frameScreen.y,
-						fw,
-						headerH,
-						shape.radiusFrame * z
-					)
+				// --- Header bar (top-rounded band) + divider line ---
+				obj.header.clear();
+				obj.header
+					.roundRect(0, 0, fw, headerH, shape.radiusFrame)
 					.fill(color.frameHeaderFill);
-				// Mask out the bottom-rounded part of the header rect by
-				// painting a flat-bottomed strip over the lower half — this
-				// keeps the header bar's bottom edge sharp at the divider.
-				header
-					.rect(
-						frameScreen.x,
-						frameScreen.y + headerH / 2,
-						fw,
-						headerH / 2
-					)
+				obj.header
+					.rect(0, headerH / 2, fw, headerH / 2)
 					.fill(color.frameHeaderFill);
-				// Divider line between header and body.
-				header
-					.moveTo(frameScreen.x, frameScreen.y + headerH)
-					.lineTo(frameScreen.x + fw, frameScreen.y + headerH)
-					.stroke({
-						// canvas-013 — constant screen-space CSS pixels.
-						width: shape.borderWidthFrame,
-						color: color.frameHeaderDivider
-					});
-				frame.addChild(header);
+				obj.header
+					.moveTo(0, headerH)
+					.lineTo(fw, headerH)
+					.stroke({ width: strokeFrame, color: color.frameHeaderDivider });
 
-				// --- Header content: project title + total task count -------
-				// canvas-013 (revised 2026-05-19, hands-on): project title
-				// is a Pixi `Text` that scales with zoom — same relative
-				// size to its frame as the BC titles inside it. The
-				// constant-screen-size HTML overlay tried in the original
-				// canvas-013 commit was reverted after hands-on verification.
-				// Truncation is container-width-based (end-ellipsis when the
-				// title exceeds the available header width), NOT zoom-based.
-				// DPR fix + screen-space stroke widths are retained.
+				// --- Header content: total task counts + project title ---
+				// Text scales with zoom via `world.scale` (canvas-015). Font
+				// sizes are the world-space (zoom-1) token values; truncation
+				// budget is computed against world-space widths, then
+				// truncateTextToWidth measures with `width / scale.x === 1`
+				// directly — but the width of the Text changes with font
+				// size, which is fixed at the token value here, so a
+				// world-space width budget is correct.
 				const totalTasks = entry.snapshot.bcs.reduce(
 					(acc, b) =>
 						acc +
@@ -979,130 +1028,229 @@
 						b.task_counts.done,
 					0
 				);
-
-				// Counts pill right-aligned in the header. Created first
-				// so the title can measure the remaining width.
-				const countsLabel = `${totalTasks} task${totalTasks === 1 ? '' : 's'}`;
-				const countsText = new Text({
-					text: countsLabel,
-					style: {
-						fill: color.frameTitleTextMuted,
-						fontFamily: typography.fontFamilyMono,
-						fontSize: Math.max(6, typography.sizeCaption * z)
-					}
-				});
-				countsText.anchor.set(1, 0.5);
-				countsText.position.set(
-					frameScreen.x + fw - shape.framePadding * z,
-					frameScreen.y + headerH / 2
+				obj.counts.text = `${totalTasks} task${totalTasks === 1 ? '' : 's'}`;
+				obj.counts.style.fill = color.frameTitleTextMuted;
+				obj.counts.position.set(
+					fw - shape.framePadding,
+					headerH / 2
 				);
 
-				// Project title — scales with zoom; end-ellipsis if it
-				// would exceed the available header width
-				// (`fw - 2 * framePadding - countsText.width - gap`).
-				const titleX = frameScreen.x + shape.framePadding * z;
-				const titleGap = shape.framePadding * z * 0.5;
+				const titleX = shape.framePadding;
+				const titleGap = shape.framePadding * 0.5;
 				const titleMaxW = Math.max(
 					0,
-					fw - shape.framePadding * z * 2 - countsText.width - titleGap
+					fw - shape.framePadding * 2 - obj.counts.width - titleGap
 				);
-				const titleText = new Text({
-					text: entry.snapshot.name,
-					style: {
-						fill: color.frameTitleText,
-						fontFamily: typography.fontFamily,
-						fontSize: Math.max(8, typography.sizeTitle * z),
-						fontWeight: String(typography.weightBold) as '700'
-					}
-				});
-				truncateTextToWidth(titleText, entry.snapshot.name, titleMaxW);
-				titleText.position.set(
+				obj.title.style.fill = color.frameTitleText;
+				// ADR-003 invariant #6 (text floor): counter-scale upward when
+				// nominal on-screen size would drop below the 8 CSS-px floor.
+				// At default zoom and above, scale is 1 (no cost). Apply BEFORE
+				// truncate so the binary search measures against the actually
+				// rendered width.
+				obj.title.scale.set(screenSpaceTitleScale(typography.sizeTitle, z));
+				truncateTextToWidth(obj.title, entry.snapshot.name, titleMaxW);
+				obj.title.position.set(
 					titleX,
-					frameScreen.y + (headerH - typography.sizeTitle * z) / 2
+					(headerH - typography.sizeTitle) / 2
 				);
-				frame.addChild(titleText);
-				frame.addChild(countsText);
 
-				// Missing-tile glyph in the header right corner (above the
-				// counts label by shifting the counts down? — keep counts
-				// in place; the magenta border + 50% alpha already signal
-				// missing. Use the corner glyph on the frame body's
-				// top-right edge inside the header band, same idiom as the
-				// orbit baseline used on the tile body).
+				// --- Missing-tile glyph ---
+				obj.missingGlyph.visible = isMissing;
 				if (isMissing) {
-					frame.addChild(
-						makeMissingGlyph(frameScreen, fw, z)
+					obj.missingGlyph.style.fill = color.statusMissing;
+					// ADR-003 invariant #6 — text floor counter-scale.
+					obj.missingGlyph.scale.set(
+						screenSpaceTitleScale(typography.sizeTitle, z)
+					);
+					obj.missingGlyph.position.set(
+						fw - spacing.sm,
+						spacing.sm
 					);
 				}
 
-				// Focus ring if the project frame's header is being hovered.
-				const focused = hoveredKey === `project:${entry.id}`;
-				if (focused) {
-					const ring = new Graphics();
-					// canvas-013 — focus ring INSET stays in world-space
-					// (proportional to the frame at every zoom) but the
-					// stroke WIDTH is constant screen-space CSS pixels.
-					// A 2-CSS-px inset reads as a hairline halo around
-					// the frame at default zoom; at zoom-out the inset
-					// shrinks proportionally with the frame, matching the
-					// affordance vocabulary.
-					ring
-						.roundRect(
-							frameScreen.x - 2 * z,
-							frameScreen.y - 2 * z,
-							fw + 4 * z,
-							fh + 4 * z,
-							shape.radiusFrame * z + 2 * z
-						)
-						.stroke({
-							width: shape.borderWidthFocus,
-							color: color.focusRing
-						});
-					frame.addChild(ring);
+				// --- Focus ring (canvas-015 AC #9: geometry persistent,
+				// toggled via .visible). The ring is ALWAYS drawn with
+				// current geometry so a subsequent pointerover can just
+				// flip `.visible = true` without re-running this update.
+				obj.focusRing.clear();
+				obj.focusRing
+					.roundRect(-2, -2, fw + 4, fh + 4, shape.radiusFrame + 2)
+					.stroke({ width: strokeFocus, color: color.focusRing });
+				obj.focusRing.visible = hoveredKey === `project:${entry.id}`;
+
+				// --- Intra-project edges ---
+				// All edges live in ONE persistent Graphics — clear+redraw on
+				// every update. The Graphics's local coords are RELATIVE to
+				// the frame container, so we offset world coords by entry.pos
+				// before drawing. (Edges still use `bcCenterWorld` which
+				// returns absolute world coords; we adjust for the frame
+				// container origin here.)
+				drawIntraProjectEdgesIntoFrame(entry, obj.edges, z);
+
+				// --- Empty-state placeholder ---
+				const isEmpty = entry.snapshot.bcs.length === 0 && !isMissing;
+				obj.emptyText.visible = isEmpty;
+				if (isEmpty) {
+					obj.emptyText.style.fill = color.frameEmptyText;
+					obj.emptyText.position.set(fw / 2, headerH + (fh - headerH) / 2);
 				}
 
-				// --- Header bar interactivity (drag handle + right-click) ---
-				// The header is the project's grab target; the body is
-				// pass-through so the user can drop BC bubbles inside it.
-				attachFrameHeaderDrag(frame, entry.id, frameScreen, fw, headerH, z);
-
-				world.addChild(frame);
-
-				// --- BC bubbles inside the frame -----------------------------
-				// Empty-frame placeholder text if the project has no BCs.
-				if (entry.snapshot.bcs.length === 0 && !isMissing) {
-					const empty = new Text({
-						text: 'No bounded contexts yet',
-						style: {
-							fill: color.frameEmptyText,
-							fontFamily: typography.fontFamily,
-							fontSize: Math.max(8, typography.sizeBody * z)
-						}
-					});
-					empty.anchor.set(0.5, 0.5);
-					empty.position.set(
-						frameScreen.x + fw / 2,
-						frameScreen.y + headerH + (fh - headerH) / 2
-					);
-					world.addChild(empty);
-					return;
+				// --- BC bubbles (per entry) ---
+				// Reconcile: drop BC display objects that no longer exist;
+				// create or update each currently-present BC.
+				const liveBcNames = new Set(entry.snapshot.bcs.map((b) => b.name));
+				for (const name of Array.from(obj.bcs.keys())) {
+					if (!liveBcNames.has(name)) {
+						const bcObj = obj.bcs.get(name)!;
+						obj.bcsRoot.removeChild(bcObj.container);
+						bcObj.container.destroy({ children: true });
+						obj.bcs.delete(name);
+					}
 				}
-
 				for (const bc of entry.snapshot.bcs) {
 					const local = entry.bcLayout.positions.get(bc.name);
 					if (!local) continue;
-					const bcWorldX = entry.pos.x + local.x;
-					const bcWorldY = entry.pos.y + local.y;
-					const bcScreen = camera.worldToScreen(bcWorldX, bcWorldY);
-					const bubble = makeBcBubble({
-						key: `bc:${entry.id}:${bc.name}`,
-						bc,
-						screenX: bcScreen.x,
-						screenY: bcScreen.y,
-						z
-					});
-					attachBcDrag(bubble, entry.id, bc.name, bcScreen, z);
-					world.addChild(bubble);
+					let bcObj = obj.bcs.get(bc.name);
+					if (!bcObj) {
+						bcObj = createBcDisplayObjects(bc);
+						attachBcInteractivity(bcObj.container, entry.id, bc.name);
+						obj.bcs.set(bc.name, bcObj);
+						obj.bcsRoot.addChild(bcObj.container);
+					}
+					updateBcDisplayObjects(entry.id, bc, local, bcObj, z);
+				}
+
+				// --- Header hit area (CSS-px aware via world.scale) ---
+				// Hit-test predicates run in WORLD space because we set
+				// `hitArea.contains` against the container's local coords.
+				// Pixi's hit-test traverses the scene graph with the inverse
+				// transform of each container — so coordinates passed to our
+				// predicate are in the container's LOCAL frame, which after
+				// canvas-015 is the frame's world-space coord system (entry.pos
+				// is just the container's translation). The predicate is a
+				// frame-local rect (0..fw × 0..headerH) — no `z` factor needed.
+				obj.container.hitArea = {
+					contains: (x: number, y: number) =>
+						x >= 0 && x <= fw && y >= 0 && y <= headerH
+				};
+			}
+
+			/** Edges live in WORLD space, but rendered into a Graphics that is
+			 *  a child of the per-frame container (translated by entry.pos).
+			 *  Adjust the absolute world coords from `bcCenterWorld` by
+			 *  subtracting the frame origin so the Graphics's local coord
+			 *  system places lines correctly. */
+			function drawIntraProjectEdgesIntoFrame(
+				entry: ProjectEntry,
+				g: Graphics,
+				z: number
+			) {
+				g.clear();
+				// Translate so the Graphics's local space is the frame's
+				// local space. We do this by drawing in (worldX - entry.pos.x,
+				// worldY - entry.pos.y) coordinates. Implementation: temporarily
+				// shift `bcCenterWorld`'s output by `-entry.pos` inside this fn.
+				const bcs = entry.snapshot.bcs;
+				if (bcs.length < 2) return;
+
+				const indexByName = new Map<string, number>();
+				bcs.forEach((bc, i) => indexByName.set(bc.name, i));
+
+				const seen = new Set<string>();
+				for (const bc of bcs) {
+					for (const rel of bc.relationships) {
+						const otherIdx = indexByName.get(rel.to);
+						if (otherIdx === undefined) continue;
+						const ownIdx = indexByName.get(bc.name);
+						if (ownIdx === undefined || ownIdx === otherIdx) continue;
+						const lo = Math.min(ownIdx, otherIdx);
+						const hi = Math.max(ownIdx, otherIdx);
+						const key = `${lo}-${hi}`;
+						if (seen.has(key)) continue;
+						seen.add(key);
+
+						const fromAbs = bcCenterWorld(entry, bc.name);
+						const toAbs = bcCenterWorld(entry, rel.to);
+						if (!fromAbs || !toAbs) continue;
+						const fromLocal = {
+							x: fromAbs.x - entry.pos.x,
+							y: fromAbs.y - entry.pos.y
+						};
+						const toLocal = {
+							x: toAbs.x - entry.pos.x,
+							y: toAbs.y - entry.pos.y
+						};
+						drawRelationshipEdgeLocal(bc, rel, g, fromLocal, toLocal, z);
+					}
+				}
+			}
+
+			/** Frame-local version of `drawRelationshipEdge`: callers
+			 *  pre-compute the from/to points in the frame's local coord
+			 *  system. Stroke widths and arrowhead/notch sizes are still
+			 *  pre-divided by `z` for the constant-screen-px invariant. */
+			function drawRelationshipEdgeLocal(
+				from: BoundedContext,
+				rel: Relationship,
+				g: Graphics,
+				fromCenter: Point,
+				toCenter: Point,
+				z: number
+			) {
+				void from; // direction comes off `rel`; `from` is unused here
+				const w = shape.edgeWeight / z;
+				const wConf = shape.edgeWeightConformist / z;
+
+				switch (rel.type) {
+					case 'shared-kernel':
+					case 'partnership': {
+						g.moveTo(fromCenter.x, fromCenter.y).lineTo(toCenter.x, toCenter.y);
+						g.stroke({
+							width: Math.max(1 / z, w),
+							color: color.edgeMutual
+						});
+						break;
+					}
+					case 'customer-supplier': {
+						const downstream =
+							rel.direction === 'upstream' ? fromCenter : toCenter;
+						const upstream =
+							rel.direction === 'upstream' ? toCenter : fromCenter;
+						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
+						g.stroke({
+							width: Math.max(1 / z, w),
+							color: color.edgeUpstream
+						});
+						drawArrowhead(g, upstream, downstream, z, color.edgeUpstream);
+						break;
+					}
+					case 'anticorruption-layer': {
+						const downstream =
+							rel.direction === 'upstream' ? fromCenter : toCenter;
+						const upstream =
+							rel.direction === 'upstream' ? toCenter : fromCenter;
+						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
+						g.stroke({
+							width: Math.max(1 / z, w),
+							color: color.edgeACL
+						});
+						drawArrowhead(g, upstream, downstream, z, color.edgeACL);
+						drawAclNotch(g, upstream, downstream, z, color.edgeACL);
+						break;
+					}
+					case 'conformist': {
+						const downstream =
+							rel.direction === 'upstream' ? fromCenter : toCenter;
+						const upstream =
+							rel.direction === 'upstream' ? toCenter : fromCenter;
+						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
+						g.stroke({
+							width: Math.max(1 / z, wConf),
+							color: color.edgeConformist
+						});
+						drawArrowhead(g, upstream, downstream, z, color.edgeConformist);
+						break;
+					}
 				}
 			}
 
@@ -1166,15 +1314,28 @@
 				dragState = next;
 				if (!delta) return;
 				if (delta.kind === 'pan') {
+					// canvas-015 pan path — AC #3: pointermove during pan
+					// triggers ONLY a `world.position` update plus the GPU
+					// draw. No `renderScene()` call here means no Pixi
+					// object allocation, no `.clear()`+redraw, no scene
+					// reconciliation: just the camera transform on the
+					// world container. Stroke widths and text don't change
+					// during pan, so no repaint is needed.
 					camera.panBy(delta.dx, delta.dy);
-					renderScene();
+					world.position.set(camera.pan_x, camera.pan_y);
 					return;
 				}
 				if (delta.kind === 'frame') {
+					// Frame drag: shift one project's world-space origin.
+					// `entry.pos` mutation is what `updateFrameDisplayObjects`
+					// reads to position the persistent container — call it
+					// for just this one frame (NOT a full renderScene)
+					// because nothing else changed.
 					const entry = findProject(delta.projectId);
 					if (!entry) return;
 					entry.pos = { x: entry.pos.x + delta.dx, y: entry.pos.y + delta.dy };
-					renderScene();
+					const obj = frameObjects.get(entry.id);
+					if (obj) obj.container.position.set(entry.pos.x, entry.pos.y);
 					return;
 				}
 				// delta.kind === 'bc'
@@ -1195,7 +1356,15 @@
 				// around the new pin).
 				entry.bcPositions.set(delta.bcName, nextPos);
 				entry.bcLayout.positions.set(delta.bcName, nextPos);
-				renderScene();
+				// canvas-015: update only the single BC bubble's container
+				// position and the project's edges Graphics (so the moving
+				// BC's edges follow). No full renderScene needed.
+				const frame = frameObjects.get(entry.id);
+				if (frame) {
+					const bcObj = frame.bcs.get(delta.bcName);
+					if (bcObj) bcObj.container.position.set(nextPos.x, nextPos.y);
+					drawIntraProjectEdgesIntoFrame(entry, frame.edges, camera.zoom);
+				}
 			});
 			window.addEventListener('pointerup', () => {
 				const { next, persist } = dragOnPointerUp(dragState);
@@ -1250,7 +1419,15 @@
 					// is screen-space-anchored to a click point and would lose
 					// its semantic anchor under the moving canvas.
 					menu = null;
-					renderScene();
+					// canvas-015 zoom path — AC #4: world.position + world.scale
+					// are the only camera-transform writes. Stroke widths in
+					// world space depend on z (pre-divided by z so the
+					// on-screen width stays constant CSS-px after world.scale
+					// multiplication), so `repaint()` rewrites them in place
+					// — no Pixi object allocation. Pan path is untouched.
+					world.position.set(camera.pan_x, camera.pan_y);
+					world.scale.set(camera.zoom);
+					repaint();
 					void saveCamera(camera.snapshot());
 				},
 				{ passive: false }
@@ -1459,7 +1636,14 @@
 			app.ticker.add(() => {
 				if (cameraTarget) {
 					stepCameraTransition();
-					renderScene();
+					// canvas-015: the eased camera transition is a
+					// zoom+pan animation. Apply it via world.position +
+					// world.scale (camera-as-stage-transform) and a
+					// `repaint()` pass for the zoom-dependent stroke
+					// widths. No per-tick reconcile / scene rebuild.
+					world.position.set(camera.pan_x, camera.pan_y);
+					world.scale.set(camera.zoom);
+					repaint();
 				}
 			});
 
@@ -1798,282 +1982,250 @@
 			}
 		}
 
-		/** Build one inside-the-frame BC bubble (§3.7). Denser than the
-		 *  orbit-baseline BC node: title + counts pill in one row at
-		 *  default zoom, status glyph in the top-right corner. World-space
-		 *  size driven by `bcInsideWidth` / `bcInsideHeight`; corner radius
-		 *  `radiusBcInside` (8) — smaller than the orbit's 10 so the
-		 *  inside-frame variant reads as a sibling-cluster element, not as
-		 *  a peer of the surrounding frame. */
-		function makeBcBubble(opts: {
-			key: string;
-			bc: BoundedContext;
-			screenX: number;
-			screenY: number;
-			z: number;
-		}): Container {
-			const { bc, screenX, screenY, z } = opts;
-			const node = new Container();
-			const w = shape.bcInsideWidth * z;
-			const h = shape.bcInsideHeight * z;
+		// --- canvas-015: persistent BC bubble + ambient overlays ---------
+		// Per the canvas-015 persistent-scene-graph rewrite, each BC bubble
+		// is a persistent Container instantiated ONCE on first render and
+		// updated in place. Its children — body Graphics (rect+focus ring),
+		// counts pill, title Text, badge — all persist; only contents and
+		// stroke widths refresh per-zoom/per-theme.
 
-			const focused = hoveredKey === opts.key;
-
-			const g = new Graphics();
-			g.roundRect(screenX, screenY, w, h, shape.radiusBcInside * z)
-				.fill(color.bcInsideFill)
-				.stroke({
-					// canvas-013 — constant screen-space CSS pixels.
-					width: shape.borderWidth,
-					color: color.bcInsideBorder
-				});
-			if (focused) {
-				g.roundRect(
-					screenX - 2 * z,
-					screenY - 2 * z,
-					w + 4 * z,
-					h + 4 * z,
-					shape.radiusBcInside * z + 2 * z
-				).stroke({
-					// canvas-013 — constant screen-space CSS pixels.
-					width: shape.borderWidthFocus,
-					color: color.focusRing
-				});
-			}
-			node.addChild(g);
-
-			// Counts pill — right-aligned in the title row. §3.7 mandates
-			// a `bcInsidePillFill` rounded rect carrying the count glyph;
-			// `bcInsidePillRadius` / `bcInsidePillHeight` / `bcInsidePillMinWidth`
-			// drive the shape. The pill is anchored to the bubble's right
-			// edge inset by `framePadding * 0.5` to match the title's left
-			// inset; horizontally the count `Text` is centred over the
-			// rounded-rect. Built first so the title can measure the
-			// remaining width (canvas-013 revision 2026-05-19).
-			const c = bc.task_counts;
-			const countsLabel =
-				`b${c.backlog} t${c.todo} d${c.doing} ✓${c.done}`;
+		/** Build one inside-the-frame BC bubble (§3.7). World-space size
+		 *  driven by `bcInsideWidth` / `bcInsideHeight`. The BC's
+		 *  `container.position` is set by `updateBcDisplayObjects` to its
+		 *  frame-local coords on every update (frame-local coord system is
+		 *  inherited from the parent frame container). */
+		function createBcDisplayObjects(bc: BoundedContext): BcDisplayObjects {
+			const container = new Container();
+			const body = new Graphics();
+			const focusRing = new Graphics();
+			focusRing.visible = false;
+			const pillBg = new Graphics();
 			const pillText = new Text({
-				text: countsLabel,
+				text: '',
 				style: {
 					fill: color.bcInsideTextMuted,
 					fontFamily: typography.fontFamilyMono,
-					fontSize: Math.max(6, typography.sizeCaption * z)
+					fontSize: typography.sizeCaption
 				}
 			});
-			const pillTextPadX = 6 * z;
-			const pillH = shape.bcInsidePillHeight * z;
-			const pillW = Math.max(
-				shape.bcInsidePillMinWidth * z,
-				pillText.width + pillTextPadX * 2
-			);
-			const pillX = screenX + w - shape.framePadding * z * 0.5 - pillW;
-			const pillY = screenY + shape.framePadding * z * 0.5;
-			const pillBg = new Graphics();
-			pillBg
-				.roundRect(pillX, pillY, pillW, pillH, shape.bcInsidePillRadius * z)
-				.fill(color.bcInsidePillFill);
-			node.addChild(pillBg);
 			pillText.anchor.set(0.5);
-			pillText.position.set(pillX + pillW / 2, pillY + pillH / 2);
-			node.addChild(pillText);
-
-			// Title (BC name) — left of the row. §3.7 calls for
-			// `weightMedium` (denser interior variant, not the orbit BC's
-			// bold title). Scales with zoom; end-ellipsis if it would
-			// exceed the available width (from the title's left inset to
-			// the pill's left edge, minus a small gap). canvas-013
-			// revision 2026-05-19.
-			const bcTitleX = screenX + shape.framePadding * z * 0.5;
-			const bcTitleGap = shape.framePadding * z * 0.5;
-			const bcTitleMaxW = Math.max(0, pillX - bcTitleX - bcTitleGap);
-			const titleText = new Text({
+			const title = new Text({
 				text: bc.name,
 				style: {
 					fill: color.bcInsideText,
 					fontFamily: typography.fontFamily,
-					fontSize: Math.max(8, typography.sizeBody * z),
+					fontSize: typography.sizeBody,
 					fontWeight: String(typography.weightMedium) as '500'
 				}
 			});
-			truncateTextToWidth(titleText, bc.name, bcTitleMaxW);
-			titleText.position.set(
-				bcTitleX,
-				screenY + shape.framePadding * z * 0.5
-			);
-			node.addChild(titleText);
-
-			// Status badge slot — colourblind-friendly colour + glyph.
-			// `agent-awareness` drives this later; for now derived from
-			// task counts (the same logic the orbit baseline used).
-			node.addChild(makeStatusBadge(screenX, screenY, w, deriveBcStatus(bc), z));
-
-			node.eventMode = 'static';
-			node.hitArea = {
-				contains: (x: number, y: number) =>
-					x >= screenX && x <= screenX + w && y >= screenY && y <= screenY + h
-			};
-			node.on('pointerover', () => {
-				hoveredKey = opts.key;
-				renderScene();
-			});
-			node.on('pointerout', () => {
-				if (hoveredKey === opts.key) {
-					hoveredKey = null;
-					renderScene();
-				}
-			});
-
-			return node;
+			const badge = createStatusBadge();
+			container.addChild(body);
+			container.addChild(focusRing);
+			container.addChild(pillBg);
+			container.addChild(pillText);
+			container.addChild(title);
+			container.addChild(badge.container);
+			return { container, body, focusRing, pillBg, pillText, title, badge };
 		}
 
-		// A status badge — a coloured pill with the status glyph, pinned to a
-		// node's top-right corner.
-		function makeStatusBadge(
-			nodeX: number,
-			nodeY: number,
-			nodeW: number,
-			state: TaskState,
+		/** Update one BC bubble's geometry, text, and pill in place. Called
+		 *  on initial render, on every zoom change (stroke widths), on
+		 *  count ticks (pillText), and on theme flip (palette). No allocation. */
+		function updateBcDisplayObjects(
+			projectId: number,
+			bc: BoundedContext,
+			local: Point,
+			obj: BcDisplayObjects,
 			z: number
-		): Container {
-			const badge = new Container();
-			const size = shape.badgeHeight * z;
-			const bx = nodeX + nodeW - size - 6 * z;
-			const by = nodeY + 6 * z;
+		) {
+			void projectId; // key parts already wired up at creation time
+			const w = shape.bcInsideWidth;
+			const h = shape.bcInsideHeight;
+			obj.container.position.set(local.x, local.y);
 
-			const g = new Graphics();
-			g.roundRect(bx, by, size, size, shape.radiusBadge * z).fill(statusColor[state]);
-			badge.addChild(g);
+			const strokeBody = Math.max(1 / z, shape.borderWidth / z);
+			const strokeFocus = Math.max(1 / z, shape.borderWidthFocus / z);
 
+			// --- Body ---
+			obj.body.clear();
+			obj.body
+				.roundRect(0, 0, w, h, shape.radiusBcInside)
+				.fill(color.bcInsideFill)
+				.stroke({ width: strokeBody, color: color.bcInsideBorder });
+
+			// --- Focus ring (own Graphics, toggled via .visible — AC #9) ---
+			obj.focusRing.clear();
+			obj.focusRing
+				.roundRect(-2, -2, w + 4, h + 4, shape.radiusBcInside + 2)
+				.stroke({ width: strokeFocus, color: color.focusRing });
+			obj.focusRing.visible = hoveredKey === `bc:${projectId}:${bc.name}`;
+
+			// --- Counts pill ---
+			const c = bc.task_counts;
+			obj.pillText.text = `b${c.backlog} t${c.todo} d${c.doing} ✓${c.done}`;
+			obj.pillText.style.fill = color.bcInsideTextMuted;
+			// ADR-003 invariant #6 — text floor counter-scale. Apply BEFORE
+			// reading `obj.pillText.width` so the pill background is sized to
+			// the actually-rendered text (which grows when scaled up).
+			obj.pillText.scale.set(
+				screenSpaceTitleScale(typography.sizeCaption, z)
+			);
+			const pillTextPadX = 6;
+			const pillH = shape.bcInsidePillHeight;
+			const pillW = Math.max(
+				shape.bcInsidePillMinWidth,
+				obj.pillText.width + pillTextPadX * 2
+			);
+			const pillX = w - shape.framePadding * 0.5 - pillW;
+			const pillY = shape.framePadding * 0.5;
+			obj.pillBg.clear();
+			obj.pillBg
+				.roundRect(pillX, pillY, pillW, pillH, shape.bcInsidePillRadius)
+				.fill(color.bcInsidePillFill);
+			obj.pillText.position.set(pillX + pillW / 2, pillY + pillH / 2);
+
+			// --- Title (BC name) ---
+			const bcTitleX = shape.framePadding * 0.5;
+			const bcTitleGap = shape.framePadding * 0.5;
+			const bcTitleMaxW = Math.max(0, pillX - bcTitleX - bcTitleGap);
+			obj.title.style.fill = color.bcInsideText;
+			// ADR-003 invariant #6 — text floor counter-scale; apply BEFORE
+			// truncate so the binary search measures the rendered width.
+			obj.title.scale.set(screenSpaceTitleScale(typography.sizeBody, z));
+			truncateTextToWidth(obj.title, bc.name, bcTitleMaxW);
+			obj.title.position.set(bcTitleX, shape.framePadding * 0.5);
+
+			// --- Status badge ---
+			updateStatusBadge(obj.badge, w, deriveBcStatus(bc));
+
+			// --- Hit area (frame-local; no `z` factor — world.scale handles
+			// it; hit-test coordinates arrive in the container's local
+			// space, which is the BC's local space here). ---
+			obj.container.eventMode = 'static';
+			obj.container.hitArea = {
+				contains: (x: number, y: number) =>
+					x >= 0 && x <= w && y >= 0 && y <= h
+			};
+		}
+
+		// Status badge — coloured pill with the status glyph, pinned to a
+		// bubble's top-right corner. Persistent across renders.
+		function createStatusBadge(): BadgeDisplayObjects {
+			const container = new Container();
+			const body = new Graphics();
 			const glyph = new Text({
-				text: statusGlyph[state],
+				text: '',
 				style: {
 					fill: color.statusText,
 					fontFamily: typography.fontFamily,
-					fontSize: Math.max(6, typography.sizeCaption * z),
+					fontSize: typography.sizeCaption,
 					fontWeight: String(typography.weightBold) as '700'
 				}
 			});
 			glyph.anchor.set(0.5);
-			glyph.position.set(bx + size / 2, by + size / 2);
-			badge.addChild(glyph);
-
-			return badge;
+			container.addChild(body);
+			container.addChild(glyph);
+			return { container, body, glyph };
 		}
 
-		// Missing-tile corner glyph (canvas-005a). A `✕` in the tile's
-		// top-right corner, `statusMissing` colour, glyph size driven by
-		// `spacing.lg` (16px world-space) so it scales with the camera. Paired
-		// with the dimmed tile body + magenta border, this is the styleguide's
-		// "missing" state applied to project tiles (status palette is colour +
-		// glyph, not colour alone).
-		function makeMissingGlyph(
-			nodeScreen: Point,
+		function updateStatusBadge(
+			badge: BadgeDisplayObjects,
 			nodeW: number,
-			z: number
-		): Container {
-			const c = new Container();
-			const glyph = new Text({
-				text: statusGlyph.missing,
-				style: {
-					fill: color.statusMissing,
-					fontFamily: typography.fontFamily,
-					fontSize: Math.max(8, spacing.lg * z),
-					fontWeight: String(typography.weightBold) as '700'
-				}
-			});
-			glyph.anchor.set(1, 0);
-			glyph.position.set(
-				nodeScreen.x + nodeW - spacing.sm * z,
-				nodeScreen.y + spacing.sm * z
-			);
-			c.addChild(glyph);
-			return c;
+			state: TaskState
+		) {
+			const size = shape.badgeHeight;
+			const bx = nodeW - size - 6;
+			const by = 6;
+			badge.body.clear();
+			badge.body
+				.roundRect(bx, by, size, size, shape.radiusBadge)
+				.fill(statusColor[state]);
+			badge.glyph.text = statusGlyph[state];
+			badge.glyph.style.fill = color.statusText;
+			badge.glyph.position.set(bx + size / 2, by + size / 2);
 		}
 
-		// The ambient voice-state indicator — a small glyph + dot pinned to the
-		// bottom-right of the viewport. Screen-space (not world-space) so it
-		// does not move when the canvas pans. This is the styleguide's voice
-		// affordance contract; the voice BC supplies real state later.
-		function makeVoiceIndicator(): Container {
-			const indicator = new Container();
-			if (!app) return indicator;
-			const w = app.renderer.width;
-			const h = app.renderer.height;
+		// --- Voice indicator (screen-space overlay on app.stage) -----------
+		// Instantiated once on mount via `ensureVoiceIndicator`; updated in
+		// place via `updateVoiceIndicator`. Lives on `app.stage` (NOT
+		// `world`) so it ignores camera pan/zoom — screen-space affordance.
+		let voiceIndicator: {
+			container: Container;
+			dot: Graphics;
+			label: Text;
+		} | null = null;
 
-			const voiceColor =
-				voiceState === 'listening'
-					? color.voiceListening
-					: voiceState === 'muted'
-						? color.voiceMuted
-						: color.voiceIdle;
-
-			const r = 5;
-			const cx = w - 22;
-			const cy = h - 22;
-
+		function ensureVoiceIndicator() {
+			if (voiceIndicator || !app) return;
+			const container = new Container();
 			const dot = new Graphics();
-			dot.circle(cx, cy, r).fill(voiceColor);
-			indicator.addChild(dot);
-
 			const label = new Text({
-				text: voiceState === 'listening' ? 'mic' : voiceState === 'muted' ? 'muted' : 'mic',
+				text: '',
 				style: {
-					fill: voiceColor,
+					fill: color.voiceIdle,
 					fontFamily: typography.fontFamily,
 					fontSize: typography.sizeCaption,
 					fontWeight: String(typography.weightMedium) as '500'
 				}
 			});
 			label.anchor.set(1, 0.5);
-			label.position.set(cx - r - 6, cy);
-			indicator.addChild(label);
-
-			return indicator;
+			container.addChild(dot);
+			container.addChild(label);
+			app.stage.addChild(container);
+			voiceIndicator = { container, dot, label };
 		}
 
-		/** Wire a project frame's header bar into the shared drag
-		 *  controller. The header bar (NOT the frame body) is the
-		 *  project's grab handle and right-click target — canvas-007
-		 *  replaces the orbit baseline's "tile body" handle. The body is
-		 *  pass-through so BC bubbles inside it can be dragged independently
-		 *  and so empty regions of the frame don't swallow camera pans.
-		 *  Persistence is on `pointerup` via the window-level handler. */
-		function attachFrameHeaderDrag(
-			frame: Container,
-			id: number,
-			screenPos: Point,
-			frameW: number,
-			headerH: number,
-			z: number
-		) {
-			frame.eventMode = 'static';
-			frame.hitArea = {
-				contains: (x: number, y: number) =>
-					x >= screenPos.x &&
-					x <= screenPos.x + frameW &&
-					y >= screenPos.y &&
-					y <= screenPos.y + headerH
-			};
+		function updateVoiceIndicator() {
+			if (!voiceIndicator || !app) return;
+			const w = app.renderer.width;
+			const h = app.renderer.height;
+			const voiceColor =
+				voiceState === 'listening'
+					? color.voiceListening
+					: voiceState === 'muted'
+						? color.voiceMuted
+						: color.voiceIdle;
+			const r = 5;
+			const cx = w - 22;
+			const cy = h - 22;
+			voiceIndicator.dot.clear();
+			voiceIndicator.dot.circle(cx, cy, r).fill(voiceColor);
+			voiceIndicator.label.text =
+				voiceState === 'listening'
+					? 'mic'
+					: voiceState === 'muted'
+						? 'muted'
+						: 'mic';
+			voiceIndicator.label.style.fill = voiceColor;
+			voiceIndicator.label.position.set(cx - r - 6, cy);
+		}
 
+		/** Wire a project frame's container as a drag handle for the header
+		 *  bar — the hit area itself is a frame-local rect set by
+		 *  `updateFrameDisplayObjects` so it tracks the current frame size.
+		 *  Persistence on `pointerup` via the window-level handler.
+		 *  canvas-015: this is instantiated ONCE per frame at create time;
+		 *  drag and hover handlers are attached once and stay through every
+		 *  subsequent zoom/topology update. */
+		function attachFrameHeaderInteractivity(frame: Container, id: number) {
+			frame.eventMode = 'static';
 			frame.on('pointerover', () => {
 				hoveredKey = `project:${id}`;
-				renderScene();
+				// canvas-015 hover focus ring (AC #9): toggle the
+				// persistent focusRing Graphics's `.visible` without
+				// rebuilding the rest of the scene. Stroke width / rect
+				// geometry are still right from the last
+				// updateFrameDisplayObjects call.
+				toggleProjectFocusRing(id, true);
 			});
 			frame.on('pointerout', () => {
 				if (hoveredKey === `project:${id}`) {
 					hoveredKey = null;
-					renderScene();
+					toggleProjectFocusRing(id, false);
 				}
 			});
-
 			frame.on('pointerdown', (e) => {
-				e.stopPropagation(); // do not let this start a camera pan
-				// Right-button on the header bar = open the tile context
-				// menu at the click coordinates (canvas-005a). Reuses the
-				// same menu shape as the orbit baseline. The drag-controller
-				// treats `button === 2` as a no-op (state unchanged), but
-				// we still early-return here to keep the call site obvious.
+				e.stopPropagation();
 				if (e.button === 2) {
 					if (e.nativeEvent && 'stopImmediatePropagation' in e.nativeEvent) {
 						e.nativeEvent.stopImmediatePropagation();
@@ -2089,31 +2241,35 @@
 					e.global.y,
 					e.button
 				);
-				// Suppress headerH unused warning — kept on the signature
-				// for future header-area sub-affordances.
-				void z;
 			});
 		}
 
-		/** Wire one BC bubble into the shared drag controller. A BC drag
-		 *  pins that BC's frame-local position (`bcPositions`) and persists
-		 *  it on drag end via `saveBcPosition`. The deterministic force-
-		 *  directed layout re-runs on drag end with the new pinned set so
-		 *  the rest of the BCs re-flow around it (one-shot, no
-		 *  requestAnimationFrame loop). */
-		function attachBcDrag(
+		/** Wire one BC bubble's container into the shared drag controller +
+		 *  hover state. canvas-015: instantiated once per BC at create time;
+		 *  handlers persist across renders. */
+		function attachBcInteractivity(
 			bubble: Container,
 			projectId: number,
-			bcName: string,
-			screenPos: Point,
-			z: number
+			bcName: string
 		) {
-			// `pointerover`/`pointerout` already wired in `makeBcBubble`.
+			const key = `bc:${projectId}:${bcName}`;
+			bubble.on('pointerover', () => {
+				hoveredKey = key;
+				// canvas-015 hover focus ring (AC #9): redraw just this
+				// one BC's body+ring in place. The body Graphics carries
+				// both the bubble shape and the optional focus-ring
+				// stroke; clear+restroke is allocation-free.
+				toggleBcFocusRing(projectId, bcName, true);
+			});
+			bubble.on('pointerout', () => {
+				if (hoveredKey === key) {
+					hoveredKey = null;
+					toggleBcFocusRing(projectId, bcName, false);
+				}
+			});
 			bubble.on('pointerdown', (e) => {
-				e.stopPropagation(); // do not let this bubble up to the
-				// frame's header drag or the canvas-level pan.
+				e.stopPropagation();
 				if (e.button === 2) {
-					// Right-click on a BC: no menu in v1. Just suppress.
 					if (e.nativeEvent && 'stopImmediatePropagation' in e.nativeEvent) {
 						e.nativeEvent.stopImmediatePropagation();
 					}
@@ -2127,11 +2283,31 @@
 					e.global.y,
 					e.button
 				);
-				// Suppress unused warnings — params are kept for symmetry
-				// with `attachFrameHeaderDrag` and future hit-area needs.
-				void screenPos;
-				void z;
 			});
+		}
+
+		/** Toggle one project frame's focus ring without rebuilding the
+		 *  scene (canvas-015 AC #9). The ring's geometry was already laid
+		 *  down by `updateFrameDisplayObjects` at last render, so a pure
+		 *  `.visible` flip is enough. */
+		function toggleProjectFocusRing(id: number, visible: boolean) {
+			const obj = frameObjects.get(id);
+			if (!obj) return;
+			obj.focusRing.visible = visible;
+		}
+
+		/** Toggle one BC bubble's focus ring without rebuilding the scene
+		 *  (canvas-015 AC #9). */
+		function toggleBcFocusRing(
+			projectId: number,
+			bcName: string,
+			visible: boolean
+		) {
+			const frame = frameObjects.get(projectId);
+			if (!frame) return;
+			const bcObj = frame.bcs.get(bcName);
+			if (!bcObj) return;
+			bcObj.focusRing.visible = visible;
 		}
 
 		return () => {

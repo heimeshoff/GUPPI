@@ -54,8 +54,10 @@ The styleguide was signed off in person by Marco on 2026-05-14, so the gate is o
 - **Cascade-remove confirmation** — the small two-button dialog opened from the management modal's "Remove" button. Names the scan-root path AND the child-project count and explicitly states that tile state will not be retained — ADR-013 makes the cascade hard-delete, NOT subject to ADR-005's 30-day window. Confirming invokes `removeScanRoot(scanRootId)`; the backend fires `ProjectRemoved` per child BEFORE tearing watchers down, and the canvas-005a `project_removed` handler drops the tiles (one event variant, one listener — canvas-005b does NOT re-subscribe). After the cascade resolves, the management modal refreshes via `listScanRoots()` + per-row counts; if zero roots remain, it closes and the "Manage scan roots…" menu item hides on the next right-click.
 - **Error toast** — a screen-space HTML overlay pinned top-center, `statusMissing` border (refusal, not failure). Auto-dismisses after 3000ms; one toast at a time. canvas-005a uses it for the `register_project` rejection path ("not an Agentheim project"), which is the exact IPC contract string and must surface verbatim.
 - **Missing tile** — the canvas visual for a registered-but-unwatched project (`ProjectSnapshot.missing: true`). Frame body at 50% opacity, border swapped from `frameBorder` to `statusMissing`, `✕` glyph at `spacing.lg` in the top-right corner of the header bar. `bcs: []` on the snapshot keeps the frame empty (the empty-frame placeholder is suppressed in this state); the frame is NOT filtered out of the per-project collection (the missing visual is the affordance). Right-click on the header bar still offers "Remove project".
-- **Title-fits-frame invariant** (canvas-013, revised 2026-05-19) — project frame titles and BC bubble titles **scale with camera zoom** (same relative size to their container) and **end-truncate with an ellipsis** when the rendered text width would exceed the available container width. Both kinds of title are Pixi `Text`. Truncation budget: project title is `frameWidth - 2*framePadding - countsPillWidth - gap`; BC title is `pillX - bcTitleX - gap`. Implemented via a single `truncateTextToWidth(t, fullText, maxWidth)` helper at script scope in `Canvas.svelte` (binary search for the largest prefix that fits with `…` appended). Floor: `Math.max(8, sizeTitle * z)` for project titles and `Math.max(8, sizeBody * z)` for BC titles — same convention for both — to keep them readable at extreme zoom-out. *Historical note:* the first draft of canvas-013 (commit `3315a10`) used an HTML-overlay layer with `text-overflow: ellipsis` to keep project titles at a constant screen-space size (Miro-style). Reverted same day after hands-on verification — the visual rhyme between a frame's title and its child BC titles is load-bearing.
+- **Title-fits-frame invariant** (canvas-013, revised 2026-05-19) — project frame titles and BC bubble titles **scale with camera zoom** (same relative size to their container) and **end-truncate with an ellipsis** when the rendered text width would exceed the available container width. Both kinds of title are Pixi `Text`. Truncation budget: project title is `frameWidth - 2*framePadding - countsPillWidth - gap`; BC title is `pillX - bcTitleX - gap`. Implemented via a single `truncateTextToWidth(t, fullText, maxWidth)` helper at script scope in `Canvas.svelte` (binary search for the largest prefix that fits with `…` appended). Floor: under canvas-015 (persistent scene graph + camera-as-stage-transform) the floor is enforced via a per-Text counter-scale `Math.max(1, 8 / (fontSize * z))` applied to four sites (project title, project missing-tile glyph, BC title, BC counts pill text) before truncation — the on-screen result is the same as the pre-canvas-015 `Math.max(8, fontSize * z)` fontSize-floor, with the on-screen text never dropping below 8 CSS-px. See `screenSpaceTitleScale` in `Canvas.svelte` and ADR-016 §4 (zoom-out floor). *Historical note:* the first draft of canvas-013 (commit `3315a10`) used an HTML-overlay layer with `text-overflow: ellipsis` to keep project titles at a constant screen-space size (Miro-style). Reverted same day after hands-on verification — the visual rhyme between a frame's title and its child BC titles is load-bearing.
 - **Crispness invariant** (canvas-013) — the canvas-wide policy that every rendered element (frame borders, BC bubble borders, intra-project edges incl. arrowheads + ACL notches, project frame title text, BC bubble title text, BC task-count text, status badges, missing-tile glyph) renders at display resolution at every supported zoom. Two load-bearing pieces hold the invariant: (1) PixiJS booted with `app.init({ resolution: window.devicePixelRatio, autoDensity: true, … })` so Text and Graphics rasterise at the framebuffer's real resolution rather than the previous default 1× upscale; (2) stroke widths for the "borders" category (frame border, BC bubble border, header divider, focus ring, and all four intra-project edge variants incl. arrowheads + ACL notch geometry) are **constant screen-space CSS pixels** — the previous `Math.max(1, shape.borderWidth* * z)` pattern that produced sub-pixel hairlines at zoom-out and chunky strokes at zoom-in is retired. Focus-ring **inset** (positional offset) stays world-space; only the stroke width is constant-screen-space. Arrowhead `pullBack` (the tip-from-bubble distance) stays world-space because the bubble it pulls back from is `bcInsideWidth * z` in screen space.
+- **Persistent scene graph** (canvas-015, ADR-016) — every project's display objects (frame container, body, header, title text, counts text, focus ring, missing glyph, empty-state text, intra-project edges Graphics, BC bubbles) are **instantiated once** when the project enters the scene (initial `refresh` or `project_added`) and held in a `frameObjects: Map<projectId, FrameDisplayObjects>` keyed by snapshot id. Subsequent renders update geometry in place via `.clear()` + redraw on the same persistent `Graphics` instances; Text content/style updates via property writes; visibility flags toggle via `.visible`. No `world.removeChildren()`; no `new Graphics()` / `new Text()` per render. The pan path becomes a single `world.position.set()` call (zero allocation, zero clear-and-redraw); zoom adds `world.scale.set()` + a `repaint()` pass that rewrites stroke widths in place (still no allocation). Theme flips and topology changes go through the same in-place update pass. Hover focus rings toggle via `.visible` only; their geometry is laid down once and stays until the next zoom/topology update.
+- **Camera as stage transform** (canvas-015, ADR-016) — the PixiJS `world` Container's `position` and `scale` carry the camera transform: `world.position = (camera.pan_x, camera.pan_y)`, `world.scale = camera.zoom`. Children are drawn in **world coordinates** (not the previous JS-pre-projected screen coordinates), and PixiJS's WebGL renderer applies the parent transform once per frame on the GPU — every child moves and scales for free under pan and zoom. `camera.worldToScreen()` remains the contract for screen-space overlays (modals, context menus, voice indicator, forthcoming agent-awareness badges); the **renderer's internal draw path** no longer uses it. Stroke widths in world space are pre-divided by `z` (`shape.borderWidthFrame / z`) so the parent's `world.scale = z` multiplication restores the constant CSS-pixel value on screen — Crispness invariant preserved (#4). Arrowhead and ACL-notch tip sizes follow the same pre-divide policy; `pullBack` distance stays in world space because the BC bubble it pulls back from is itself drawn in world space.
 
 ## How the canvas stays live
 
@@ -88,20 +90,31 @@ re-fetch of a single project happens only on **resync**
 
 The canvas holds a keyed collection of project entries
 (`{ id, snapshot, pos, bcLayout, bcPositions }` per project, keyed off
-`ProjectSnapshot.id`); `Canvas.svelte`'s `renderScene` iterates and draws one
-project frame per entry — frame border + header bar + interior BC bubbles +
-intra-project BC↔BC edges. `renderScene` is **event-driven** (`canvas-014`):
-every interactive path (pan, wheel, drag, hover) and every domain event
-(`task_*`, `bc_*`, `project_added`, `project_removed`,
-`bc_relationships_changed`, `resync_required`, theme flip) calls
-`renderScene()` explicitly. The PixiJS ticker is dormant in steady state
-and only stepped while an eased camera transition (`f` zoom-to-fit) is in
-flight — the previous unconditional per-tick rebuild was the dominant
-per-frame cost the `canvas-perf-2026-05-17` spike retired. Window-resize
-re-projection is served by an explicit `resize` listener. The substantive
-follow-up to that spike (`canvas-015`) lands persistent display objects
-and a camera-as-stage-transform pan so individual events no longer pay a
-full-rebuild cost either. Per-frame state — saved frame position, persisted
+`ProjectSnapshot.id`); `Canvas.svelte`'s `renderScene` iterates and reconciles one
+**persistent** per-project display-object struct per entry (frame body, header,
+title, counts, focus ring, missing glyph, empty-state text, intra-project
+edges Graphics, and a child per BC bubble) — see the **persistent scene
+graph** vocabulary entry and ADR-016. The Pixi world `Container` itself carries
+the camera transform: `world.position` is the pan, `world.scale` is the zoom,
+so children draw in world coordinates and the WebGL renderer composites the
+camera once per frame on the GPU. `renderScene` is **event-driven**
+(`canvas-014`): every interactive path (pan, wheel, drag, hover) and every
+domain event (`task_*`, `bc_*`, `project_added`, `project_removed`,
+`bc_relationships_changed`, `resync_required`, theme flip) drives the
+appropriate sub-path explicitly. Pan calls only `world.position.set()` (no
+reconcile, no clear-and-redraw). Wheel calls `world.position.set()` +
+`world.scale.set()` + a `repaint()` pass (rewrites zoom-dependent stroke
+widths in place — no allocation). Frame-drag / BC-drag write directly into
+the one affected container's `position`. Topology changes and theme flips
+go through `renderScene()` (or `repaint()`), which reconciles the
+`frameObjects` map against the live `projects[]` array and runs in-place
+update on every entry — instantiating new display objects only on
+`project_added` and destroying them only on `project_removed`. The PixiJS
+ticker is dormant in steady state and only stepped while an eased camera
+transition (`f` zoom-to-fit) is in flight — the previous unconditional
+per-tick rebuild was the dominant per-frame cost the
+`canvas-perf-2026-05-17` spike retired. Window-resize re-projection is
+served by an explicit `resize` listener. Per-frame state — saved frame position, persisted
 per-BC drag positions, the deterministic BC layout output, drag target,
 fine-grained event routing — is all keyed by id; no single-valued `projectId`
 scalar exists. A **shared drag controller** owns the one set of `window`
