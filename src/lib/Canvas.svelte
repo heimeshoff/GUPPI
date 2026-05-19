@@ -534,7 +534,22 @@
 			await app.init({
 				resizeTo: host,
 				background: color.canvasBg,
-				antialias: true
+				antialias: true,
+				// canvas-013 AC #1 — Crispness invariant.
+				// Without these two, PixiJS v8 defaults to
+				// `resolution = 1` regardless of the display's actual DPR;
+				// every Text and Graphics is rasterized at 1× and the GPU
+				// upscales to device pixels, producing a bilinear-smear
+				// blur halo at zoom-out and a soft edge everywhere. Setting
+				// `resolution = devicePixelRatio` + `autoDensity = true`
+				// tells Pixi to render at the framebuffer's real resolution
+				// and downscale via CSS, the standard HiDPI idiom.
+				// Coordinate inputs (positions, line widths) stay in CSS
+				// pixels — Pixi multiplies by `resolution` internally — so
+				// the rest of the scene math is unchanged by this flip.
+				// (ADR-003 extension 2026-05-19.)
+				resolution: window.devicePixelRatio || 1,
+				autoDensity: true
 			});
 			if (disposed) {
 				app.destroy(true);
@@ -661,8 +676,18 @@
 				if (!fromCenter || !toCenter) return;
 
 				const g = new Graphics();
-				const w = shape.edgeWeight * z;
-				const wConf = shape.edgeWeightConformist * z;
+				// canvas-013 — Crispness invariant. Stroke widths are
+				// CONSTANT in screen-space CSS pixels; the `* z` multiply
+				// was producing sub-pixel hairlines at zoom-out (smeared
+				// into halos by the GPU upscale) and chunky strokes at
+				// zoom-in (out of line with the rest of the stroke
+				// vocabulary). Suppress unused-`z` after this change by
+				// keeping the parameter for symmetry with other geometry
+				// helpers (arrowhead/notch still scale their *size* with
+				// `z` so the geometry-as-type-distinction reads at every
+				// zoom).
+				const w = shape.edgeWeight;
+				const wConf = shape.edgeWeightConformist;
 
 				switch (rel.type) {
 					case 'shared-kernel':
@@ -756,13 +781,14 @@
 				if (len < 0.0001) return;
 				const ux = dx / len;
 				const uy = dy / len;
-				const headLen = shape.arrowheadLength * z;
-				const headW = shape.arrowheadWidth * z;
-				// Pull the tip back to the bubble border so the arrowhead
-				// does not bury under the BC bubble. We can't know the
-				// rotated rectangle's intersection cheaply; pull back by
-				// half the bubble's width as a serviceable approximation
-				// (the bubble centers are the line endpoints).
+				// canvas-013 — arrowhead size is the edge stroke's terminator;
+				// kept at constant screen-space CSS pixels, same policy as
+				// the stroke widths above. The pullBack distance, in
+				// contrast, must STAY zoom-scaled because the bubble it
+				// pulls the tip away from is itself drawn at `bcInsideWidth
+				// * z` in screen space.
+				const headLen = shape.arrowheadLength;
+				const headW = shape.arrowheadWidth;
 				const pullBack = (shape.bcInsideWidth / 2) * z;
 				const tipX = to.x - ux * pullBack;
 				const tipY = to.y - uy * pullBack;
@@ -799,7 +825,11 @@
 				const uy = dy / len;
 				const midX = (upstream.x + downstream.x) / 2;
 				const midY = (upstream.y + downstream.y) / 2;
-				const size = shape.aclNotchSize * z;
+				// canvas-013 — notch glyph is constant screen-space CSS px,
+				// same policy as arrowheads / stroke widths. `z` retained
+				// on the signature for symmetry with `drawArrowhead`.
+				void z;
+				const size = shape.aclNotchSize;
 				// Tip points toward upstream.
 				const tipX = midX - ux * (size / 2);
 				const tipY = midY - uy * (size / 2);
@@ -841,7 +871,12 @@
 				body.roundRect(frameScreen.x, frameScreen.y, fw, fh, shape.radiusFrame * z)
 					.fill(color.frameFill)
 					.stroke({
-						width: Math.max(1, shape.borderWidthFrame * z),
+						// canvas-013 — constant screen-space CSS pixels.
+						// `autoDensity` handles the DPR conversion to
+						// device pixels, so a 1px CSS width is a true
+						// 1-device-px hairline on a HiDPI display, not a
+						// sub-pixel smear at low zoom.
+						width: shape.borderWidthFrame,
 						color: borderCol
 					});
 				frame.addChild(body);
@@ -881,12 +916,26 @@
 					.moveTo(frameScreen.x, frameScreen.y + headerH)
 					.lineTo(frameScreen.x + fw, frameScreen.y + headerH)
 					.stroke({
-						width: Math.max(1, shape.borderWidthFrame * z),
+						// canvas-013 — constant screen-space CSS pixels.
+						width: shape.borderWidthFrame,
 						color: color.frameHeaderDivider
 					});
 				frame.addChild(header);
 
-				// --- Header content: title + path + total task count -------
+				// --- Header content: project title + total task count -------
+				// canvas-013 — the project frame title is rendered as an
+				// HTML overlay (ADR-003 extension 2026-05-19) so it stays
+				// at a CONSTANT screen-space CSS pixel size at every zoom
+				// (Miro-style frame title — the overview is the use case
+				// that needs the title most). The overlay subscribes to
+				// `camera` + `projects` via Svelte 5 runes; the template
+				// at the bottom of this component owns its DOM. The Pixi
+				// `Text` allocation that used to live here was the only
+				// one that scaled with `z`, and removing it also sheds a
+				// per-render Pixi text rasterisation from `renderScene`.
+				// The counts label below stays in Pixi `Text` (BC text +
+				// header counts are NOT constant-size by AC #2 + #4) and
+				// gains crispness from the DPR fix above.
 				const totalTasks = entry.snapshot.bcs.reduce(
 					(acc, b) =>
 						acc +
@@ -896,20 +945,6 @@
 						b.task_counts.done,
 					0
 				);
-				const titleText = new Text({
-					text: entry.snapshot.name,
-					style: {
-						fill: color.frameTitleText,
-						fontFamily: typography.fontFamily,
-						fontSize: Math.max(8, typography.sizeTitle * z),
-						fontWeight: String(typography.weightBold) as '700'
-					}
-				});
-				titleText.position.set(
-					frameScreen.x + shape.framePadding * z,
-					frameScreen.y + (headerH - typography.sizeTitle * z) / 2
-				);
-				frame.addChild(titleText);
 
 				// Counts pill right-aligned in the header.
 				const countsLabel = `${totalTasks} task${totalTasks === 1 ? '' : 's'}`;
@@ -944,6 +979,13 @@
 				const focused = hoveredKey === `project:${entry.id}`;
 				if (focused) {
 					const ring = new Graphics();
+					// canvas-013 — focus ring INSET stays in world-space
+					// (proportional to the frame at every zoom) but the
+					// stroke WIDTH is constant screen-space CSS pixels.
+					// A 2-CSS-px inset reads as a hairline halo around
+					// the frame at default zoom; at zoom-out the inset
+					// shrinks proportionally with the frame, matching the
+					// affordance vocabulary.
 					ring
 						.roundRect(
 							frameScreen.x - 2 * z,
@@ -953,7 +995,7 @@
 							shape.radiusFrame * z + 2 * z
 						)
 						.stroke({
-							width: Math.max(1, shape.borderWidthFocus * z),
+							width: shape.borderWidthFocus,
 							color: color.focusRing
 						});
 					frame.addChild(ring);
@@ -1704,7 +1746,8 @@
 			g.roundRect(screenX, screenY, w, h, shape.radiusBcInside * z)
 				.fill(color.bcInsideFill)
 				.stroke({
-					width: Math.max(1, shape.borderWidth * z),
+					// canvas-013 — constant screen-space CSS pixels.
+					width: shape.borderWidth,
 					color: color.bcInsideBorder
 				});
 			if (focused) {
@@ -1715,7 +1758,8 @@
 					h + 4 * z,
 					shape.radiusBcInside * z + 2 * z
 				).stroke({
-					width: Math.max(1, shape.borderWidthFocus * z),
+					// canvas-013 — constant screen-space CSS pixels.
+					width: shape.borderWidthFocus,
 					color: color.focusRing
 				});
 			}
@@ -2007,6 +2051,50 @@
 </script>
 
 <div class="canvas-host" bind:this={host}></div>
+
+<!--
+	Project frame titles (canvas-013). HTML overlays positioned over the
+	PixiJS canvas — ADR-003 extension 2026-05-19. CONSTANT screen-space
+	CSS pixel size at every zoom (Miro-style: the overview is the use case
+	that needs the title most). The Svelte 5 reactive template reads
+	`projects` (the keyed-by-id snapshot collection), `camera.pan_x` /
+	`camera.pan_y` / `camera.zoom` (the reactive camera runes), and the
+	active theme palette via tokens, so a pan / zoom / theme-flip / live-
+	add / live-remove re-evaluates this block automatically — no per-tick
+	push from `renderScene` required (and per the canvas-014 perf report,
+	the ticker is dormant in steady state; the overlay rides camera-event
+	updates the same way the Pixi scene does).
+
+	`pointer-events: none` so a title never swallows the canvas's pan
+	gesture or a right-click intended for the underlying frame header.
+	`z-index: 5` sits ABOVE the canvas (default 0) but BELOW the
+	interactive overlay band (`.context-menu` at 10, `.error-toast` at
+	11, `.modal-backdrop` at 20) so an open menu / toast / modal always
+	wins over a title.
+
+	Truncation: CSS `text-overflow: ellipsis` on a width-bound element
+	(width = current frame header CSS width = `bcLayout.width * zoom`).
+	The browser handles the measurement; no per-frame JS layout cost.
+-->
+<div class="frame-title-overlay" aria-hidden="true">
+	{#each projects as entry (entry.id)}
+		{@const screen = camera.worldToScreen(entry.pos.x, entry.pos.y)}
+		{@const fw = entry.bcLayout.width * camera.zoom}
+		{@const dim = entry.snapshot.missing ? 0.5 : 1}
+		<div
+			class="frame-title"
+			style="
+				left: {screen.x + shape.framePadding}px;
+				top: {screen.y + shape.framePadding / 2}px;
+				width: {Math.max(0, fw - shape.framePadding * 2)}px;
+				opacity: {dim};
+			"
+		>
+			{entry.snapshot.name}
+		</div>
+	{/each}
+</div>
+
 <div class="status">{status}</div>
 
 <!--
@@ -2346,6 +2434,53 @@
 		overflow: hidden;
 		background: var(--guppi-canvas-bg);
 	}
+
+	/*
+	 * Project frame titles (canvas-013) — HTML overlay container.
+	 * `position: absolute; inset: 0` covers the full canvas region; the
+	 * per-frame title divs are absolutely positioned children. Pointer
+	 * events pass through so a title never blocks the camera pan, drag,
+	 * right-click, or wheel-zoom on the underlying canvas / frame
+	 * header. `z-index: 5` sits ABOVE the canvas but BELOW the
+	 * interactive overlay band (`.context-menu` z-index 10, `.error-toast`
+	 * z-index 11, `.modal-backdrop` z-index 20) so an open menu / toast
+	 * / modal always wins over a title (canvas-013 AC #7).
+	 */
+	.frame-title-overlay {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		pointer-events: none;
+		z-index: 5;
+	}
+
+	/*
+	 * One project's frame title — constant CSS size at every camera zoom
+	 * (canvas-013 AC #2 / Miro-style). CSS `text-overflow: ellipsis` on
+	 * a width-bound element handles end-truncation when the project name
+	 * exceeds the current header CSS width — the browser re-measures on
+	 * every style change (the inline `width:` rebound by the reactive
+	 * template on every camera move), so no per-frame JS measurement.
+	 * Tokens drive every value (typography + colour) so the dark/light
+	 * theme flip repaints the title without per-element work
+	 * (design-system-004 path; canvas-013 AC #9).
+	 */
+	.frame-title {
+		position: absolute;
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-title);
+		font-weight: var(--guppi-weight-bold);
+		color: var(--guppi-frame-title-text);
+		line-height: 1.2;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		/* Constant baseline regardless of theme; transitions are reserved
+		   for affordance changes (focus ring), not for a property that
+		   updates on every camera move. */
+		will-change: left, top, width;
+	}
+
 	.status {
 		position: absolute;
 		left: var(--guppi-space-sm);
