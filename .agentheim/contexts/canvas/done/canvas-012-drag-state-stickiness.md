@@ -6,7 +6,7 @@ type: bug
 context: canvas
 created: 2026-05-17
 completed: 2026-05-19
-commit:
+commit: a2af868
 depends_on: []
 blocks: []
 tags: [drag, input, regression, drag-controller]

@@ -5,6 +5,44 @@ Newest entries on top.
 
 ---
 
+## 2026-05-19 17:00 -- Task verified and completed: canvas-012 - Drag state can stick after pointerup — subsequent mouse moves pan the canvas
+
+**Type:** Work / Task completion
+**Task:** canvas-012-drag-state-stickiness - Drag state can stick after pointerup — subsequent mouse moves pan the canvas
+**Summary:** Canvas drag controller extracted into a pure `src/lib/drag-controller.ts` module (verification-surface peer of `tile-layout.ts` / `bc-layout.ts` / `snapshot-patch.ts`, zero Svelte + zero Pixi imports), replacing the four-variable drag-state spread (`dragProjectId` / `dragBcName` / `dragOriginX/Y` at module scope + `panning` at function scope) with a single discriminated-union `DragState` (`idle` | `panning` | `frame` | `bc`) and a `Target` descriptor (`empty` | `frameHeader` | `bcBubble`); five transition fns (`onPointerDown` / `onPointerMove` / `onPointerUp` / `onPointerCancel` / `onPointerLeave`). The canonical stuck-pan repro (clicking a frame body, releasing, then moving the mouse) is closed by the state machine alone — `onPointerUp` lands in IDLE for every state kind, unconditionally; the old `window.pointerup` clear inside `if (panning)` after two early-return guards is gone by construction. New `window` `pointercancel` + `pointerleave` listeners wired as terminal events (both unconditional IDLE). `button === 2` short-circuit keeps right-clicks from entering a drag. Frame `hitArea` (header-bar-only) preserved — the frame-body pass-through that lets empty regions inside a frame pan the camera (per canvas-007) is unchanged. Pointer Capture API migration deliberately OUT — the audit confirmed the bug is a one-line unconditional-clear + two missing terminal listeners, not a structural failure of the window-listener model; the SM extraction makes a future PC migration cheap (one module's `onPointerUp` reroute, not three sprawling handlers) if an overlay-intercept failure mode ever surfaces. canvas/README.md gains drag-controller vocabulary entries.
+**Verification:** PASS (iteration 1)
+**Commit:** a2af868
+**Files changed:** 3 (src/lib/drag-controller.ts NEW; src/lib/Canvas.svelte; .agentheim/contexts/canvas/README.md)
+**Tests added:** 0 — legitimate TDD-skip per the doctrine's "UI tasks where the project has no UI test infrastructure" category, with the same-batch `infrastructure-017` adding the test runner. `drag-controller.ts` is the canonical pure-module shape that vitest tests will target in a future backfill task. `pnpm check` 0/0 (990 files); `cargo test --lib` 122/122.
+**ADRs written:** none — the drag-controller extraction is component-internal; the discriminated-union shape + the no-imports invariant + the five-fn surface are documented in canvas/README.md and the module's own header. ADR candidate from the refinement pass deferred (write trigger: if the controller grows a second consumer or the persistence boundary shifts).
+**New backlog items:** none.
+**Note:** Final v1 design-refresh blocker triad item lands — canvas-014 (perf spike, 2026-05-18) + canvas-013 (rendering invariants, 2026-05-19) + canvas-012 (this commit) now all done. The verifier audit ran `pnpm check` + `cargo test --lib` end-to-end on the working tree and confirmed both green. canvas-015 (substantive renderer rewrite) is the next batch — it inherits the post-extraction `Canvas.svelte` shape, which means the drag-handler call sites are 3–5 lines each calling into the controller, instead of the prior sprawling per-handler closures.
+
+---
+
+## 2026-05-19 17:00 -- Task verified and completed: infrastructure-017 - Frontend test infrastructure (Vitest for the pure modules)
+
+**Type:** Work / Task completion
+**Task:** infrastructure-017-frontend-test-infrastructure - Frontend test infrastructure — Vitest for the pure modules
+**Summary:** Vitest 2 stood up as GUPPI's frontend test runner for the pure module surface; 29 characterisation tests landed across `snapshot-patch.ts` (10), `tile-layout.ts` (9), `bc-layout.ts` (10) codifying the load-bearing invariants captured during canvas-001 / canvas-002 / canvas-007 — lazy zero-count BC creation, count clamp at 0, idempotent `bc_appeared`, Rust-matching BC sort order, `bc_relationships_changed` node-ensuring behaviour; spiral origin + leg pattern + adjacency + injectivity + purity + defensive fallback for NaN/Infinity; deterministic mulberry32-seeded BC layout, sticky pins, finite-positions-around-pins, related-BC-cluster edge-length metric, frame auto-fit, empty-input floor. `vitest.config.ts` deliberately skips the SvelteKit pipeline (node env, no `@sveltejs/kit/vite` plugin) per ADR-002's lean-runtime stance — the pure modules have zero Svelte + zero Pixi imports by design and don't need the framework wrapper. `package.json` gains `"test": "vitest run"`; `pnpm-lock.yaml` picks up vitest + transitive deps (`@vitest/*`, `chai`, `tinybench`, `tinypool`, `tinyspy`, `loupe`, `pathe`). README adds two new vocab entries (Pure module, Characterisation test). `pnpm test` green 29/29 (~811ms); `pnpm check` 0/0 (990 files).
+**Verification:** PASS (iteration 1)
+**Commit:** 8e9383e
+**Files changed:** 7 (package.json; pnpm-lock.yaml; vitest.config.ts NEW; src/lib/snapshot-patch.test.ts NEW; src/lib/tile-layout.test.ts NEW; src/lib/bc-layout.test.ts NEW; .agentheim/contexts/infrastructure/README.md)
+**Tests added:** 29 — `snapshot-patch.test.ts` 10, `tile-layout.test.ts` 9, `bc-layout.test.ts` 10. Worker authored characterisation tests against existing pure modules (not red-green-refactor — the modules already shipped in production); each test codifies an invariant from the originating canvas-task's Outcome section. Verifier counted ≥ 3 per file (AC #2) and confirmed each invariant is named in the corresponding `test(` description.
+**ADRs written:** none — the choice not to wire `@sveltejs/kit/vite` is documented in `vitest.config.ts`'s header comment + the BC README vocabulary entry; no separate ADR (ADR-002 already covers the framework stance).
+**New backlog items:** none. **Cross-task significance:** unblocks a future backfill of `src/lib/drag-controller.ts` tests (canvas-012's pure extract, also this batch). The drag-controller is now the canonical pure-module shape that vitest can target without infra friction.
+**Note:** Disjoint-file parallel landing with canvas-012 (this batch) — neither worker touched the other's files; the lockfile + `package.json` script were the only shared-surface concerns and were owned cleanly by this worker. The verifier ran `pnpm test` + `pnpm check` end-to-end on the working tree (with canvas-012's diff also present) and confirmed both green, demonstrating the two diffs compose.
+
+---
+
+## 2026-05-19 16:50 -- Batch started: [canvas-012, infrastructure-017]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-012-drag-state-stickiness - Drag state can stick after pointerup — subsequent mouse moves pan the canvas, infrastructure-017-frontend-test-infrastructure - Frontend test infrastructure — Vitest for the pure modules
+**Parallel:** yes (2 workers — canvas-015 demoted to next batch, conflicts with canvas-012 on Canvas.svelte)
+
+---
+
 ## 2026-05-19 14:55 -- Model / Promoted: canvas-015 - Persistent scene graph + camera as stage transform (replace tear-down/rebuild render)
 
 **Type:** Model / Promote

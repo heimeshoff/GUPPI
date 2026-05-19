@@ -3,6 +3,7 @@ id: infrastructure-017-frontend-test-infrastructure
 type: feature
 status: done
 completed: 2026-05-19
+commit: 8e9383e
 scope: bc
 depends_on: []
 related_adrs:
