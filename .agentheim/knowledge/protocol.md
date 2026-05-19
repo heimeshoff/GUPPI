@@ -5,6 +5,27 @@ Newest entries on top.
 
 ---
 
+## 2026-05-19 14:35 -- Model / Promoted: canvas-012 - Drag state can stick after pointerup — subsequent mouse moves pan the canvas
+
+**Type:** Model / Promote
+**BC:** canvas
+**From → To:** backlog → todo
+**Summary:** Same-turn promotion following the REFINE pass above. Readiness check passed without another refinement: 9 concrete acceptance criteria (canonical-repro fixed, 3 drag-kind coverage, `pointercancel` + `pointerleave` wirings, right-click-during-drag, `src/lib/drag-controller.ts` extraction with no Svelte/Pixi imports, reproducer documented, `pnpm check` + `cargo test --lib` clean), no unmet deps (`depends_on: []`), source-pinned diagnosis (line numbers in `Canvas.svelte` for every claim site + the leak line). Last v1 blocker from the 2026-05-17 hands-on verification triad enters todo — canvas-014 (perf spike) + canvas-013 (rendering invariants) already done, canvas-012 (this) now ready for `/agentheim:work`.
+
+---
+
+## 2026-05-19 14:30 -- Model / Refined: canvas-012 - Drag state can stick after pointerup — subsequent mouse moves pan the canvas
+
+**Type:** Model / Refine
+**BC:** canvas
+**Mode:** Interrogator (REFINE default)
+**Status after:** backlog (promotion-ready, awaiting user sign-off)
+**Summary:** Bug task refined against Marco's hands-on canonical reproducer ("click on a project frame body, release the mouse, then move — the screen pans"). Two scope locks made before delegation: (1) **fix shape = extract a small state machine** alongside the fix (pure module, no frontend test infra in scope — `infrastructure-017` stays in its own backlog); (2) **PC API migration permitted IF the audit reveals it's cleaner**. The orchestrator routed-to-self (read `Canvas.svelte` directly rather than delegating to architect; ranked the audit conclusive enough to skip the specialist hop). Diagnosis pinned to source line numbers: empty-canvas `panning` is a function-scope variable set at ~L1123 and cleared at ~L1213 only inside an `if (panning) { … }` branch that the BC-drag and frame-drag guards (~L1187 / ~L1204) can early-return past. Four drag-state variables spread across two scopes (`dragProjectId` / `dragBcName` / `dragOriginX/Y` at module scope, `panning` at function scope) is the structural root cause — invisible to single-function scanning. `pointercancel` and `pointerleave` are NOT currently wired at all; both are required by the existing ACs (new defensive coverage, not "tighten existing handlers"). PC API migration is **OUT** for this task — the bug is a one-line unconditional-clear fix plus two missing handlers, not a structural failure of the window-listener model; PC's cost (rewiring three claim sites against the underlying DOM canvas since PixiJS v8 events are synthetic) doesn't pay for itself. Future trigger named: if an overlay-intercept failure mode surfaces post-fix (Modal / context menu swallows pointerup-during-pan), file a follow-up PC migration task — the SM extraction makes that future migration cheap (one module's `onPointerUp` reroute, not three sprawling handlers). Refined `What` body documents the canonical repro, the source-pinned diagnosis, the structural fix (extraction to `src/lib/drag-controller.ts` with discriminated-union `DragState` + `Target` types + 5 pure transition functions: `onPointerDown` / `onPointerMove` / `onPointerUp` / `onPointerCancel` / `onPointerLeave`), and the PC-out call with rationale. Acceptance criteria expanded from 6 → 9: canonical-repro fixed (new AC #1, codifies Marco's repro), the original 5 ACs retained + sharpened with the `window`-level placement requirement for the new `pointercancel` / `pointerleave` listeners, and AC #7 captures the extraction (`src/lib/drag-controller.ts`, no Svelte/Pixi imports, no test infra in this task). Notes section pins every claim site and leak site by line number for the worker. **ADR candidate (scope `bc: canvas`) flagged for write-AFTER-the-diff, not before** — the module's public API stabilises during implementation; speculative ADRs rot fast.
+**Split into:** none — task stayed whole.
+**ADRs written:** none. The drag-controller ADR is the worker's output, scoped to canvas BC (local), written after the diff.
+
+---
+
 ## 2026-05-19 13:30 -- Work session ended
 
 **Type:** Work / Session end
