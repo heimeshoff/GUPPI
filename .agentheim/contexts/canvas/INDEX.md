@@ -5,7 +5,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## ADRs
 
 <!-- adr-list:start -->
-- [ADR-016 — Persistent PixiJS scene graph + camera as stage transform](../../knowledge/decisions/ADR-016-persistent-scene-graph.md) — Accepted. Each project frame's `Container` / `Graphics` / `Text` instantiated once and updated in place; pan = `world.position.set(...)`, wheel-zoom = `world.scale.set(...)` + `world.position.set(...)` + in-place stroke-width `repaint()`. Authored 2026-05-19 by canvas-015 (commit pending — TODO replace with SHA in fix-up).
+- [ADR-016 — Persistent PixiJS scene graph + camera as stage transform](../../knowledge/decisions/ADR-016-persistent-scene-graph.md) — Accepted. Each project frame's `Container` / `Graphics` / `Text` instantiated once and updated in place; pan = `world.position.set(...)`, wheel-zoom = `world.scale.set(...)` + `world.position.set(...)` + in-place stroke-width `repaint()`. Authored 2026-05-19 by canvas-015 (commit `9257660`).
 - [ADR-015 — BC layout inside a project frame — deterministic one-shot spring-electrical with sticky pins](../../knowledge/decisions/ADR-015-bc-layout-deterministic-spring-electrical.md) — Accepted. Pure deterministic spring-electrical placement (mulberry32 seeded by `project_id`), one-shot on input change, manual drags pinned in subsequent re-layouts.
 <!-- adr-list:end -->
 

@@ -5,6 +5,51 @@ Newest entries on top.
 
 ---
 
+## 2026-05-19 17:45 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 3 (first-try PASS: 2 [canvas-012, infrastructure-017], re-dispatched: 1 [canvas-015 iter 2 PASS], skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 4 main (8e9383e infrastructure-017, a2af868 canvas-012, 9257660 canvas-015, plus 1 SHA-fixup pending for canvas-015) + 1 SHA-fixup for the canvas-012/infrastructure-017 batch (11f803f)
+
+---
+
+## 2026-05-19 17:45 -- Task verified and completed: canvas-015 - Persistent scene graph + camera as stage transform (replace tear-down/rebuild render)
+
+**Type:** Work / Task completion
+**Task:** canvas-015-persistent-scene-graph-and-stage-transform-pan - Persistent scene graph + camera as stage transform
+**Summary:** Renderer rewritten as a persistent PixiJS scene graph with `world.position` / `world.scale` carrying the camera transform. Per project frame, each `Container` / `Graphics` / `Text` is instantiated once (on `project_added` or initial `refresh`) and updated in place on subsequent renders — no more `world.removeChildren()` + ~200–500 fresh allocations per render. Pan triggers ONLY `world.position.set(...)` + GPU draw (zero Pixi allocation in the per-pan path, verified by audit of the drag-controller's `'panning'`-state delta call site); wheel-zoom is `world.scale.set(...)` + `world.position.set(...)` + an in-place `repaint()` pass. `repaint()` calls `.clear()` + re-stroke / re-fill on the existing `Graphics` so border-category stroke widths stay constant-screen-space at any zoom (the ADR-016 "stroke-width pre-divide-by-z" policy, formerly enforced by the `Math.max(1, … * z)` form that ADR-003 Extension invariant #4 already retired). Theme flip rides the same `repaint()`. Missing-tile state, hover focus ring, and intra-project edge geometry all update via property writes (`.visible`, `.tint`, `.position`, `.clear()` + redraw), never reinstantiation. ADR-015's BC-layout / sticky-pin contract preserved — drag-end calls `recomputeBcLayout(entry)` one-shot and the persistent edge `Graphics` reflows. ADR-003 Extension 2026-05-19 invariant #6 (BC text floor — "every BC always shows its name if you squint") preserved via a per-`Text` counter-scale at the four title sites (project title, BC title, BC counts pill text, missing-tile glyph): `screenSpaceTitleScale(fontSize, z) = Math.max(1, 8 / (fontSize * z))` applied via `.scale.set(...)` BEFORE `truncateTextToWidth`, so on-screen size is clamped to 8 CSS px at extreme zoom-out. The counter-scale runs only on `world.scale` changes (inside `repaint()`), never per pan-tick, so the zero-allocation pan invariant survives the floor's restoration. ADR-016 §4 "Text scaling" (new) + canvas/README.md "Title-fits-frame invariant" entry both document the mechanism. Authored ADR-016 (`scope: bc, canvas`) covering the persistent scene-graph shift + the stroke-width pre-divide-by-`z` policy + the hit-area model + the open follow-ups (canvas-016 / -017 / -018 still apply).
+**Verification:** PASS (iteration 2 — see also 17:30 entry for iter-1 FAIL on the floor regression)
+**Commit:** 9257660
+**Files changed:** 3 (src/lib/Canvas.svelte; .agentheim/contexts/canvas/README.md; .agentheim/knowledge/decisions/ADR-016-persistent-scene-graph.md NEW)
+**Tests added:** 0 — `type: feature` UI renderer task, legitimate TDD-skip per "UI tasks where the project has no UI test infrastructure for the renderer" (canvas-007 / 008 / 013 precedent). Pure modules (`drag-controller.ts`, `tile-layout.ts`, `bc-layout.ts`, `snapshot-patch.ts`) untouched; their 29 vitest characterisation tests from `infrastructure-017` continue to pass green. `pnpm check` 0/0 (990 files); `cargo test --lib` 122/122.
+**ADRs written:** ADR-016 (scope `bc: canvas`) — "Persistent PixiJS scene graph + camera as stage transform". Documents: the per-`entry.id` `FrameDisplayObjects` lifecycle; pan/zoom as pure camera-transform ops; the in-place `repaint()` pass for stroke widths + theme flips + missing-tile recolour; the `screenSpaceTitleScale` floor mechanism (§4); the hit-area model (frame-header local rect + BC-bubble local rect under `world.scale`). `related_tasks: [canvas-014, canvas-015]`; `related_adrs: [ADR-003, ADR-015]`. Inserted under `canvas/INDEX.md` adr-list (scope is local; NOT in `knowledge/index.md`'s adr-global list).
+**New backlog items:** none. The three previously-filed follow-ups (canvas-016 voice-indicator cache, canvas-017 broad-phase hit rejection, canvas-018 dev-only diagnostic seam) remain in canvas/backlog/ and are unchanged in scope by this commit.
+**Note:** Iteration 1 (initial worker SUCCESS) was FAILed by the verifier for silently dropping the four `Math.max(8, … * z)` font-size floors that ADR-003 Extension invariant #6 mandates ("BC text floor — no hiding"). The iter-1 verifier's SUGGESTED_FIX offered routes (a) counter-scale or (b) retire-the-invariant; iteration 2 took route (a) — surgical, document-light, and honours the v1 stance Marco set in canvas-013's same-day hands-on revision earlier today. The math is verified: `sizeBody=14` at `z=0.2` → `text.scale = max(1, 8/(14×0.2)) = 2.857` → on-screen = `14×0.2×2.857 = 8.0` CSS px. v1 canvas core now structurally complete — pan/zoom are pure camera-transform ops, the substantive perf rewrite is in place. **Outstanding human gate:** Marco's hands-on `pnpm tauri dev` sign-off of frame-time targets (AC #10 — ≤ 8 ms / frame at default zoom with 10+ project frames; sustained 60 FPS during 5s pan-circles) via the canvas-perf-2026-05-17 reproducer protocol. The structural cost driver (full scene-graph rebuild × pointermove) is gone; expected to clear comfortably.
+
+---
+
+## 2026-05-19 17:30 -- Verification failed: canvas-015 - Persistent scene graph + camera as stage transform (replace tear-down/rebuild render)
+
+**Type:** Work / Verification failure
+**Task:** canvas-015-persistent-scene-graph-and-stage-transform-pan - Persistent scene graph + camera as stage transform (replace tear-down/rebuild render)
+**Iteration:** 1 of 3
+**Reasons:** ADR-003 Extension 2026-05-19 invariant #6 ("BC text floor — no hiding under any zoom") silently regressed — four `Math.max(8, … * z)` font-size floors removed without replacement; under the new `world.scale = z` model, on-screen text shrinks linearly with z. canvas/README.md still mandates the floor (line 57 "Title-fits-frame invariant"). ADR-016 §4 acknowledges zoom-IN softness but is silent on the zoom-OUT regression.
+**Iteration hint:** likely-fixable
+**Next:** re-dispatched worker (iteration 2); SUGGESTED_FIX offers either (a) counter-scale title containers in screen-space at low z, or (b) explicitly retire invariant #6 across README + ADR-003 + ADR-016. Either route restores README/ADR/code consistency.
+
+---
+
+## 2026-05-19 17:05 -- Batch started: [canvas-015]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-015-persistent-scene-graph-and-stage-transform-pan - Persistent scene graph + camera as stage transform (replace tear-down/rebuild render)
+**Parallel:** no (1 worker — sole ready task; canvas-014 dep in done/; inherits the just-landed post-canvas-012 `Canvas.svelte` shape)
+
+---
+
 ## 2026-05-19 17:00 -- Task verified and completed: canvas-012 - Drag state can stick after pointerup — subsequent mouse moves pan the canvas
 
 **Type:** Work / Task completion

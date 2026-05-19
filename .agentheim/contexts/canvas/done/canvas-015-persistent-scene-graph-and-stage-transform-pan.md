@@ -6,7 +6,7 @@ type: feature
 context: canvas
 created: 2026-05-18
 completed: 2026-05-19
-commit:
+commit: 9257660
 depends_on: [canvas-014]
 blocks: []
 tags: [performance, rendering, pixi, refactor]
