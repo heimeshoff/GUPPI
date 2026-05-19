@@ -105,12 +105,25 @@ full-rebuild cost either. Per-frame state — saved frame position, persisted
 per-BC drag positions, the deterministic BC layout output, drag target,
 fine-grained event routing — is all keyed by id; no single-valued `projectId`
 scalar exists. A **shared drag controller** owns the one set of `window`
-`pointermove`/`pointerup` listeners; two drag kinds claim the active drag —
-frame drag (claimed by the frame header bar's `pointerdown`, persisted via
-`saveTilePosition`) and BC drag (claimed by a BC bubble's `pointerdown`,
-persisted via `saveBcPosition`). The frame body region is pass-through so
-empty regions inside a frame don't swallow the camera pan, and BC bubbles
-inside the frame can be dragged independently of the frame.
+`pointermove` / `pointerup` / `pointercancel` / `pointerleave` listeners; its
+state machine — formerly four sibling variables spread across module scope
+and a function-scope `panning` flag — is now a single discriminated-union
+`DragState` in the pure `src/lib/drag-controller.ts` module (the canvas-012
+extraction; same verification-surface stance as `tile-layout.ts` /
+`bc-layout.ts` / `snapshot-patch.ts`, no Svelte / Pixi / IPC imports).
+Three drag kinds share the controller — frame drag (claimed by the frame
+header bar's `pointerdown`, persisted via `saveTilePosition`), BC drag
+(claimed by a BC bubble's `pointerdown`, persisted via `saveBcPosition`),
+and camera pan (claimed by a `pointerdown` on empty canvas, persisted via
+`saveCamera`). The frame body region is pass-through so empty regions
+inside a frame don't swallow the camera pan, and BC bubbles inside the
+frame can be dragged independently of the frame. `pointercancel` and
+`pointerleave` are unconditional terminal events that land state in `idle`
+without persisting — they exist for the cases where `pointerup` never
+arrives (touch interruption, OS-level pointer hijack, the cursor leaves
+the window mid-drag). Right-click (`button === 2`) is a controller no-op:
+the call site handles menu open and the in-flight drag, if any, keeps its
+state until its own `pointerup` / cancel / leave terminates it.
 
 **Auto-placement** for projects with no saved frame position is a
 deterministic outward spiral from world origin (`src/lib/tile-layout.ts` —

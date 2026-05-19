@@ -1,11 +1,11 @@
 ---
 id: canvas-012
 title: Drag state can stick after pointerup — subsequent mouse moves pan the canvas
-status: todo
+status: done
 type: bug
 context: canvas
 created: 2026-05-17
-completed:
+completed: 2026-05-19
 commit:
 depends_on: []
 blocks: []
@@ -214,3 +214,61 @@ sprawling handlers.
   parallel-event coordination problem with `canvas-006`'s serialised
   live-add chain, or forces a change to the persistence call sites),
   the worker flags for an ADR mid-task.
+
+## Outcome
+
+Bug fixed by structural extraction. The four-variable drag-state spread
+(`dragProjectId`, `dragBcName`, `dragOriginX/Y` at module scope plus a
+function-scope `panning` flag in the empty-canvas pointerdown closure)
+has been replaced by a single discriminated-union `DragState` owned by
+the new pure module `src/lib/drag-controller.ts` — a verification-surface
+peer of `tile-layout.ts` / `bc-layout.ts` / `snapshot-patch.ts` (no
+Svelte, no Pixi, no IPC). The module exports `DragState`, `Target`,
+`DragDelta`, `Persist`, `IDLE`, and five transition functions
+(`onPointerDown`, `onPointerMove`, `onPointerUp`, `onPointerCancel`,
+`onPointerLeave`).
+
+`Canvas.svelte` now holds one `dragState: DragState = IDLE` (replacing
+the four scoped vars) and delegates every pointer event to the
+controller; each call site shrinks to 3–5 lines (build a target
+descriptor or read the current state, call the controller, apply the
+delta / persistence intent, render). The window-level pointerup handler
+now has a single exit shape with NO conditionally-reached state clear —
+the canonical repro (`pointerdown` on a project frame body → `pointerup`
+with zero motion → bare `pointermove` → stuck pan) is closed by the
+state machine alone.
+
+Two new window-level listeners were wired per the AC: `pointercancel`
+(touch interruption, OS-level pointer hijack) and `pointerleave` (cursor
+leaves window mid-drag), both unconditional terminals that land state in
+`idle` without firing a persistence IPC. Right-click during an in-flight
+left-drag remains a controller no-op — the in-flight drag's own terminal
+event clears it, exactly as it did before, except now the structural
+invariant holds across all four terminal pathways instead of one.
+
+The `canvas/README.md` drag-controller paragraph was updated to name the
+extracted module, list all three drag kinds (frame, BC, pan — previously
+only the two explicit-claim kinds were named), and document the
+`pointercancel` / `pointerleave` terminal contract plus the right-click
+no-op. No ADR — the extraction is a faithful structural mirror of three
+prior verification-surface modules; no novel architectural decision was
+made.
+
+**Reproducer (Marco, 2026-05-19):** click on a project frame's body —
+the pass-through region inside a frame, not the header bar — and release
+the mouse cursor with zero motion. Move the mouse without pressing a
+button.
+- **Observed (pre-fix):** the camera follows the cursor — the
+  empty-canvas pan claim survived `pointerup` because the function-scope
+  `panning` flag's clear branch was gated by an `if (panning)` block
+  reached only after two earlier early-returns for the BC- and
+  frame-drag branches.
+- **Expected (post-fix):** no pan occurs until a new `pointerdown`
+  lands. Verified across the three drag kinds (project frame drag via
+  header bar, BC bubble drag, empty-canvas pan).
+
+Files: `src/lib/drag-controller.ts` (new — pure module, 187 lines incl.
+header docblock); `src/lib/Canvas.svelte` (drag-state declaration block,
+three pointerdown claim sites, four window-level listener wirings);
+`.agentheim/contexts/canvas/README.md` (drag-controller paragraph).
+`pnpm check` 0/0/0 (989 files); `cargo test --lib` 122/122 unchanged.

@@ -69,6 +69,15 @@
 	import { spiralPosition } from './tile-layout';
 	import { computeBcLayout, type BcFrameLayout, type BcPositionMap } from './bc-layout';
 	import {
+		IDLE,
+		onPointerDown as dragOnPointerDown,
+		onPointerMove as dragOnPointerMove,
+		onPointerUp as dragOnPointerUp,
+		onPointerCancel as dragOnPointerCancel,
+		onPointerLeave as dragOnPointerLeave,
+		type DragState
+	} from './drag-controller';
+	import {
 		color,
 		typography,
 		shape,
@@ -532,23 +541,19 @@
 		let cameraTarget: CameraState | null = null;
 		let cameraAnimStart = 0;
 
-		// --- shared drag controller (canvas-002) ----------------------
-		// One set of `window` pointer listeners for *all* drag targets. Two
-		// drag kinds are supported by `canvas-007`:
-		//   - frame drag : the active drag is identified by `dragProjectId`,
-		//                  the project frame moves in world space (saved
-		//                  via `saveTilePosition`)
-		//   - BC drag    : the active drag is identified by `dragProjectId`
-		//                  + `dragBcName`, a single BC bubble moves in
-		//                  frame-local coords (saved via `saveBcPosition`)
-		// A drag claim sets EXACTLY ONE of the two; both clear on
-		// `pointerup`. This replaces the per-tile `window.addEventListener`
-		// pattern that would have leaked N listener sets and fired all of
-		// them on every move.
-		let dragProjectId: number | null = null;
-		let dragBcName: string | null = null;
-		let dragOriginX = 0;
-		let dragOriginY = 0;
+		// --- shared drag controller (canvas-002, extracted in canvas-012) --
+		// One set of `window` pointer listeners for *all* drag targets. The
+		// drag-state machine itself — formerly four sibling variables
+		// (`dragProjectId`, `dragBcName`, `dragOriginX/Y` here plus
+		// `panning` in the empty-canvas pointerdown closure) — is now a
+		// single discriminated union owned by the pure `drag-controller.ts`
+		// module. Canvas.svelte holds the current `DragState` and delegates
+		// every pointer event's transition to the module. Persistence
+		// intents (`saveTilePosition` / `saveBcPosition` / `saveCamera`)
+		// fire from this scope so the controller stays Svelte/Pixi/IPC-free
+		// (verification surface, same pattern as `tile-layout.ts` /
+		// `bc-layout.ts` / `snapshot-patch.ts`).
+		let dragState: DragState = IDLE;
 
 		(async () => {
 			// --- restore persisted theme BEFORE the canvas boots ---------
@@ -1102,27 +1107,41 @@
 			}
 
 			// --- camera interaction: pan (drag empty space) + zoom (wheel) -
-			let panning = false;
-			let lastX = 0;
-			let lastY = 0;
-
+			// Drag-state lives in the module-scope `dragState` declared
+			// above and is owned by `drag-controller.ts`. Each listener
+			// below is a 3–5-line shim: build a target descriptor or read
+			// the current state, call the controller, apply the delta /
+			// persistence intent, render. The previous four-variable
+			// spread plus a function-scope `panning` flag — the structural
+			// defect canvas-012 fixes — is gone.
 			app.canvas.addEventListener('pointerdown', (e) => {
 				// Right-button on empty canvas = open the empty-canvas context
 				// menu at the click coordinates (canvas-005a). It is the only
 				// way to start the "Add project…" flow. The window-level
 				// capture-phase dismisser will have already nulled any
 				// currently-open menu before this listener runs, so opening a
-				// new one here works cleanly.
+				// new one here works cleanly. The drag-controller treats
+				// `button === 2` as a no-op (state unchanged), so passing
+				// it through after the menu-open also works — but we return
+				// early to keep the call site readable.
 				if (e.button === 2) {
 					e.preventDefault();
 					openEmptyCanvasMenu(e.clientX, e.clientY);
 					return;
 				}
-				// Tile dragging is handled by each tile's own hit area; a
-				// pointerdown that reaches the canvas is empty-space = pan.
-				panning = true;
-				lastX = e.clientX;
-				lastY = e.clientY;
+				// Tile / BC dragging is claimed by their own Pixi hit areas
+				// (the frame's header bar and the BC bubble surface, both
+				// `stopPropagation()`-ing); a pointerdown that reaches the
+				// canvas is empty-space = pan claim. The frame BODY is
+				// intentionally pass-through (canvas-007) so empty regions
+				// inside a frame land here too.
+				dragState = dragOnPointerDown(
+					dragState,
+					{ kind: 'empty' },
+					e.clientX,
+					e.clientY,
+					e.button
+				);
 				cameraTarget = null; // a manual gesture cancels any eased transition
 				// `menu` was already cleared by the capture-phase listener
 				// above; no need to repeat it here.
@@ -1131,89 +1150,92 @@
 			// own the right-click affordance.
 			app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-			// One shared window-level pointermove for both camera-pan and
-			// active drag — canvas-002's shared drag controller, extended
-			// in canvas-007 to handle BC drag inside a frame as well as
-			// frame drag.
+			// One shared window-level pointermove + pointerup + pointercancel
+			// + pointerleave for all three drag kinds — canvas-002's shared
+			// drag controller, extended in canvas-007 to handle BC drag
+			// inside a frame, and in canvas-012 with the terminal cancel/
+			// leave listeners that cover touch-interruption and pointer-
+			// leaves-window (cases where `pointerup` never arrives).
 			window.addEventListener('pointermove', (e) => {
-				if (dragProjectId !== null && dragBcName !== null) {
-					// BC drag: move one bubble in frame-local (= world-
-					// space delta scaled by zoom) coords.
-					const entry = findProject(dragProjectId);
-					if (entry) {
-						const current = entry.bcPositions.get(dragBcName);
-						const layoutPos =
-							current ?? entry.bcLayout.positions.get(dragBcName);
-						if (layoutPos) {
-							const dx = (e.clientX - dragOriginX) / camera.zoom;
-							const dy = (e.clientY - dragOriginY) / camera.zoom;
-							const next: Point = { x: layoutPos.x + dx, y: layoutPos.y + dy };
-							// Pin the BC at its new position; mirror it
-							// into the layout's positions Map so the
-							// render reads the updated spot without a
-							// full re-layout on every mouse move (we do
-							// recompute on drag END to allow other BCs to
-							// re-flow around the new pin).
-							entry.bcPositions.set(dragBcName, next);
-							entry.bcLayout.positions.set(dragBcName, next);
-							dragOriginX = e.clientX;
-							dragOriginY = e.clientY;
-							renderScene();
-						}
-					}
+				const { next, delta } = dragOnPointerMove(
+					dragState,
+					e.clientX,
+					e.clientY,
+					camera.zoom
+				);
+				dragState = next;
+				if (!delta) return;
+				if (delta.kind === 'pan') {
+					camera.panBy(delta.dx, delta.dy);
+					renderScene();
 					return;
 				}
-				if (dragProjectId !== null) {
-					const entry = findProject(dragProjectId);
-					if (entry) {
-						// Drag delta in screen space -> world space.
-						entry.pos = {
-							x: entry.pos.x + (e.clientX - dragOriginX) / camera.zoom,
-							y: entry.pos.y + (e.clientY - dragOriginY) / camera.zoom
-						};
-						dragOriginX = e.clientX;
-						dragOriginY = e.clientY;
-						renderScene();
-					}
+				if (delta.kind === 'frame') {
+					const entry = findProject(delta.projectId);
+					if (!entry) return;
+					entry.pos = { x: entry.pos.x + delta.dx, y: entry.pos.y + delta.dy };
+					renderScene();
 					return;
 				}
-				if (!panning) return;
-				camera.panBy(e.clientX - lastX, e.clientY - lastY);
-				lastX = e.clientX;
-				lastY = e.clientY;
+				// delta.kind === 'bc'
+				const entry = findProject(delta.projectId);
+				if (!entry) return;
+				const current = entry.bcPositions.get(delta.bcName);
+				const layoutPos =
+					current ?? entry.bcLayout.positions.get(delta.bcName);
+				if (!layoutPos) return;
+				const nextPos: Point = {
+					x: layoutPos.x + delta.dx,
+					y: layoutPos.y + delta.dy
+				};
+				// Pin the BC at its new position; mirror it into the
+				// layout's positions Map so the render reads the updated
+				// spot without a full re-layout on every mouse move (we do
+				// recompute on drag END to allow other BCs to re-flow
+				// around the new pin).
+				entry.bcPositions.set(delta.bcName, nextPos);
+				entry.bcLayout.positions.set(delta.bcName, nextPos);
 				renderScene();
 			});
 			window.addEventListener('pointerup', () => {
-				if (dragProjectId !== null && dragBcName !== null) {
+				const { next, persist } = dragOnPointerUp(dragState);
+				dragState = next;
+				if (!persist) return;
+				if (persist.kind === 'tile') {
+					const entry = findProject(persist.projectId);
+					if (entry) {
+						void saveTilePosition(entry.id, entry.pos);
+					}
+					return;
+				}
+				if (persist.kind === 'bc') {
 					// Persist the dragged BC's new frame-local position
 					// and re-run the one-shot layout so the rest of the
 					// graph re-flows around the new pin.
-					const entry = findProject(dragProjectId);
+					const entry = findProject(persist.projectId);
 					if (entry) {
-						const pos = entry.bcPositions.get(dragBcName);
+						const pos = entry.bcPositions.get(persist.bcName);
 						if (pos) {
-							void saveBcPosition(entry.id, dragBcName, pos);
+							void saveBcPosition(entry.id, persist.bcName, pos);
 						}
 						recomputeBcLayout(entry);
 						renderScene();
 					}
-					dragProjectId = null;
-					dragBcName = null;
 					return;
 				}
-				if (dragProjectId !== null) {
-					// Persist exactly the dragged project's new position.
-					const entry = findProject(dragProjectId);
-					if (entry) {
-						void saveTilePosition(entry.id, entry.pos);
-					}
-					dragProjectId = null;
-					return;
-				}
-				if (panning) {
-					panning = false;
-					void saveCamera(camera.snapshot());
-				}
+				// persist.kind === 'camera'
+				void saveCamera(camera.snapshot());
+			});
+			// canvas-012: terminal listeners that cover the pointerup-never-
+			// arrives failure modes (OS-level pointer hijack / touch
+			// interruption / pointer leaves the window mid-drag). Both
+			// unconditionally land in `idle`; cancelled drags do NOT
+			// persist (no IPC save).
+			window.addEventListener('pointercancel', () => {
+				dragState = dragOnPointerCancel(dragState).next;
+			});
+			window.addEventListener('pointerleave', () => {
+				dragState = dragOnPointerLeave(dragState).next;
 			});
 
 			app.canvas.addEventListener(
@@ -2049,7 +2071,9 @@
 				e.stopPropagation(); // do not let this start a camera pan
 				// Right-button on the header bar = open the tile context
 				// menu at the click coordinates (canvas-005a). Reuses the
-				// same menu shape as the orbit baseline.
+				// same menu shape as the orbit baseline. The drag-controller
+				// treats `button === 2` as a no-op (state unchanged), but
+				// we still early-return here to keep the call site obvious.
 				if (e.button === 2) {
 					if (e.nativeEvent && 'stopImmediatePropagation' in e.nativeEvent) {
 						e.nativeEvent.stopImmediatePropagation();
@@ -2058,10 +2082,13 @@
 					return;
 				}
 				cameraTarget = null;
-				dragProjectId = id;
-				dragBcName = null;
-				dragOriginX = e.global.x;
-				dragOriginY = e.global.y;
+				dragState = dragOnPointerDown(
+					dragState,
+					{ kind: 'frameHeader', projectId: id },
+					e.global.x,
+					e.global.y,
+					e.button
+				);
 				// Suppress headerH unused warning — kept on the signature
 				// for future header-area sub-affordances.
 				void z;
@@ -2093,10 +2120,13 @@
 					return;
 				}
 				cameraTarget = null;
-				dragProjectId = projectId;
-				dragBcName = bcName;
-				dragOriginX = e.global.x;
-				dragOriginY = e.global.y;
+				dragState = dragOnPointerDown(
+					dragState,
+					{ kind: 'bcBubble', projectId, bcName },
+					e.global.x,
+					e.global.y,
+					e.button
+				);
 				// Suppress unused warnings — params are kept for symmetry
 				// with `attachFrameHeaderDrag` and future hit-area needs.
 				void screenPos;
