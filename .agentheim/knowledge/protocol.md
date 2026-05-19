@@ -5,6 +5,24 @@ Newest entries on top.
 
 ---
 
+## 2026-05-19 14:55 -- Model / Promoted: canvas-015 - Persistent scene graph + camera as stage transform (replace tear-down/rebuild render)
+
+**Type:** Model / Promote
+**BC:** canvas
+**From → To:** backlog → todo
+**Summary:** Substantive renderer rework follow-up to the `canvas-perf-2026-05-17` spike (canvas-014, done). Replaces `renderScene`'s tear-down-and-rebuild model (`world.removeChildren()` + 200–500 fresh Pixi `Graphics` / `Text` / `Container` allocations per call) with persistent display objects per project frame + BC bubble + intra-project edge, keyed by `entry.id`; pan/zoom drives `world.position` / `world.scale` so the GPU handles the camera transform, instead of pre-projecting every Graphics to screen coords in JS. Readiness check passed without further refinement: 11 concrete ACs (no `world.removeChildren`; pan = `world.position` update only; wheel-zoom = `world.scale` + `world.position`; drag persistence unchanged; theme flip via `.clear()` + repaint; hover focus ring `.visible` toggle; missing-tile via property updates; frame-time ≤ 8 ms with 10+ frames + sustained 60 FPS during continuous pan; no regressions across canvas-002 / 005a / 005b / 006 / 007 / 008 + design-system-004 theme path; `pnpm check` + `cargo test --lib` clean), deps satisfied (canvas-014 done), staged-landing recommendation already baked into the task body (frames-only → BC bubbles → edges → camera-transform switch — each stage independently `pnpm check`-clean and smoke-testable). 1–3 day estimate; touches `Canvas.svelte` extensively. Coordinates with canvas-013 (now done — the project-title HTML overlay was reverted, so the worker on canvas-015 inherits project titles as Pixi `Text` in this refactor's surface).
+
+---
+
+## 2026-05-19 14:55 -- Model / Promoted: infrastructure-017 - Frontend test infrastructure (Vitest for the pure modules)
+
+**Type:** Model / Promote
+**BC:** infrastructure
+**From → To:** backlog → todo
+**Summary:** Long-standing test-surface gap closes: the three pure Svelte/Pixi-free modules under `src/lib/` (`snapshot-patch.ts` from canvas-001, `tile-layout.ts` from canvas-002, `bc-layout.ts` from canvas-007) were each extracted specifically so they could be unit-tested in isolation when test infra lands — each canvas task's done note has flagged the absence of that infra as the reason no `*.test.ts` files were added. Readiness check passed: 4 concrete ACs (`pnpm test` green from clean clone; ≥ 3 tests per pure module covering load-bearing invariants; `pnpm check` stays 0/0/0; CI integration when CI exists), explicit Scope-In (vitest config, devDependency + script, `*.test.ts` files in `src/lib/`) and Scope-Out (Svelte component tests, E2E / WebDriver) boundaries, no unmet deps (`depends_on: []`). **Cross-task significance:** unblocks the eventual unit-test surface for `src/lib/drag-controller.ts` (canvas-012's extraction target) — once both ship, the drag-controller becomes the first new pure module to land WITH tests, instead of waiting for a future backfill.
+
+---
+
 ## 2026-05-19 14:35 -- Model / Promoted: canvas-012 - Drag state can stick after pointerup — subsequent mouse moves pan the canvas
 
 **Type:** Model / Promote

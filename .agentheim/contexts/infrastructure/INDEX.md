@@ -17,7 +17,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-*(None.)*
+- [infrastructure-017-frontend-test-infrastructure](todo/infrastructure-017-frontend-test-infrastructure.md) — `type: feature`. Add a frontend test runner (vitest) + a first set of unit tests covering the pure `src/lib/*.ts` modules (`tile-layout.ts`, `snapshot-patch.ts`, `bc-layout.ts`). Surfaced from `canvas-007` — these pure modules were built test-ready but the project has no test infra yet; right now only `pnpm check` (svelte-check) catches regressions. Promoted 2026-05-19. Unblocks the eventual unit-test surface for `src/lib/drag-controller.ts` (canvas-012's extraction target).
 <!-- todo-list:end -->
 
 **Todo count:** 0

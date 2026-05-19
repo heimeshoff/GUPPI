@@ -1,7 +1,7 @@
 ---
 id: canvas-015
 title: Persistent scene graph + camera as stage transform (replace tear-down/rebuild render)
-status: backlog
+status: todo
 type: feature
 context: canvas
 created: 2026-05-18
