@@ -300,3 +300,54 @@ No new backlog items. The deferred BitmapText switch is owned by
 `canvas-014`'s follow-up backlog (per the perf report's coordination
 note); the per-frame JS measurement path is documented in the ADR
 extension as the explicit fallback if CSS layout cost ever surfaces.
+
+---
+
+## Post-completion revision — 2026-05-19 (commit `601f416`)
+
+Marco ran the shipped commit `3315a10` in `pnpm tauri dev` the same
+afternoon and **reverted invariant #2 (constant-screen-size project
+titles) and reshaped invariant #6 (end-ellipsis truncation)** after
+hands-on verification. The visual rhyme between a frame's title and
+the BC titles inside it turned out to matter more than the Miro-style
+overview affordance — project titles that don't scale with their
+frame at zoom read as a separate UI layer floating over the canvas
+rather than as part of the frame.
+
+The revised behavior shipped in commit `601f416`:
+
+- **Project titles scale with zoom**, like BC titles do — same
+  relative size to their frame. Project titles are Pixi `Text` (not
+  HTML overlays); the `.frame-title-overlay` / `.frame-title` template
+  + CSS are removed.
+- **BC titles now also end-truncate** when their rendered width would
+  exceed the bubble's available width (this strengthens AC #4 — BC
+  text was already "rendered + crisp" but could overflow long BC
+  names; now it can't).
+- **Truncation is container-width-based, not zoom-based.** A single
+  `truncateTextToWidth(t, fullText, maxWidth)` helper at script scope
+  in `Canvas.svelte` binary-searches the largest prefix that fits
+  with `…` appended; used by both `drawProjectFrame` (project title)
+  and `makeBcBubble` (BC title). The `Math.max(8, … * z)` floor on
+  both kinds of title stays — same convention for visual rhyme.
+- **AC #1 (DPR fix) and AC #5 (screen-space stroke widths) are
+  unchanged** — those were the load-bearing pieces of canvas-013 and
+  Marco confirmed both work as intended.
+
+The original AC #2, AC #6, and AC #7 (z-band) are now historical —
+the HTML overlay layer for project titles no longer exists, so the
+z-index band collapses back to the canvas-005a/005b ordering
+(`.context-menu` 10 / `.error-toast` 11 / `.modal-backdrop` 20).
+
+**Authoritative spec going forward:** ADR-003's `## Extension
+2026-05-19` (rewritten in commit `601f416` with a "Same-day revision
+(2026-05-19, hands-on)" sub-section pointing back here) and the
+`Title-fits-frame invariant` + revised `Crispness invariant` bullets
+in `contexts/canvas/README.md`. The task body above documents the
+spec that was first shipped, **not** the spec that currently lives in
+the code.
+
+Commit chain:
+- `3315a10` — original canvas-013 (constant-size HTML overlay).
+- `f238c43` — orchestrator fix-up (INDEX, protocol, SHA, ADR backlink).
+- `601f416` — same-day revision (this entry).
