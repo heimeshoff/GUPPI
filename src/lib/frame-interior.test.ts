@@ -12,9 +12,11 @@
 
 import { describe, it, expect } from 'vitest';
 import type { BoundedContext, Task, TaskColumn } from './types';
+import { shape } from './design/tokens';
 import {
 	COLUMN_ORDER,
 	CULL_MARGIN_PX,
+	FRAME_ASPECT_RATIO,
 	LOD_ZOOM_FLOOR,
 	bucketTasksByColumn,
 	formatElapsed,
@@ -74,15 +76,37 @@ describe('bucketTasksByColumn', () => {
 });
 
 describe('frameSize', () => {
-	it('returns a fixed sensible default size independent of bc count', () => {
+	it('returns a fixed sheet size independent of bc count', () => {
 		const a = frameSize(0);
 		const b = frameSize(5);
 		expect(a.width).toBeGreaterThan(0);
 		expect(a.height).toBeGreaterThan(0);
-		// The interior scrolls within the frame (ADR-017); the shell does not
-		// grow per-BC the way the retired bc-layout autofit did.
+		// `bcCount` is unused — the A4 sheet is the same size for every frame.
 		expect(b.width).toBe(a.width);
 		expect(b.height).toBe(a.height);
+	});
+
+	it('has a DIN-A4 portrait aspect ratio (height = width × √2)', () => {
+		const { width, height } = frameSize(3);
+		expect(height).toBe(Math.round(width * FRAME_ASPECT_RATIO));
+		// Portrait: taller than wide.
+		expect(height).toBeGreaterThan(width);
+	});
+
+	it('is wide enough to show all four kanban columns without horizontal scroll', () => {
+		// body padding (both sides) + board padding (both sides) + 4 columns + 3 gaps.
+		const expected =
+			shape.framePadding * 2 +
+			shape.accordionRowPadding * 2 +
+			shape.kanbanColumnMinWidth * 4 +
+			shape.kanbanColumnGap * 3;
+		expect(frameSize(3).width).toBe(expected);
+		// Sanity: it really does fit four columns + their gaps inside the padding.
+		const innerForBoard =
+			frameSize(3).width - shape.framePadding * 2 - shape.accordionRowPadding * 2;
+		expect(innerForBoard).toBeGreaterThanOrEqual(
+			shape.kanbanColumnMinWidth * 4 + shape.kanbanColumnGap * 3
+		);
 	});
 });
 

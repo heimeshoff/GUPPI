@@ -84,24 +84,31 @@ export interface FrameSize {
 }
 
 /**
- * The deterministic default frame **shell** size. bc-layout.ts's per-BC
- * force-directed autofit is retired (ADR-017): the frame is a fixed-size region
- * and its kanban-accordion interior scrolls within it. The size is the same for
- * every frame regardless of BC count (the `bcCount` parameter is accepted so a
- * future per-content sizing pass can land without changing call sites, but v1
- * is intentionally constant — the interior, not the shell, absorbs content).
+ * The DIN-A4 portrait aspect ratio (height / width = √2). The project frame is a
+ * fixed A4-proportioned "sheet"; its kanban-accordion interior scrolls within it.
+ */
+export const FRAME_ASPECT_RATIO = Math.SQRT2;
+
+/**
+ * The frame **shell** size — a fixed DIN-A4-ratio sheet (bc-layout.ts's per-BC
+ * autofit is retired, ADR-017; the content-driven height tried in the ADR-019
+ * amendment is superseded by this fixed A4 ratio).
  *
- * Width: enough for the four kanban columns (so a default-zoom expanded board
- * shows ~2 columns before horizontal scroll) plus the frame padding. Height:
- * the `frameMin*` floor plus the header — tall enough to read a couple of
- * accordion rows before the interior scrolls.
+ * Width is wide enough to show **all four** kanban columns
+ * (BACKLOG/TODO/DOING/DONE) side by side without horizontal scroll:
+ *   body padding (both sides) + board padding (both sides) + 4 columns + 3 gaps.
+ *
+ * Height is that width × √2 (A4 portrait). The interior scrolls within the sheet
+ * when its content is taller. `_bcCount` is unused (kept so call sites don't
+ * churn); the sheet size is the same for every frame.
  */
 export function frameSize(_bcCount: number): FrameSize {
-	const width = Math.max(
-		shape.frameMinInnerWidth,
-		shape.kanbanColumnMinWidth * 2 + shape.kanbanColumnGap + shape.accordionRowPadding * 2
-	);
-	const height = shape.frameHeaderHeight + shape.frameMinInnerHeight + shape.framePadding * 2;
+	const width =
+		shape.framePadding * 2 +
+		shape.accordionRowPadding * 2 +
+		shape.kanbanColumnMinWidth * 4 +
+		shape.kanbanColumnGap * 3;
+	const height = Math.round(width * FRAME_ASPECT_RATIO);
 	return { width, height };
 }
 

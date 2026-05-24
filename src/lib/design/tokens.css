@@ -216,8 +216,8 @@
 	--guppi-accordion-rollup-pill-height: 18px;
 	--guppi-accordion-rollup-pill-radius: 9px;
 	/* Kanban board + column */
-	--guppi-kanban-column-min-width: 200px;
-	--guppi-kanban-column-max-width: 280px;
+	--guppi-kanban-column-min-width: 240px;
+	--guppi-kanban-column-max-width: 320px;
 	--guppi-kanban-column-gap: 12px;
 	--guppi-kanban-column-header-height: 28px;
 	--guppi-kanban-column-radius: 8px;

@@ -75,6 +75,7 @@
 	import { spiralPosition } from './tile-layout';
 	import {
 		COLUMN_ORDER,
+		LOD_ZOOM_FLOOR,
 		bucketTasksByColumn,
 		formatElapsed,
 		frameSize,
@@ -444,6 +445,24 @@
 	});
 
 	let host: HTMLDivElement;
+	// The DOM interior overlay layer (canvas-020). Bound so the wheel-zoom
+	// handler can be attached to it too — otherwise a wheel over a frame's
+	// interior (cards / accordion / header handle) targets the overlay and never
+	// reaches the Pixi canvas, silently inhibiting zoom over a frame.
+	let interiorsEl: HTMLDivElement | undefined;
+
+	// Bridges from the DOM interior overlay (instance / template scope) into the
+	// imperative Pixi + drag layer (assigned inside onMount's closure, where
+	// `world` / `dragState` / the render functions live). The DOM frame-drag
+	// handle drives the frame-header drag start / hover ring / right-click menu,
+	// so frame-drag is deterministic — and works even when the frame is zoomed
+	// out past the LOD floor and the kanban interior is not mounted (the handle
+	// covers the whole sheet then).
+	let startFrameHeaderDrag:
+		| ((id: number, clientX: number, clientY: number, button: number) => void)
+		| undefined;
+	let setFrameHover: ((id: number, on: boolean) => void) | undefined;
+	let openFrameMenu: ((id: number, clientX: number, clientY: number) => void) | undefined;
 	const camera = new Camera();
 
 	// One record per rendered project. Keyed by `snapshot.id`; the canvas keys
@@ -518,11 +537,11 @@
 	// The frame INTERIOR is a DOM overlay (ADR-017 hybrid substrate). These
 	// `$state` stores back the reactive overlay markup; the Pixi side never
 	// reads them. The overlay derives its mounted set + positions from the
-	// camera runes + `projects` reactively (`mountedInteriors` $derived).
+	// camera runes + `projects` reactively (`framesOnScreen` $derived).
 
 	// Camera runes are not `$state` on `this` component (they live on the
 	// `Camera` instance), so a manual tick bumps `cameraVersion` whenever pan /
-	// zoom changes to re-run the `mountedInteriors` $derived (the overlay must
+	// zoom changes to re-run the `framesOnScreen` $derived (the overlay must
 	// re-position on every camera change, exactly the `worldToScreen` contract
 	// ADR-016 / ADR-017 lean on). Pan/zoom/drag/resize handlers bump it.
 	let cameraVersion = $state(0);
@@ -859,23 +878,28 @@
 		zoom: number;
 		bcs: BoundedContext[];
 		missing: boolean;
+		/** Whether the kanban-accordion BODY mounts (zoom ≥ LOD floor). When
+		 *  false the frame is zoomed out past the LOD floor: only the drag handle
+		 *  mounts (covering the whole sheet), not the card DOM. */
+		mountInterior: boolean;
 	}
 
-	// The set of frame interiors to MOUNT this frame, per the ADR-017 cost
-	// governors (viewport culling + zoom-floor LOD). Off-screen / zoomed-out
-	// frames are NOT in this list — they render the cheap Pixi shell only.
-	// Reading `cameraVersion`, `viewportW/H`, and `projects` makes this a pure
-	// reactive function of the camera + model; Svelte's keyed `{#each}` then
-	// reconciles the actual DOM nodes (only frames crossing the cull boundary
-	// mount/unmount — ADR-017).
-	const mountedInteriors = $derived.by<InteriorView[]>(() => {
+	// Every ON-SCREEN frame (viewport culling only — NOT the zoom-floor LOD).
+	// Each carries a `mountInterior` flag: the heavy kanban-accordion body mounts
+	// only above the LOD floor (ADR-017), but the lightweight drag handle mounts
+	// for every on-screen frame so a frame stays draggable even when zoomed out
+	// far enough that its board is hidden. Reading `cameraVersion`, `viewportW/H`,
+	// and `projects` makes this a pure reactive function of the camera + model;
+	// Svelte's keyed `{#each}` reconciles the DOM nodes across the cull boundary.
+	const framesOnScreen = $derived.by<InteriorView[]>(() => {
 		void cameraVersion; // re-run on any camera change (worldToScreen moved)
 		const z = camera.zoom;
 		const viewport = { w: viewportW, h: viewportH };
 		const views: InteriorView[] = [];
 		for (const entry of projects) {
 			const aabb = frameScreenAabb(entry.pos, entry.size, camera);
-			if (!shouldMountInterior(aabb, viewport, z)) continue;
+			// Viewport culling only (lodZoomFloor: 0 disables the LOD gate here).
+			if (!shouldMountInterior(aabb, viewport, z, { lodZoomFloor: 0 })) continue;
 			const screen = camera.worldToScreen(entry.pos.x, entry.pos.y);
 			views.push({
 				id: entry.id,
@@ -886,7 +910,8 @@
 				height: entry.size.height,
 				zoom: z,
 				bcs: orderBcs(entry.id, entry.snapshot.bcs),
-				missing: entry.snapshot.missing
+				missing: entry.snapshot.missing,
+				mountInterior: z >= LOD_ZOOM_FLOOR
 			});
 		}
 		return views;
@@ -1043,6 +1068,28 @@
 		let dragState: DragState = IDLE;
 
 		(async () => {
+			// --- DOM interior overlay → Pixi/drag bridges -------------------
+			// Assigned synchronously at the top of setup (before any `await` and
+			// before any frame-interior mounts) so the template's header drag
+			// handle can drive the imperative layer the
+			// moment a frame appears. The render functions they call are hoisted
+			// declarations, so they are in scope here. Frame-drag via the DOM
+			// handle uses client coords for the origin, matching the window-level
+			// pointermove that drives it (the existing `frame` delta branch shifts
+			// `entry.pos`); right-click + hover keep parity with the Pixi header.
+			startFrameHeaderDrag = (id, clientX, clientY, button) => {
+				cameraTarget = null;
+				dragState = dragOnPointerDown(
+					dragState,
+					{ kind: 'frameHeader', projectId: id },
+					clientX,
+					clientY,
+					button
+				);
+			};
+			setFrameHover = (id, on) => toggleProjectFocusRing(id, on);
+			openFrameMenu = (id, clientX, clientY) => openTileMenu(clientX, clientY, id);
+
 			// --- restore persisted theme BEFORE the canvas boots ---------
 			// design-system-004: read the v5 `preferences.theme` row from
 			// SQLite and apply the active palette + HTML `data-theme`
@@ -1528,31 +1575,34 @@
 				dragState = dragOnPointerLeave(dragState).next;
 			});
 
-			app.canvas.addEventListener(
-				'wheel',
-				(e) => {
-					e.preventDefault();
-					const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-					const rect = host.getBoundingClientRect();
-					camera.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
-					cameraTarget = null;
-					// Any zoom gesture dismisses an open context menu — the menu
-					// is screen-space-anchored to a click point and would lose
-					// its semantic anchor under the moving canvas.
-					menu = null;
-					// canvas-015 zoom path — AC #4: world.position + world.scale
-					// are the only camera-transform writes. Stroke widths in
-					// world space depend on z (pre-divided by z so the
-					// on-screen width stays constant CSS-px after world.scale
-					// multiplication), so `repaint()` rewrites them in place
-					// — no Pixi object allocation. Pan path is untouched.
-					world.position.set(camera.pan_x, camera.pan_y);
-					world.scale.set(camera.zoom);
-					repaint();
-					void saveCamera(camera.snapshot());
-				},
-				{ passive: false }
-			);
+			const onWheelZoom = (e: WheelEvent) => {
+				e.preventDefault();
+				const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+				const rect = host.getBoundingClientRect();
+				camera.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
+				cameraTarget = null;
+				// Any zoom gesture dismisses an open context menu — the menu
+				// is screen-space-anchored to a click point and would lose
+				// its semantic anchor under the moving canvas.
+				menu = null;
+				// canvas-015 zoom path — AC #4: world.position + world.scale
+				// are the only camera-transform writes. Stroke widths in
+				// world space depend on z (pre-divided by z so the
+				// on-screen width stays constant CSS-px after world.scale
+				// multiplication), so `repaint()` rewrites them in place
+				// — no Pixi object allocation. Pan path is untouched.
+				world.position.set(camera.pan_x, camera.pan_y);
+				world.scale.set(camera.zoom);
+				repaint();
+				void saveCamera(camera.snapshot());
+			};
+			app.canvas.addEventListener('wheel', onWheelZoom, { passive: false });
+			// Zoom must work no matter where the cursor is. The DOM interior
+			// overlay (cards / accordion / header handle) has `pointer-events:
+			// auto` descendants that would otherwise consume the wheel; attaching
+			// the SAME handler to the overlay layer (events bubble up to it) keeps
+			// wheel-zoom alive over a frame's interior, matching empty-canvas.
+			interiorsEl?.addEventListener('wheel', onWheelZoom, { passive: false });
 
 			// --- camera affordance: zoom-to-fit on "f" --------------------
 			window.addEventListener('keydown', (e) => {
@@ -2270,17 +2320,18 @@
 	DOM overlay carries each on-screen frame's accordion-of-BCs → kanban board.
 	Each `.frame-interior` is absolutely positioned at `worldToScreen(frame.pos)`
 	and `transform: scale(z)` matches the Pixi zoom, so the interior tracks the
-	shell exactly (layout computed once at zoom-1, zoom is a compositor scale —
-	never a reflow). Only frames that pass the ADR-017 cull + LOD gate
-	(`mountedInteriors`) are here; off-screen / zoomed-out frames render the
-	cheap Pixi shell only. The keyed `{#each}` reconciles card nodes across pan.
+	shell exactly (fixed A4-ratio sheet, layout once at zoom-1, zoom is a
+	compositor scale — never a reflow). EVERY on-screen frame is here
+	(`framesOnScreen`, viewport culling only) so its drag handle is always
+	present; the heavy kanban body mounts only above the LOD floor
+	(`view.mountInterior`). The keyed `{#each}` reconciles nodes across pan.
 
-	`pointer-events` are off on the wrapper so empty space + the header still
-	reach the Pixi pan/drag hit-areas underneath; the interior body re-enables
-	them so scroll + accordion clicks work.
+	`pointer-events` are off on the wrapper so empty space reaches the Pixi pan
+	hit-area underneath; the header drag handle + interior body re-enable them so
+	frame-drag, scroll, and accordion clicks work.
 -->
-<div id="interiors" class="interiors-layer" aria-hidden={false}>
-	{#each mountedInteriors as view (view.id)}
+<div id="interiors" class="interiors-layer" aria-hidden={false} bind:this={interiorsEl}>
+	{#each framesOnScreen as view (view.id)}
 		<div
 			class="frame-interior"
 			style="left: {view.left}px; top: {view.top}px; width: {view.width}px;
@@ -2288,11 +2339,38 @@
 				transform-origin: top left;"
 			data-project-id={view.id}
 		>
-			<!-- The interior sits below the Pixi header band; offset by the
-			     header height so it fills the frame body region. The layout is
-			     computed once at zoom-1 px; `transform: scale(z)` on this root is
-			     a compositor move, not a reflow (ADR-017). -->
-			<div class="frame-interior-body">
+			<!-- DOM drag handle over the Pixi header band (ADR-019 amendment):
+			     makes the frame draggable by its title deterministically instead
+			     of relying on the pointer falling through the overlay to the Pixi
+			     header hit-area. Transparent — the Pixi-drawn title + counts show
+			     through. Right-click opens the tile menu, hover lights the focus
+			     ring (parity with the Pixi header); the wheel still zooms (it
+			     bubbles to the interiors layer). When the kanban body is culled by
+			     the LOD floor (zoomed out), the handle covers the WHOLE sheet so the
+			     frame stays draggable with the board hidden. -->
+			<div
+				class="frame-header-handle"
+				class:full={!view.mountInterior}
+				role="button"
+				tabindex="-1"
+				aria-label="Drag {view.name}"
+				onpointerdown={(e) => {
+					if (e.button === 2) {
+						openFrameMenu?.(view.id, e.clientX, e.clientY);
+						return;
+					}
+					startFrameHeaderDrag?.(view.id, e.clientX, e.clientY, e.button);
+				}}
+				oncontextmenu={(e) => e.preventDefault()}
+				onpointerenter={() => setFrameHover?.(view.id, true)}
+				onpointerleave={() => setFrameHover?.(view.id, false)}
+			></div>
+			<!-- The interior fills the fixed A4-ratio sheet below the Pixi header
+			     band and scrolls within it (ADR-019 amendment). Layout is at
+			     zoom-1 px; `transform: scale(z)` on the root is a compositor move,
+			     not a reflow. Mounted only above the LOD floor (ADR-017). -->
+			{#if view.mountInterior}
+				<div class="frame-interior-body">
 				{#if view.missing}
 					<p class="interior-empty">Project directory missing on disk.</p>
 				{:else if view.bcs.length === 0}
@@ -2404,6 +2482,7 @@
 					</div>
 				{/if}
 			</div>
+			{/if}
 		</div>
 	{/each}
 </div>
@@ -2775,15 +2854,39 @@
 	}
 	.frame-interior {
 		position: absolute;
-		/* width / height / left / top / transform set inline per-frame. The
-		   layout is computed once at this zoom-1 size; the inline
+		/* width / height / left / top / transform set inline per-frame. The frame
+		   is a fixed DIN-A4-ratio sheet (`frameSize`: width fits four columns,
+		   height = width × √2); the interior scrolls within it. The inline
 		   `transform: scale(z)` is a compositor move, never a reflow. */
 		box-sizing: border-box;
 	}
-	.frame-interior-body {
+	/* Transparent drag handle over the Pixi header band — the frame's title is
+	   the grab target (deterministic frame-drag; the Pixi title shows through). */
+	.frame-header-handle {
 		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: var(--guppi-frame-header-height);
+		background: transparent;
+		border: 0;
+		padding: 0;
+		pointer-events: auto;
+		cursor: grab;
+		z-index: 1;
+	}
+	/* Zoomed out past the LOD floor the kanban body is not mounted; the handle
+	   then covers the WHOLE sheet so the frame is draggable anywhere on it. */
+	.frame-header-handle.full {
+		height: 100%;
+	}
+	.frame-header-handle:active {
+		cursor: grabbing;
+	}
+	.frame-interior-body {
 		/* The Pixi header band owns the top strip; the interior fills the body
-		   region below it. */
+		   region below it and scrolls within the fixed-ratio sheet. */
+		position: absolute;
 		top: var(--guppi-frame-header-height);
 		left: 0;
 		right: 0;
@@ -2822,7 +2925,7 @@
 	}
 	.accordion-row.expanded {
 		/* Let an expanded row take a share of the interior height so its board
-		   scrolls vertically rather than pushing siblings off. */
+		   scrolls vertically rather than pushing siblings off the fixed sheet. */
 		flex: 1 1 auto;
 		min-height: 0;
 	}
@@ -2907,6 +3010,9 @@
 		gap: var(--guppi-kanban-column-gap);
 		padding: var(--guppi-accordion-row-padding);
 		border-top: 1px solid var(--guppi-accordion-row-divider);
+		/* The frame width fits all four columns, so no horizontal scroll in
+		   practice; keep `auto` as a safety net and let the board fill + scroll
+		   vertically within the fixed-ratio sheet. */
 		overflow-x: auto;
 		overflow-y: hidden;
 		flex: 1 1 auto;

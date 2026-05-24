@@ -515,8 +515,8 @@ export const shape = {
 	accordionRollupPillRadius: 9,
 
 	/** Kanban board + column. */
-	kanbanColumnMinWidth: 200,
-	kanbanColumnMaxWidth: 280,
+	kanbanColumnMinWidth: 240,
+	kanbanColumnMaxWidth: 320,
 	kanbanColumnGap: 12,
 	kanbanColumnHeaderHeight: 28,
 	kanbanColumnRadius: 8,
