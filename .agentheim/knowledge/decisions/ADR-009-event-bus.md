@@ -182,6 +182,36 @@ kept aligned with the filesystem-observation work in ADR-008.
 > (`task_added` gains the fields, `task_changed` added) and patches cards in
 > place via `src/lib/snapshot-patch.ts`.
 
+> **Reconciliation note (agent-awareness-002, 2026-05-24 — ADR-018):** the
+> taxonomy gains two variants for the canvas's per-task live agent-state surface.
+> Both honour the "expected to grow" contract (existing producers/consumers are
+> untouched) and the frontend bridge forwards them under the existing
+> `guppi://event` name — no new channel.
+>
+> 1. **`SessionBlockedOnQuestion { project_id, bc, task_id, agent_label, question
+>    }`** — agent-awareness's *input*: the rich, live `claude-runner` signal that
+>    an owned session is waiting for a human answer, attributed to a task. No
+>    producer is wired at v1 (the runner does not yet attribute sessions to
+>    tasks); declaring it makes the contract reviewable and lets the
+>    agent-awareness projection ingest it the moment the runner correlation
+>    lands. (This realises one of the ADR-009 v1-draft's planned `Session*`
+>    variants, now with a `bc`/`task_id`/`agent_label` attribution payload.)
+> 2. **`TaskAgentStateChanged { project_id, bc, task_id, state, agent_label?,
+>    since?, question? }`** — agent-awareness's *output*: a task's live
+>    `running | idle | blocked_on_question` state (the unified read model that
+>    survives the BC's two signal sources). `since` is a Unix-millisecond
+>    transition timestamp the canvas derives the "waiting 2m 14s" elapsed string
+>    from locally — no per-second event spam. `agent_label`/`since` are absent for
+>    idle; `question` (the live "AGENT NEEDS AN ANSWER" callout body, runner-live
+>    with on-disk `blocked_question` as fallback — project-registry-005) is
+>    present only when blocked. The canvas patches the matching card's agent
+>    indicator + the docked panel's callout in place. v1 is read-only — the
+>    answer/defer/edit write round-trip is post-v1.
+>
+> The frontend mirrors both variants plus the `TaskAgentState` / `BcRollup` /
+> `AgentActivity` read types in `src/lib/types.ts`. Two read IPC commands
+> (`get_task_agent_state`, `get_bc_agent_rollup`) hydrate on mount / resync.
+
 ### Frontend bridge
 
 A dedicated bridge task subscribes to the `EventBus` and forwards the subset

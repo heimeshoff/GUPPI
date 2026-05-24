@@ -21,6 +21,7 @@
 //! take `project_id` explicitly and resolve the path through the registry
 //! (`Db::project_path`).
 
+mod agent_state;
 mod db;
 mod events;
 mod logging;
@@ -68,6 +69,13 @@ struct AppState {
     /// ADR-009 event bus, shared so spike commands can hand it to a
     /// `ClaudeSession` actor's read loop.
     bus: EventBus,
+    /// The per-task live agent-state projection (`agent-awareness-002`,
+    /// ADR-018). A bus consumer folds `SessionBlockedOnQuestion` (runner signal)
+    /// into it and re-emits `TaskAgentStateChanged` (the canvas's read side);
+    /// the `get_task_agent_state` / `get_bc_agent_rollup` IPC commands read it
+    /// for an on-mount / resync hydrate. `Arc<Mutex<…>>` so the consumer task
+    /// and the IPC commands share one projection.
+    agent_state: Arc<Mutex<agent_state::AgentStateProjection>>,
     /// The PTY spike's single session slot (`infrastructure-013-pty-spike`).
     /// Multi-session orchestration / a real registry is later feature work
     /// (ADR-006 scope-out); the spike needs exactly one live session it can
@@ -159,6 +167,44 @@ fn get_project(
             Ok(project::missing_snapshot(project_id, &path))
         }
     }
+}
+
+/// IPC command — read one task's live agent state (`agent-awareness-002`,
+/// ADR-018). The canvas reads this on mount / resync to hydrate a card's agent
+/// indicator; on the hot path it patches in place from `TaskAgentStateChanged`
+/// bus events instead. A task with no live signal returns the `idle` default —
+/// never an error (an "unknown" task is just an idle one).
+#[tauri::command]
+fn get_task_agent_state(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+    bc: String,
+    task_id: String,
+) -> agent_state::TaskAgentState {
+    state
+        .agent_state
+        .lock()
+        .expect("agent_state projection mutex poisoned")
+        .state_for(project_id, &bc, &task_id)
+}
+
+/// IPC command — read a BC's agent roll-up (`active / blocked / idling`) for the
+/// accordion header (`agent-awareness-002`, ADR-018). `total_tasks` is the BC's
+/// task count from the project snapshot; `idling` is `total − active − blocked`,
+/// so tasks with no live signal count as idling without the projection storing
+/// an entry per task.
+#[tauri::command]
+fn get_bc_agent_rollup(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+    bc: String,
+    total_tasks: u32,
+) -> agent_state::BcRollup {
+    state
+        .agent_state
+        .lock()
+        .expect("agent_state projection mutex poisoned")
+        .rollup(project_id, &bc, total_tasks)
 }
 
 /// The payload `add_scan_root` returns: the persisted root's id plus the
@@ -930,11 +976,67 @@ pub fn run() {
 
             let supervisor = WatcherSupervisor::new(bus.clone());
 
+            // `agent-awareness-002` (ADR-018): the per-task live agent-state
+            // projection, shared between the bus consumer (folds runner signals)
+            // and the IPC read commands (`get_task_agent_state` /
+            // `get_bc_agent_rollup`).
+            let agent_state = Arc::new(Mutex::new(agent_state::AgentStateProjection::new()));
+
             app.manage(AppState {
                 db: db.clone(),
                 supervisor: supervisor.clone(),
                 bus: bus.clone(),
+                agent_state: agent_state.clone(),
                 claude_session: Mutex::new(None),
+            });
+
+            // --- agent-awareness-002 / ADR-018: the per-task state consumer ---
+            // Folds `claude-runner`'s `SessionBlockedOnQuestion` (the rich, live
+            // owned-session signal) into the projection and re-emits
+            // `TaskAgentStateChanged` (the canvas's read side) onto the same bus
+            // — which the frontend bridge below forwards under `guppi://event`.
+            // No producer of `SessionBlockedOnQuestion` is wired in v1 (the
+            // runner does not yet attribute sessions to tasks); this consumer is
+            // ready for the moment it does, and touches no other consumer
+            // meanwhile. The filesystem-observed fallback path (a `doing/` task
+            // carrying an on-disk `blocked_question`) is deferred — runner-only
+            // is v1's live fidelity (ADR-018).
+            let agent_bus = bus.clone();
+            let agent_proj = agent_state.clone();
+            let mut agent_rx = bus.subscribe();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    match agent_rx.recv().await {
+                        Ok(DomainEvent::SessionBlockedOnQuestion {
+                            project_id,
+                            bc,
+                            task_id,
+                            agent_label,
+                            question,
+                        }) => {
+                            let next = {
+                                let mut proj = agent_proj
+                                    .lock()
+                                    .expect("agent_state projection mutex poisoned");
+                                proj.ingest(agent_state::AgentSignal::RunnerBlocked {
+                                    project_id,
+                                    bc: bc.clone(),
+                                    task_id: task_id.clone(),
+                                    agent_label,
+                                    question,
+                                })
+                            };
+                            agent_bus.publish(next.to_event(project_id, &bc, &task_id));
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // Lag is handled by the frontend bridge's resync path;
+                            // this consumer just keeps going (the projection
+                            // converges as fresh signals arrive).
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
             });
 
             // --- ADR-009: the one frontend-bridge task -----------------
@@ -985,6 +1087,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_projects,
             get_project,
+            get_task_agent_state,
+            get_bc_agent_rollup,
             register_project,
             remove_project,
             add_scan_root,

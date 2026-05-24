@@ -127,6 +127,56 @@ pub enum DomainEvent {
     // UTF-8-guaranteed; it is whatever ConPTY emitted.
     SessionOutput { session_id: i64, bytes: Vec<u8> },
 
+    /// A `claude-runner`-owned session is waiting for a human answer
+    /// (ADR-006 / ADR-009's planned taxonomy). The rich, live signal
+    /// `agent-awareness` (ADR-018) folds into its per-task projection: the
+    /// runner attributes the blocked session to a `(project_id, bc, task_id)`
+    /// when it can, and supplies the live `question` text the
+    /// "AGENT NEEDS AN ANSWER" callout renders. This is `agent-awareness`'s
+    /// *input* (a runner producer), distinct from `TaskAgentStateChanged`
+    /// (agent-awareness's *output* to the canvas). v1 has no producer wired yet
+    /// (the runner does not attribute sessions to tasks); declaring it makes the
+    /// contract reviewable and lets the projection ingest it the moment the
+    /// runner correlation lands — adding the producer touches no consumer.
+    SessionBlockedOnQuestion {
+        project_id: i64,
+        bc: String,
+        task_id: String,
+        agent_label: String,
+        question: String,
+    },
+
+    // Live per-task agent state (`agent-awareness-002`, ADR-018). The unified
+    // read side of agent-awareness: a task's live `running | idle |
+    // blocked_on_question` plus, for running/blocked, the acting `agent_label`
+    // and a `since` transition timestamp (Unix millis) the card derives the
+    // "waiting 2m 14s" elapsed string from — no per-second event spam. For
+    // `blocked_on_question`, `question` is the live callout text (runner-sourced
+    // live, on-disk `blocked_question` as fallback — see `project-registry-005`).
+    // The frontend bridge forwards this under the existing `guppi://event` name;
+    // the canvas patches the matching card's indicator + the docked panel's
+    // callout in place. v1 is read-only (the answer/defer/edit write round-trip
+    // is post-v1). See ADR-009's 2026-05-24 reconciliation note.
+    /// One task's live agent state changed — the canvas patches the card's
+    /// agent indicator (and, when blocked, the panel callout) in place.
+    TaskAgentStateChanged {
+        project_id: i64,
+        bc: String,
+        task_id: String,
+        /// `running | idle | blocked_on_question`.
+        state: String,
+        /// Acting agent label for running/blocked; absent for idle.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_label: Option<String>,
+        /// Unix-millisecond transition timestamp the canvas times "waiting …"
+        /// from; absent for idle.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        since: Option<u64>,
+        /// The live question text for `blocked_on_question`; absent otherwise.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        question: Option<String>,
+    },
+
     // User preferences (`design-system-004-light-theme`). Fired by
     // `set_preference` so any subscriber (the PixiJS canvas, the HTML overlay
     // layer) can react. Theme is the first inhabitant — flipping

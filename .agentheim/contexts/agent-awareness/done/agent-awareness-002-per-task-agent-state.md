@@ -1,11 +1,11 @@
 ---
 id: agent-awareness-002
 title: Per-task live agent state + blocked-question content
-status: todo
+status: done
 type: feature
 context: agent-awareness
 created: 2026-05-24
-completed:
+completed: 2026-05-24
 commit:
 depends_on: [project-registry-005, design-system-006]
 blocks: [canvas-021, canvas-022]
@@ -100,3 +100,39 @@ Open question for refinement: is `blocked_question` text sourced live from
 `claude-runner`'s `SessionBlockedOnQuestion.question` (lean: yes), from disk
 frontmatter (project-registry-005 fallback), or both? The reference's
 callout is live-state-shaped, so lean live with a disk fallback.
+
+## Outcome
+
+Built the unified per-task live agent-state read model (v1 read-only,
+runner-primary). Decisions recorded in **ADR-018** and the ADR-009
+reconciliation note (2026-05-24).
+
+- **Projection** — `src-tauri/src/agent_state.rs`: `AgentStateProjection`
+  keyed `(project_id, bc, task_id)` → `TaskAgentState { activity: running |
+  idle | blocked_on_question, agent_label?, since?, question? }`. Idle is the
+  implicit default (not stored). `BcRollup { active, blocked, idling }` derived
+  with `idling = total − active − blocked`. A single `ingest(AgentSignal)`
+  folds both source fidelities (runner + filesystem) into one shape; a
+  duplicate same-activity signal preserves `since` (no elapsed-timer reset, no
+  per-second event). The canvas formats "waiting 2m 14s" from `since` locally.
+- **Contract (ADR-009)** — `events.rs` gains `TaskAgentStateChanged`
+  (output → canvas) and `SessionBlockedOnQuestion` (input ← runner). The
+  generic frontend bridge forwards both under `guppi://event`. Mirrored in
+  `src/lib/types.ts` (`TaskAgentState`, `BcRollup`, `AgentActivity`, both
+  events).
+- **Wiring** — `lib.rs`: a bus consumer folds `SessionBlockedOnQuestion` →
+  projection → re-emits `TaskAgentStateChanged`; IPC reads
+  `get_task_agent_state` + `get_bc_agent_rollup` hydrate on mount/resync. No
+  runner producer exists at v1 (the runner does not yet attribute sessions to
+  tasks) — the surface is "ready but quiet", which is the load-bearing
+  contract canvas-020 consumes.
+- **v1 scope** — runner-only live fidelity; the filesystem-observed producer is
+  deferred (`agent-awareness-003`) though its `FilesystemBlocked` fold is built
+  and tested. Read-only: answer/defer/edit actions are visual-only at v1, the
+  write round-trip is `agent-awareness-004`.
+- **Tests** — 12 new Rust unit tests in `agent_state.rs` (144 lib tests green,
+  was 132). Frontend `pnpm check` 0/0/0. Clean build, no warnings.
+
+Key files: `src-tauri/src/agent_state.rs`, `src-tauri/src/events.rs`,
+`src-tauri/src/lib.rs`, `src/lib/types.ts`,
+`.agentheim/knowledge/decisions/ADR-018-per-task-agent-state-projection.md`.

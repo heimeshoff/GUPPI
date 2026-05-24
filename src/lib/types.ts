@@ -114,6 +114,44 @@ export interface ProjectSnapshot {
 	missing: boolean;
 }
 
+/** A task's live agent activity (`agent-awareness-002`, ADR-018). Mirrors the
+ * Rust `agent_state::AgentActivity` (`snake_case`). The unified read model that
+ * survives agent-awareness's two signal sources (rich `claude-runner` events;
+ * best-effort filesystem signals) — the canvas sees one shape. */
+export type AgentActivity = 'running' | 'idle' | 'blocked_on_question';
+
+/** One task's live agent state (`agent-awareness-002`, ADR-018). Returned by the
+ * `get_task_agent_state` IPC command and mirrored from the
+ * `task_agent_state_changed` bus event. Mirrors Rust `agent_state::TaskAgentState`.
+ *
+ * `agent_label` / `since` are present for `running` / `blocked_on_question` and
+ * absent for `idle`. `since` is a Unix-millisecond transition timestamp; the
+ * card derives the "waiting 2m 14s" elapsed string from it locally (no
+ * per-second event spam). `question` is the live "AGENT NEEDS AN ANSWER" callout
+ * body, present only when blocked (runner-sourced live, on-disk
+ * `blocked_question` as fallback). */
+export interface TaskAgentState {
+	activity: AgentActivity;
+	/** Acting agent label ("orchestrator", "worker", "observed") for
+	 * running/blocked; absent for idle. */
+	agent_label?: string | null;
+	/** Unix-millisecond transition timestamp the canvas times "waiting …" from;
+	 * absent for idle. */
+	since?: number | null;
+	/** The live question text for `blocked_on_question`; absent otherwise. */
+	question?: string | null;
+}
+
+/** A BC's agent roll-up (`active / blocked / idling`) for the accordion header
+ * ("1 active · 2 blocked · 1 idling") — `agent-awareness-002`, ADR-018. Returned
+ * by the `get_bc_agent_rollup` IPC command. `idling` is `total − active −
+ * blocked` (tasks with no live signal). Mirrors Rust `agent_state::BcRollup`. */
+export interface BcRollup {
+	active: number;
+	blocked: number;
+	idling: number;
+}
+
 /** A 2D position in world coordinates. */
 export interface Point {
 	x: number;
@@ -229,6 +267,43 @@ export type DomainEvent =
 	 */
 	| { kind: 'bc_relationships_changed'; project_id: number; bc: string }
 	| { kind: 'resync_required'; project_id: number }
+	/**
+	 * A `claude-runner`-owned session is waiting for a human answer
+	 * (`agent-awareness-002`, ADR-018 / ADR-006). agent-awareness's *input* — the
+	 * rich live signal it folds into its per-task projection. The runner
+	 * attributes the blocked session to a `(project_id, bc, task_id)` and supplies
+	 * the live `question` text. v1 has no producer wired yet (the runner does not
+	 * yet attribute sessions to tasks); the canvas does not consume this directly
+	 * — it consumes the derived `task_agent_state_changed`.
+	 */
+	| {
+			kind: 'session_blocked_on_question';
+			project_id: number;
+			bc: string;
+			task_id: string;
+			agent_label: string;
+			question: string;
+	  }
+	/**
+	 * A task's live agent state changed (`agent-awareness-002`, ADR-018) — the
+	 * unified read side of agent-awareness. The canvas patches the matching card's
+	 * agent indicator in place (and, when `state` is `blocked_on_question`, the
+	 * docked panel's "AGENT NEEDS AN ANSWER" callout). `since` is a Unix-ms
+	 * transition timestamp the card derives "waiting 2m 14s" from locally (no
+	 * per-second spam); `agent_label` / `since` are absent for `idle`, `question`
+	 * present only when blocked. v1 is read-only — the answer/defer/edit write
+	 * round-trip is post-v1.
+	 */
+	| {
+			kind: 'task_agent_state_changed';
+			project_id: number;
+			bc: string;
+			task_id: string;
+			state: AgentActivity;
+			agent_label?: string | null;
+			since?: number | null;
+			question?: string | null;
+	  }
 	/**
 	 * A cross-session user preference was set (`design-system-004-light-theme`).
 	 * Fired by the `set_preference` IPC. Theme is the first key; future
