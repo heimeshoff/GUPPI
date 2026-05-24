@@ -126,48 +126,61 @@ export async function loadTilePosition(projectId: number): Promise<Point | null>
 	return result ? { x: result[0], y: result[1] } : null;
 }
 
-/** Persist a BC bubble's position inside its project frame
- * (`project-registry-004`, consumed by `canvas-007`). The drag-to-place loop
- * fires this on drag end. Preserved through ADR-005 soft-delete (the 30-day
- * retention window covers `bc_positions` the same way it covers
- * `tile_positions`). */
-export function saveBcPosition(
+/** One BC's persisted accordion view-state inside a project frame
+ * (`canvas-023`, ADR-021): whether the kanban-accordion row is collapsed, and
+ * the user's drag-reordered position. `sortOrder` is `null` when unset — the
+ * canvas falls back to the stable BC-name order for that row. Mirrors the Rust
+ * `BcViewStateRow`. */
+export interface BcViewState {
+	collapsed: boolean;
+	sortOrder: number | null;
+}
+
+/** Persist a BC's accordion view-state inside its project frame
+ * (`canvas-023`, ADR-021). The accordion interaction fires this on
+ * collapse/expand toggle and on drag-reorder end. Preserved through ADR-005
+ * soft-delete (the 30-day retention window covers `bc_view_state` the same way
+ * it covers `tile_positions`). */
+export function saveBcViewState(
 	projectId: number,
 	bcName: string,
-	pos: Point
+	state: BcViewState
 ): Promise<void> {
-	return invoke('save_bc_position', {
+	return invoke('save_bc_view_state', {
 		projectId,
 		bcName,
-		x: pos.x,
-		y: pos.y
+		collapsed: state.collapsed,
+		sortOrder: state.sortOrder
 	});
 }
 
-/** Read back one BC's persisted position, if any (`project-registry-004`). */
-export async function loadBcPosition(
+/** Read back one BC's persisted view-state, if any (`canvas-023`). `null` for
+ * a BC the user has never collapsed or reordered. */
+export async function loadBcViewState(
 	projectId: number,
 	bcName: string
-): Promise<Point | null> {
-	const result = await invoke<[number, number] | null>('load_bc_position', {
-		projectId,
-		bcName
-	});
-	return result ? { x: result[0], y: result[1] } : null;
+): Promise<BcViewState | null> {
+	const result = await invoke<{ collapsed: boolean; sort_order: number | null } | null>(
+		'load_bc_view_state',
+		{ projectId, bcName }
+	);
+	return result ? { collapsed: result.collapsed, sortOrder: result.sort_order } : null;
 }
 
-/** Batch-load every persisted BC position for a project — the
- * project-frame paint's single round-trip on mount (`project-registry-004`,
- * `canvas-007`). Returns a `Map<bc_name, Point>`. BCs without a saved
- * position are simply absent from the result; the canvas falls back to its
- * layout default for those. */
-export async function loadBcPositions(projectId: number): Promise<Map<string, Point>> {
-	const result = await invoke<Record<string, [number, number]>>('load_bc_positions', {
-		projectId
-	});
-	const out = new Map<string, Point>();
-	for (const [name, [x, y]] of Object.entries(result)) {
-		out.set(name, { x, y });
+/** Batch-load every persisted BC view-state for a project — the project-frame
+ * paint's single round-trip on mount (`canvas-023`, ADR-021). Returns a
+ * `Map<bc_name, BcViewState>`. BCs without saved view-state are absent from the
+ * result; the canvas falls back to its defaults (expanded; BC-name order). */
+export async function loadBcViewStates(
+	projectId: number
+): Promise<Map<string, BcViewState>> {
+	const result = await invoke<Record<string, { collapsed: boolean; sort_order: number | null }>>(
+		'load_bc_view_states',
+		{ projectId }
+	);
+	const out = new Map<string, BcViewState>();
+	for (const [name, row] of Object.entries(result)) {
+		out.set(name, { collapsed: row.collapsed, sortOrder: row.sort_order });
 	}
 	return out;
 }

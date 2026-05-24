@@ -37,6 +37,17 @@ pub struct ScanRootRow {
 /// ADR-013 / ADR-005 default depth cap when none is supplied by the caller.
 pub const DEFAULT_SCAN_DEPTH_CAP: u32 = 3;
 
+/// One BC's persisted accordion view-state inside a project frame
+/// (`canvas-023`, ADR-021). `collapsed` is whether the kanban-accordion row is
+/// folded shut; `sort_order` is the user's drag-reordered position (NULL =
+/// unset, the canvas falls back to the stable BC-name order). Serialized so the
+/// row crosses IPC unchanged for the `load_bc_view_state(s)` commands.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BcViewStateRow {
+    pub collapsed: bool,
+    pub sort_order: Option<i64>,
+}
+
 /// The schema version this build expects. Bump it and add a migration step in
 /// `migrate` whenever the schema changes.
 ///
@@ -67,7 +78,19 @@ pub const DEFAULT_SCAN_DEPTH_CAP: u32 = 3;
 /// row `('theme','dark')` is inserted on first migration so the very first
 /// `get_preference("theme")` after a fresh install resolves without a NULL
 /// dance on the frontend.
-pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+///
+/// v6 (`canvas-023`): replaces the now-dead `bc_positions` table with
+/// `bc_view_state (project_id, bc_name, collapsed, sort_order)`. canvas-020
+/// (ADR-017) retired the draggable BC bubbles, so per-BC x/y positions no
+/// longer have a reader — `bc_positions` was dead surface. The accordion
+/// interior that replaced the bubbles needs to remember two things instead:
+/// whether each BC row is collapsed, and the user's drag-reordered row order.
+/// The v5→v6 step DROPs `bc_positions` and CREATEs `bc_view_state` with the
+/// same `(project_id, bc_name)` grain and `ON DELETE CASCADE` on `project_id`,
+/// inheriting the exact soft-delete / hard-delete / GC-sweep semantics
+/// `bc_positions` had (see ADR-021). `sort_order` is NULL-able: a row with
+/// NULL `sort_order` falls back to the default stable BC-name order.
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 /// ADR-005's 30-day retention window for soft-deleted projects — `remove_project`
 /// flags a row with `deleted_at`, the row stays for `RETENTION_DAYS` so a
@@ -229,67 +252,86 @@ impl Db {
         }
     }
 
-    /// Persist a BC's position inside its project frame (`project-registry-004`,
-    /// consumed by `canvas-007`). Upserts on `(project_id, bc_name)` — the user
-    /// drags a BC bubble, this records the new spot, and the next
-    /// `load_bc_position(s)` returns it.
+    /// Persist a BC's accordion view-state inside its project frame
+    /// (`canvas-023`, ADR-021). Upserts on `(project_id, bc_name)` — the user
+    /// collapses/expands a row or drags it to a new position, this records the
+    /// new state, and the next `bc_view_state(s)` returns it.
+    ///
+    /// `sort_order = None` writes SQL NULL, leaving the row on the default
+    /// BC-name order. Both fields are written on every call (the canvas always
+    /// knows both the collapse flag and the row's intended order), so this is a
+    /// full upsert rather than a partial patch.
     ///
     /// Soft-delete is **not** consulted here. The caller (the IPC handler) only
-    /// fires this on a drag inside a live project frame; a stale call against a
-    /// soft-deleted project_id would simply be FK-rejected, which surfaces as
-    /// `DbError::Sqlite` to the IPC layer.
-    pub fn save_bc_position(
+    /// fires this on an interaction inside a live project frame; a stale call
+    /// against a soft-deleted project_id would simply be FK-rejected, which
+    /// surfaces as `DbError::Sqlite` to the IPC layer.
+    pub fn save_bc_view_state(
         &self,
         project_id: i64,
         bc_name: &str,
-        x: f64,
-        y: f64,
+        collapsed: bool,
+        sort_order: Option<i64>,
     ) -> Result<(), DbError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO bc_positions (project_id, bc_name, x, y)
+            "INSERT INTO bc_view_state (project_id, bc_name, collapsed, sort_order)
              VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(project_id, bc_name) DO UPDATE SET x = ?3, y = ?4",
-            (project_id, bc_name, x, y),
+             ON CONFLICT(project_id, bc_name)
+                 DO UPDATE SET collapsed = ?3, sort_order = ?4",
+            (project_id, bc_name, collapsed, sort_order),
         )?;
         Ok(())
     }
 
-    /// Read one BC's persisted position, if any. `None` for a BC that was
-    /// never dragged — the canvas falls back to its layout default.
-    pub fn bc_position(
+    /// Read one BC's persisted view-state, if any. `None` for a BC the user
+    /// has never collapsed or reordered — the canvas falls back to its defaults
+    /// (expanded; stable BC-name order).
+    pub fn bc_view_state(
         &self,
         project_id: i64,
         bc_name: &str,
-    ) -> Result<Option<(f64, f64)>, DbError> {
+    ) -> Result<Option<BcViewStateRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT x, y FROM bc_positions WHERE project_id = ?1 AND bc_name = ?2",
+            "SELECT collapsed, sort_order FROM bc_view_state
+             WHERE project_id = ?1 AND bc_name = ?2",
         )?;
         let mut rows = stmt.query((project_id, bc_name))?;
         match rows.next()? {
-            Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
+            Some(row) => Ok(Some(BcViewStateRow {
+                collapsed: row.get::<_, i64>(0)? != 0,
+                sort_order: row.get(1)?,
+            })),
             None => Ok(None),
         }
     }
 
-    /// Every persisted BC position for a project, keyed by `bc_name`. Used by
-    /// the canvas's project-frame paint to hydrate all BC bubble positions in
-    /// one round-trip (instead of N `load_bc_position` calls).
-    pub fn bc_positions(
+    /// Every persisted BC view-state for a project, keyed by `bc_name`. Used by
+    /// the canvas's project-frame paint to hydrate all BC collapse + order
+    /// state in one round-trip (instead of N `bc_view_state` calls).
+    pub fn bc_view_states(
         &self,
         project_id: i64,
-    ) -> Result<std::collections::HashMap<String, (f64, f64)>, DbError> {
+    ) -> Result<std::collections::HashMap<String, BcViewStateRow>, DbError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT bc_name, x, y FROM bc_positions WHERE project_id = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT bc_name, collapsed, sort_order FROM bc_view_state
+             WHERE project_id = ?1",
+        )?;
         let rows = stmt.query_map([project_id], |row| {
-            Ok((row.get::<_, String>(0)?, (row.get::<_, f64>(1)?, row.get::<_, f64>(2)?)))
+            Ok((
+                row.get::<_, String>(0)?,
+                BcViewStateRow {
+                    collapsed: row.get::<_, i64>(1)? != 0,
+                    sort_order: row.get(2)?,
+                },
+            ))
         })?;
         let mut out = std::collections::HashMap::new();
         for r in rows {
-            let (name, pos) = r?;
-            out.insert(name, pos);
+            let (name, state) = r?;
+            out.insert(name, state);
         }
         Ok(out)
     }
@@ -701,6 +743,44 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
                  value TEXT NOT NULL
              );
              INSERT OR IGNORE INTO preferences (key, value) VALUES ('theme', 'dark');",
+        )?;
+    }
+
+    if current < 6 {
+        // Step 5 -> 6: retire `bc_positions`, add `bc_view_state` (`canvas-023`,
+        // ADR-021).
+        //
+        // canvas-020 (ADR-017) replaced the draggable BC bubbles with the
+        // kanban-accordion DOM interior, leaving `bc_positions` (per-BC x/y)
+        // with no reader — dead surface. The accordion interior instead needs
+        // to persist (a) whether each BC row is collapsed and (b) the user's
+        // drag-reordered row order. We DROP the dead table and CREATE
+        // `bc_view_state` at the same `(project_id, bc_name)` grain.
+        //
+        // No data is migrated FROM `bc_positions`: an x/y bubble coordinate
+        // carries no information about collapse or row order, so the rows are
+        // genuinely discarded (they had no live reader since canvas-020). The
+        // data-preservation contract this migration upholds is the OTHER tables
+        // — `projects`, `tile_positions`, `preferences` — which the v5→v6 test
+        // verifies survive untouched.
+        //
+        // `collapsed` is `INTEGER NOT NULL DEFAULT 0` (0 = expanded, the
+        // canvas-020 default). `sort_order` is NULL-able: a NULL means "unset",
+        // and the canvas falls back to the stable BC-name order for it. The
+        // `ON DELETE CASCADE` on `project_id` mirrors `tile_positions` /
+        // `bc_positions` so per-BC view-state vanishes with a hard-deleted
+        // project (and is preserved through ADR-005 soft-delete, since
+        // soft-delete never touches this table — only the startup GC sweep's
+        // hard-delete cascades through the FK).
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS bc_positions;
+             CREATE TABLE bc_view_state (
+                 project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                 bc_name    TEXT    NOT NULL,
+                 collapsed  INTEGER NOT NULL DEFAULT 0,
+                 sort_order INTEGER NULL,
+                 PRIMARY KEY (project_id, bc_name)
+             );",
         )?;
     }
 
@@ -1619,90 +1699,122 @@ mod tests {
         assert_eq!(rows[0].path, "C:/src/guppi");
         assert_eq!(db.tile_position(rows[0].id).unwrap(), Some((100.0, 200.0)));
 
-        // The new bc_positions table is queryable and empty.
-        assert!(db.bc_positions(rows[0].id).unwrap().is_empty());
+        // The v6 `bc_view_state` table (which superseded `bc_positions`) is
+        // queryable and empty after the full migration leap.
+        assert!(db.bc_view_states(rows[0].id).unwrap().is_empty());
 
         drop(db);
         let _ = std::fs::remove_file(&path);
     }
 
+    // -------- 023: per-BC accordion view-state + v5->v6 migration ----------
+
     #[test]
-    fn bc_position_round_trips() {
-        // The drag-to-place loop: save then load returns what was saved.
+    fn bc_view_state_round_trips() {
+        // The collapse/reorder loop: save then load returns what was saved.
+        // canvas-023 acceptance: collapse + sort_order persist per
+        // `(project_id, bc_name)`.
         let db = Db::open_in_memory().unwrap();
         let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
 
-        assert_eq!(db.bc_position(pid, "canvas").unwrap(), None);
+        // Never-touched BC reads as None — the canvas defaults (expanded,
+        // BC-name order).
+        assert_eq!(db.bc_view_state(pid, "canvas").unwrap(), None);
 
-        db.save_bc_position(pid, "canvas", 12.5, -34.0).unwrap();
+        db.save_bc_view_state(pid, "canvas", true, Some(2)).unwrap();
         assert_eq!(
-            db.bc_position(pid, "canvas").unwrap(),
-            Some((12.5, -34.0))
+            db.bc_view_state(pid, "canvas").unwrap(),
+            Some(BcViewStateRow {
+                collapsed: true,
+                sort_order: Some(2)
+            })
         );
 
-        // Dragging the same BC again overwrites in place.
-        db.save_bc_position(pid, "canvas", 99.0, 1.0).unwrap();
-        assert_eq!(db.bc_position(pid, "canvas").unwrap(), Some((99.0, 1.0)));
+        // Re-saving the same BC overwrites in place (expand it, move it first).
+        db.save_bc_view_state(pid, "canvas", false, Some(0)).unwrap();
+        assert_eq!(
+            db.bc_view_state(pid, "canvas").unwrap(),
+            Some(BcViewStateRow {
+                collapsed: false,
+                sort_order: Some(0)
+            })
+        );
     }
 
     #[test]
-    fn bc_positions_returns_all_persisted_bcs_for_a_project() {
+    fn bc_view_state_preserves_null_sort_order_as_unset() {
+        // A NULL `sort_order` round-trips as `None` — the signal the canvas
+        // reads as "this BC has no explicit order; fall back to BC-name order".
         let db = Db::open_in_memory().unwrap();
         let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
-        db.save_bc_position(pid, "canvas", 1.0, 2.0).unwrap();
-        db.save_bc_position(pid, "project-registry", 3.0, 4.0).unwrap();
-        db.save_bc_position(pid, "infrastructure", 5.0, 6.0).unwrap();
 
-        let map = db.bc_positions(pid).unwrap();
-        assert_eq!(map.len(), 3);
-        assert_eq!(map["canvas"], (1.0, 2.0));
-        assert_eq!(map["project-registry"], (3.0, 4.0));
-        assert_eq!(map["infrastructure"], (5.0, 6.0));
+        db.save_bc_view_state(pid, "canvas", true, None).unwrap();
+        let row = db.bc_view_state(pid, "canvas").unwrap().unwrap();
+        assert!(row.collapsed);
+        assert_eq!(row.sort_order, None, "NULL sort_order must read back as None");
     }
 
     #[test]
-    fn bc_positions_only_returns_rows_for_the_given_project() {
-        // Each project's BC positions are isolated by `project_id` —
-        // no cross-talk.
+    fn bc_view_states_returns_all_persisted_bcs_for_a_project() {
+        let db = Db::open_in_memory().unwrap();
+        let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+        db.save_bc_view_state(pid, "canvas", false, Some(0)).unwrap();
+        db.save_bc_view_state(pid, "project-registry", true, Some(1))
+            .unwrap();
+        db.save_bc_view_state(pid, "infrastructure", false, None)
+            .unwrap();
+
+        let map = db.bc_view_states(pid).unwrap();
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["canvas"], BcViewStateRow { collapsed: false, sort_order: Some(0) });
+        assert_eq!(map["project-registry"], BcViewStateRow { collapsed: true, sort_order: Some(1) });
+        assert_eq!(map["infrastructure"], BcViewStateRow { collapsed: false, sort_order: None });
+    }
+
+    #[test]
+    fn bc_view_states_only_returns_rows_for_the_given_project() {
+        // Each project's BC view-state is isolated by `project_id` — no
+        // cross-talk between frames.
         let db = Db::open_in_memory().unwrap();
         let p1 = db.upsert_project("C:/src/p1", "P1").unwrap();
         let p2 = db.upsert_project("C:/src/p2", "P2").unwrap();
-        db.save_bc_position(p1, "canvas", 1.0, 1.0).unwrap();
-        db.save_bc_position(p2, "canvas", 9.0, 9.0).unwrap();
+        db.save_bc_view_state(p1, "canvas", true, Some(0)).unwrap();
+        db.save_bc_view_state(p2, "canvas", false, Some(9)).unwrap();
 
-        let m1 = db.bc_positions(p1).unwrap();
+        let m1 = db.bc_view_states(p1).unwrap();
         assert_eq!(m1.len(), 1);
-        assert_eq!(m1["canvas"], (1.0, 1.0));
+        assert_eq!(m1["canvas"], BcViewStateRow { collapsed: true, sort_order: Some(0) });
 
-        let m2 = db.bc_positions(p2).unwrap();
-        assert_eq!(m2["canvas"], (9.0, 9.0));
+        let m2 = db.bc_view_states(p2).unwrap();
+        assert_eq!(m2["canvas"], BcViewStateRow { collapsed: false, sort_order: Some(9) });
     }
 
     #[test]
-    fn bc_positions_cascades_on_hard_delete_of_project() {
-        // ON DELETE CASCADE on bc_positions.project_id: hard-deleting a project
-        // wipes its BC positions. Mirrors tile_positions's behaviour and is the
-        // mechanism the 30-day GC sweep relies on to clear stale positions.
+    fn bc_view_state_cascades_on_hard_delete_of_project() {
+        // ON DELETE CASCADE on bc_view_state.project_id: hard-deleting a
+        // project wipes its BC view-state. Mirrors tile_positions and the old
+        // bc_positions; it is the mechanism the 30-day GC sweep relies on to
+        // clear stale view-state.
         let db = Db::open_in_memory().unwrap();
         let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
-        db.save_bc_position(pid, "canvas", 1.0, 2.0).unwrap();
-        assert!(!db.bc_positions(pid).unwrap().is_empty());
+        db.save_bc_view_state(pid, "canvas", true, Some(0)).unwrap();
+        assert!(!db.bc_view_states(pid).unwrap().is_empty());
 
         db.remove_project(pid).unwrap();
 
         assert!(
-            db.bc_positions(pid).unwrap().is_empty(),
-            "bc_positions must cascade with hard-deleted project"
+            db.bc_view_states(pid).unwrap().is_empty(),
+            "bc_view_state must cascade with hard-deleted project"
         );
     }
 
     #[test]
-    fn bc_position_concurrent_saves_do_not_race() {
-        // Acceptance criterion: concurrent saves don't race. The `Db` wraps
-        // its `Connection` in a `Mutex`, so by construction every write is
-        // serialised. This test fires many concurrent saves and asserts the
-        // final state is one of the values (no torn writes, no panics, no
-        // dropped rows).
+    fn bc_view_state_concurrent_saves_do_not_race() {
+        // Acceptance criterion: concurrent saves don't race. The `Db` wraps its
+        // `Connection` in a `Mutex`, so every write is serialised by
+        // construction. Fire many concurrent saves and assert the final state
+        // is one of the written values (no torn writes, no panics, no dropped
+        // rows).
         use std::sync::Arc;
         use std::thread;
 
@@ -1713,7 +1825,7 @@ mod tests {
         for i in 0..16 {
             let db = db.clone();
             handles.push(thread::spawn(move || {
-                db.save_bc_position(pid, "canvas", i as f64, (i * 2) as f64)
+                db.save_bc_view_state(pid, "canvas", i % 2 == 0, Some(i as i64))
                     .unwrap();
             }));
         }
@@ -1721,23 +1833,30 @@ mod tests {
             h.join().unwrap();
         }
 
-        let pos = db.bc_position(pid, "canvas").unwrap();
-        // The final value is whichever thread won the race for "last writer".
-        // We just assert SOME value is stored and its `y` is `2 * x` (the
-        // invariant the test threads maintain).
-        let (x, y) = pos.expect("final position must be present");
-        assert!((0.0..16.0).contains(&x), "x out of range: {x}");
-        assert!((y - 2.0 * x).abs() < f64::EPSILON, "y must be 2*x: {x},{y}");
+        let row = db
+            .bc_view_state(pid, "canvas")
+            .unwrap()
+            .expect("final view-state must be present");
+        // The winning writer maintained `collapsed == (sort_order % 2 == 0)`.
+        let so = row.sort_order.expect("sort_order written by every thread");
+        assert!((0..16).contains(&so), "sort_order out of range: {so}");
+        assert_eq!(
+            row.collapsed,
+            so % 2 == 0,
+            "collapsed must match the writing thread's invariant"
+        );
     }
 
     // -------- 005: preferences + v4->v5 migration -------------------------
 
     #[test]
-    fn fresh_db_is_at_schema_version_five() {
-        // `design-system-004-light-theme` acceptance: a fresh DB lands at v5
-        // (adds the `preferences` table for cross-session user preferences).
+    fn fresh_db_is_at_schema_version_five_or_higher() {
+        // `design-system-004-light-theme` acceptance: a fresh DB has the
+        // `preferences` table for cross-session user preferences. The version
+        // moved to v6 with `canvas-023`; the v5 surface this test cares about
+        // (the `preferences` table) remains intact — assert "at least v5".
         let db = Db::open_in_memory().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 5);
+        assert!(db.schema_version().unwrap() >= 5);
     }
 
     #[test]
@@ -1855,19 +1974,17 @@ mod tests {
         }
 
         // Open with migration applied — v4 leaps to v5 (and beyond if the
-        // current version moves further).
+        // current version moves further; canvas-023 moved it to v6).
         let db = Db::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 5);
+        assert!(db.schema_version().unwrap() >= 5);
 
-        // Pre-existing project + tile position + bc_position survived.
+        // Pre-existing project + tile position survived. (The bc_positions row
+        // is intentionally NOT checked here: the v5→v6 step drops that table —
+        // see `v5_db_migrates_to_v6_dropping_bc_positions_and_preserving_other_tables`.)
         let rows = db.list_projects().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].path, "C:/src/guppi");
         assert_eq!(db.tile_position(rows[0].id).unwrap(), Some((100.0, 200.0)));
-        assert_eq!(
-            db.bc_position(rows[0].id, "canvas").unwrap(),
-            Some((42.0, 17.0))
-        );
 
         // The new preferences table is queryable and pre-seeded with the
         // default theme row.
@@ -1888,28 +2005,216 @@ mod tests {
     }
 
     #[test]
-    fn bc_positions_are_preserved_through_soft_delete() {
-        // ADR-005 retention + `project-registry-004` carve-out: a soft-delete
-        // (single "Remove project" affordance) must NOT touch bc_positions,
-        // mirroring tile_positions. A re-register revives the BC layout in
-        // place.
+    fn bc_view_state_is_preserved_through_soft_delete() {
+        // ADR-005 retention + ADR-021 carve-out (inherited from the old
+        // bc_positions): a soft-delete (single "Remove project" affordance)
+        // must NOT touch bc_view_state, mirroring tile_positions. A re-register
+        // revives the accordion arrangement in place.
         let db = Db::open_in_memory().unwrap();
         let pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
-        db.save_bc_position(pid, "canvas", 42.0, 17.0).unwrap();
-        db.save_bc_position(pid, "project-registry", -1.0, 2.0).unwrap();
+        db.save_bc_view_state(pid, "canvas", true, Some(1)).unwrap();
+        db.save_bc_view_state(pid, "project-registry", false, Some(0))
+            .unwrap();
 
         db.soft_delete_project(pid).unwrap();
 
-        // BC positions survive the soft-delete.
-        let map = db.bc_positions(pid).unwrap();
+        // View-state survives the soft-delete.
+        let map = db.bc_view_states(pid).unwrap();
         assert_eq!(map.len(), 2);
-        assert_eq!(map["canvas"], (42.0, 17.0));
-        assert_eq!(map["project-registry"], (-1.0, 2.0));
+        assert_eq!(map["canvas"], BcViewStateRow { collapsed: true, sort_order: Some(1) });
+        assert_eq!(map["project-registry"], BcViewStateRow { collapsed: false, sort_order: Some(0) });
 
-        // Re-register: same id, same positions still there.
+        // Re-register: same id, same view-state still there.
         let revived = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
         assert_eq!(revived, pid);
-        let map = db.bc_positions(pid).unwrap();
-        assert_eq!(map["canvas"], (42.0, 17.0));
+        let map = db.bc_view_states(pid).unwrap();
+        assert_eq!(map["canvas"], BcViewStateRow { collapsed: true, sort_order: Some(1) });
+    }
+
+    #[test]
+    fn fresh_db_is_at_schema_version_six() {
+        // `canvas-023` acceptance: a fresh DB lands at v6 (replaces the dead
+        // `bc_positions` table with `bc_view_state`).
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.schema_version().unwrap(), 6);
+    }
+
+    #[test]
+    fn fresh_db_has_no_bc_positions_table() {
+        // canvas-023 / ADR-021: the dead `bc_positions` table is fully retired.
+        // A fresh DB built through the full migration chain must not carry it
+        // (the v5→v6 step DROPs it; a fresh DB never created it because the v4
+        // step's CREATE is followed by the v6 DROP in the same `migrate` run).
+        let db = Db::open_in_memory().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'bc_positions'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "bc_positions table must not exist after v6");
+    }
+
+    #[test]
+    fn v5_db_migrates_to_v6_dropping_bc_positions_and_preserving_other_tables() {
+        // `canvas-023` acceptance: a v5 DB (with `bc_positions` rows) is
+        // migrated to v6 in place. The dead `bc_positions` table is DROPped and
+        // `bc_view_state` is created; the OTHER tables (`projects`,
+        // `tile_positions`, `preferences`) survive untouched — the
+        // data-preservation contract.
+        use rusqlite::Connection;
+
+        let path = std::env::temp_dir().join(format!(
+            "guppi-v5-v6-migration-{}-{:?}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Hand-roll a v5 database with a project + tile_position + a now-dead
+        // bc_positions row + a non-default preference.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "foreign_keys", true).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);
+                 INSERT INTO schema_version (version) VALUES (5);
+                 CREATE TABLE clusters (
+                     id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name  TEXT NOT NULL,
+                     color TEXT NOT NULL
+                 );
+                 CREATE TABLE scan_roots (
+                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                     path      TEXT NOT NULL UNIQUE,
+                     depth_cap INTEGER NOT NULL DEFAULT 3,
+                     added_at  TEXT NOT NULL
+                 );
+                 CREATE TABLE projects (
+                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                     path         TEXT NOT NULL UNIQUE,
+                     nickname     TEXT NOT NULL,
+                     added_at     TEXT NOT NULL,
+                     last_seen_at TEXT NOT NULL,
+                     scan_root_id INTEGER NULL REFERENCES scan_roots(id) ON DELETE RESTRICT,
+                     deleted_at   TEXT NULL
+                 );
+                 CREATE TABLE tile_positions (
+                     project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                     x          REAL NOT NULL,
+                     y          REAL NOT NULL,
+                     width      REAL NOT NULL,
+                     height     REAL NOT NULL,
+                     cluster_id INTEGER NULL REFERENCES clusters(id) ON DELETE SET NULL
+                 );
+                 CREATE TABLE app_state (
+                     key   TEXT PRIMARY KEY,
+                     value TEXT NOT NULL
+                 );
+                 CREATE TABLE bc_positions (
+                     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                     bc_name    TEXT    NOT NULL,
+                     x          REAL    NOT NULL,
+                     y          REAL    NOT NULL,
+                     PRIMARY KEY (project_id, bc_name)
+                 );
+                 CREATE TABLE preferences (
+                     key   TEXT PRIMARY KEY,
+                     value TEXT NOT NULL
+                 );
+                 INSERT INTO preferences (key, value) VALUES ('theme', 'light');
+                 INSERT INTO projects (path, nickname, added_at, last_seen_at)
+                 VALUES ('C:/src/guppi', 'GUPPI', datetime('now'), datetime('now'));
+                 INSERT INTO tile_positions (project_id, x, y, width, height)
+                 VALUES (1, 100.0, 200.0, 220, 120);
+                 INSERT INTO bc_positions (project_id, bc_name, x, y)
+                 VALUES (1, 'canvas', 42.0, 17.0);",
+            )
+            .unwrap();
+        }
+
+        // Open with migration applied — v5 leaps to v6.
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 6);
+
+        // OTHER tables survived untouched (the data-preservation contract).
+        let rows = db.list_projects().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "C:/src/guppi");
+        assert_eq!(db.tile_position(rows[0].id).unwrap(), Some((100.0, 200.0)));
+        assert_eq!(
+            db.get_preference("theme").unwrap(),
+            Some("light".to_string()),
+            "non-default preference must survive the v5→v6 migration"
+        );
+
+        // The dead bc_positions table is gone.
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'bc_positions'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "bc_positions must be DROPped by the v5→v6 step");
+        }
+
+        // The new bc_view_state table is queryable, empty, and writable.
+        assert!(db.bc_view_states(rows[0].id).unwrap().is_empty());
+        db.save_bc_view_state(rows[0].id, "canvas", true, Some(0))
+            .unwrap();
+        assert_eq!(
+            db.bc_view_state(rows[0].id, "canvas").unwrap(),
+            Some(BcViewStateRow { collapsed: true, sort_order: Some(0) })
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn bc_view_state_survives_db_handle_close_and_reopen() {
+        // canvas-023 acceptance: collapse + order survive an app restart —
+        // modelled as "close the Db handle, reopen at the same file, the
+        // view-state is still there".
+        let path = std::env::temp_dir().join(format!(
+            "guppi-bc-view-state-persist-{}-{:?}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let pid;
+        {
+            let db = Db::open(&path).unwrap();
+            pid = db.upsert_project("C:/src/guppi", "GUPPI").unwrap();
+            db.save_bc_view_state(pid, "canvas", true, Some(2)).unwrap();
+            db.save_bc_view_state(pid, "project-registry", false, Some(0))
+                .unwrap();
+        }
+        // Re-open at the same path — simulates an app restart.
+        {
+            let db = Db::open(&path).unwrap();
+            let map = db.bc_view_states(pid).unwrap();
+            assert_eq!(map["canvas"], BcViewStateRow { collapsed: true, sort_order: Some(2) });
+            assert_eq!(
+                map["project-registry"],
+                BcViewStateRow { collapsed: false, sort_order: Some(0) }
+            );
+        }
+
+        let _ = std::fs::remove_file(&path);
     }
 }

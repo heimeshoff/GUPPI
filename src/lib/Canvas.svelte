@@ -45,6 +45,7 @@
 		listProjects,
 		listProjectsByScanRoot,
 		listScanRoots,
+		loadBcViewStates,
 		loadCamera,
 		loadTilePosition,
 		onDomainEvent,
@@ -52,10 +53,12 @@
 		removeProject,
 		removeScanRoot,
 		rescanScanRoot,
+		saveBcViewState,
 		saveCamera,
 		saveTilePosition,
 		logToCore
 	} from './ipc';
+	import type { BcViewState } from './ipc';
 	import type {
 		BcRollup,
 		BoundedContext,
@@ -526,22 +529,164 @@
 	let viewportW = $state(0);
 	let viewportH = $state(0);
 
-	// Per-BC accordion expand/collapse state, keyed `${projectId}:${bcName}`.
-	// Default is all-expanded (in-memory only; persistence is canvas-023). A
-	// key absent from the map means "use the default" (expanded).
-	let accordionExpanded = $state<Map<string, boolean>>(new Map());
+	// Per-BC accordion view-state, keyed `${projectId}:${bcName}` (canvas-023,
+	// ADR-021). Holds the persisted collapse flag + drag-reorder `sortOrder`.
+	// Batch-loaded from SQLite on frame paint (`primeBcViewState`); mutations
+	// (`toggleAccordion`, `reorderBc`) optimistically update this map AND write
+	// through to the DB via `saveBcViewState`. A key absent from the map means
+	// "use the defaults": expanded, and the stable BC-name order. `collapsed`
+	// inverts the old in-memory `accordionExpanded` (default expanded).
+	let bcViewState = $state<Map<string, BcViewState>>(new Map());
 	function accordionKey(projectId: number, bcName: string): string {
 		return `${projectId}:${bcName}`;
 	}
 	function isExpanded(projectId: number, bcName: string): boolean {
-		const v = accordionExpanded.get(accordionKey(projectId, bcName));
-		return v === undefined ? true : v;
+		const v = bcViewState.get(accordionKey(projectId, bcName));
+		// Absent ⇒ default expanded; present ⇒ inverse of the collapse flag.
+		return v === undefined ? true : !v.collapsed;
 	}
+	/** The persisted drag-reorder index for a BC, or `null` when unset (the row
+	 *  falls back to the stable BC-name order). */
+	function bcSortOrder(projectId: number, bcName: string): number | null {
+		return bcViewState.get(accordionKey(projectId, bcName))?.sortOrder ?? null;
+	}
+	/** Toggle a BC row collapsed/expanded, persisting the new collapse flag (and
+	 *  preserving its current `sortOrder`). Optimistic: the map updates
+	 *  immediately so the accordion animates without waiting on the round-trip;
+	 *  a failed write is logged best-effort (the in-memory state still reflects
+	 *  the user's intent for this session). */
 	function toggleAccordion(projectId: number, bcName: string) {
 		const key = accordionKey(projectId, bcName);
-		const next = new Map(accordionExpanded);
-		next.set(key, !isExpanded(projectId, bcName));
-		accordionExpanded = next;
+		const prev = bcViewState.get(key);
+		const next: BcViewState = {
+			collapsed: !(prev ? prev.collapsed : false),
+			sortOrder: prev?.sortOrder ?? null
+		};
+		const map = new Map(bcViewState);
+		map.set(key, next);
+		bcViewState = map;
+		void saveBcViewState(projectId, bcName, next).catch((e) =>
+			logToCore('warn', `save_bc_view_state (collapse) failed for ${key}: ${e}`)
+		);
+	}
+
+	/** Order a project's BCs for accordion display (canvas-023): BCs with a
+	 *  persisted `sortOrder` sort by it; BCs without one keep the snapshot's
+	 *  stable BC-name order and sort *after* any explicitly-ordered rows. The
+	 *  comparator is a pure function of `bcViewState` + the snapshot, so the
+	 *  `$derived` recomputes whenever either changes. Does not mutate the
+	 *  snapshot array. */
+	function orderBcs(projectId: number, bcs: BoundedContext[]): BoundedContext[] {
+		// `nameIndex` preserves the snapshot's (BC-name) order as the stable
+		// tiebreaker and the fallback for rows with no explicit `sortOrder`.
+		const nameIndex = new Map<string, number>();
+		bcs.forEach((bc, i) => nameIndex.set(bc.name, i));
+		const rank = (bc: BoundedContext): number => {
+			const so = bcSortOrder(projectId, bc.name);
+			// Explicitly-ordered rows occupy the front band (their sortOrder);
+			// unset rows fall to a band after every possible explicit order,
+			// keeping their snapshot BC-name order via the nameIndex tiebreak.
+			return so ?? Number.MAX_SAFE_INTEGER;
+		};
+		return [...bcs].sort((a, b) => {
+			const ra = rank(a);
+			const rb = rank(b);
+			if (ra !== rb) return ra - rb;
+			return (nameIndex.get(a.name) ?? 0) - (nameIndex.get(b.name) ?? 0);
+		});
+	}
+
+	/** Batch-load a project's persisted BC view-state (collapse + order) and
+	 *  merge it into `bcViewState` (canvas-023). Called on frame paint
+	 *  (`refresh` / `refreshOne`). Best-effort: a failed load leaves the frame
+	 *  on its defaults (all expanded, BC-name order). */
+	async function primeBcViewState(projectId: number) {
+		try {
+			const states = await loadBcViewStates(projectId);
+			const map = new Map(bcViewState);
+			for (const [bcName, st] of states) {
+				map.set(accordionKey(projectId, bcName), st);
+			}
+			bcViewState = map;
+		} catch (e) {
+			void logToCore('warn', `load_bc_view_states failed for ${projectId}: ${e}`);
+		}
+	}
+
+	/** Drag-reorder: move `bcName` to sit at `targetIndex` within the project's
+	 *  currently-displayed BC order, then renumber every BC's `sortOrder`
+	 *  densely (0..n-1) and persist each (canvas-023). Renumbering the whole
+	 *  frame keeps the stored order total + gap-free so a later insert is
+	 *  unambiguous. Optimistic: `bcViewState` updates immediately; each write is
+	 *  best-effort. No-op if the move does not change the order. */
+	function reorderBc(projectId: number, bcName: string, targetIndex: number) {
+		const entry = findProject(projectId);
+		if (!entry) return;
+		const ordered = orderBcs(projectId, entry.snapshot.bcs).map((b) => b.name);
+		const from = ordered.indexOf(bcName);
+		if (from === -1) return;
+		const clamped = Math.max(0, Math.min(targetIndex, ordered.length - 1));
+		if (from === clamped) return;
+		ordered.splice(from, 1);
+		ordered.splice(clamped, 0, bcName);
+
+		const map = new Map(bcViewState);
+		ordered.forEach((name, i) => {
+			const key = accordionKey(projectId, name);
+			const prev = map.get(key);
+			const next: BcViewState = { collapsed: prev?.collapsed ?? false, sortOrder: i };
+			map.set(key, next);
+			void saveBcViewState(projectId, name, next).catch((e) =>
+				logToCore('warn', `save_bc_view_state (reorder) failed for ${key}: ${e}`)
+			);
+		});
+		bcViewState = map;
+	}
+
+	// --- accordion header drag-to-reorder (canvas-023) ----------------------
+	// HTML5 drag-and-drop on the accordion header (the drag handle). A genuine
+	// drag suppresses the click-toggle (`headerDragMoved`) so dragging a row
+	// does not also collapse it. `headerDrag` carries the in-flight drag's
+	// source `(projectId, bcName)`; the row sections are the drop targets,
+	// keyed by their display index.
+	let headerDrag = $state<{ projectId: number; bcName: string } | null>(null);
+	let headerDragMoved = $state(false);
+	function onHeaderDragStart(projectId: number, bcName: string, ev: DragEvent) {
+		headerDrag = { projectId, bcName };
+		headerDragMoved = false;
+		if (ev.dataTransfer) {
+			ev.dataTransfer.effectAllowed = 'move';
+			// Required for Firefox to start a drag; payload is unused (we read
+			// `headerDrag` directly).
+			ev.dataTransfer.setData('text/plain', bcName);
+		}
+	}
+	function onHeaderDragOver(projectId: number, ev: DragEvent) {
+		// Only allow a drop within the same frame (reorder is per-project).
+		if (headerDrag && headerDrag.projectId === projectId) {
+			ev.preventDefault();
+			headerDragMoved = true;
+			if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+		}
+	}
+	function onHeaderDrop(projectId: number, targetIndex: number, ev: DragEvent) {
+		ev.preventDefault();
+		const drag = headerDrag;
+		headerDrag = null;
+		if (!drag || drag.projectId !== projectId) return;
+		reorderBc(projectId, drag.bcName, targetIndex);
+	}
+	function onHeaderDragEnd() {
+		headerDrag = null;
+	}
+	/** Click handler for the accordion header that suppresses the toggle when
+	 *  the click was the tail of a drag-reorder gesture (canvas-023). */
+	function onHeaderClick(projectId: number, bcName: string) {
+		if (headerDragMoved) {
+			headerDragMoved = false;
+			return;
+		}
+		toggleAccordion(projectId, bcName);
 	}
 
 	// Per-BC live agent roll-up (`active / blocked / idling`) from
@@ -740,7 +885,7 @@
 				width: entry.size.width,
 				height: entry.size.height,
 				zoom: z,
-				bcs: entry.snapshot.bcs,
+				bcs: orderBcs(entry.id, entry.snapshot.bcs),
 				missing: entry.snapshot.missing
 			});
 		}
@@ -1793,6 +1938,8 @@
 				// (agent-awareness-002). Lazy + best-effort; the interior shows
 				// the static count until each fetch lands.
 				for (const entry of entries) {
+					// canvas-023: hydrate persisted accordion collapse + order.
+					void primeBcViewState(entry.id);
 					for (const bc of entry.snapshot.bcs) {
 						void refreshBcRollup(entry, bc.name);
 						void refreshTaskAgentStates(entry, bc.name);
@@ -1823,6 +1970,9 @@
 					size: frameSize(fresh.bcs.length)
 				};
 				renderScene();
+				// canvas-023: re-merge persisted view-state (a newly-appeared BC
+				// may carry its own collapse/order if it was seen before).
+				void primeBcViewState(id);
 				for (const bc of fresh.bcs) {
 					void refreshBcRollup(projects[idx], bc.name);
 					void refreshTaskAgentStates(projects[idx], bc.name);
@@ -2150,16 +2300,30 @@
 						No bounded contexts yet — add a <code>contexts/&lt;bc&gt;/</code> directory.
 					</p>
 				{:else}
-					<div class="accordion">
-						{#each view.bcs as bc (bc.name)}
+					<div class="accordion" role="list">
+						{#each view.bcs as bc, bcIndex (bc.name)}
 							{@const expanded = isExpanded(view.id, bc.name)}
 							{@const pills = rollupPills(view.id, bc.name)}
-							<section class="accordion-row" class:expanded>
+							{@const dragging =
+								headerDrag?.projectId === view.id && headerDrag?.bcName === bc.name}
+							<!-- The whole row is a drop target at its display index;
+							     the header button is the drag handle (canvas-023). -->
+							<section
+								class="accordion-row"
+								class:expanded
+								class:dragging
+								role="listitem"
+								ondragover={(ev) => onHeaderDragOver(view.id, ev)}
+								ondrop={(ev) => onHeaderDrop(view.id, bcIndex, ev)}
+							>
 								<button
 									type="button"
 									class="accordion-header"
 									aria-expanded={expanded}
-									onclick={() => toggleAccordion(view.id, bc.name)}
+									draggable={true}
+									onclick={() => onHeaderClick(view.id, bc.name)}
+									ondragstart={(ev) => onHeaderDragStart(view.id, bc.name, ev)}
+									ondragend={onHeaderDragEnd}
 								>
 									<span class="accordion-chevron" class:open={expanded} aria-hidden="true">▶</span>
 									<span class="accordion-bc-name">{bc.name}</span>
@@ -2662,6 +2826,10 @@
 		flex: 1 1 auto;
 		min-height: 0;
 	}
+	.accordion-row.dragging {
+		/* Lift affordance while a header is being drag-reordered (canvas-023). */
+		opacity: 0.5;
+	}
 	.accordion-header {
 		display: flex;
 		align-items: center;
@@ -2671,10 +2839,15 @@
 		background: var(--guppi-accordion-row-header-fill);
 		border: 0;
 		width: 100%;
-		cursor: pointer;
+		/* `grab` signals the header doubles as a drag-reorder handle
+		   (canvas-023); it still click-toggles the accordion. */
+		cursor: grab;
 		font-family: var(--guppi-font-family);
 		text-align: left;
 		color: var(--guppi-accordion-row-text);
+	}
+	.accordion-header:active {
+		cursor: grabbing;
 	}
 	.accordion-header:hover {
 		outline: 1px solid var(--guppi-focus-ring);

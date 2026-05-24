@@ -706,55 +706,57 @@ fn load_tile_position(
         .map_err(|e| e.to_string())
 }
 
-/// IPC command — persist a BC bubble's position inside its project frame
-/// (`project-registry-004`, consumed by `canvas-007`). Per-BC positions are
-/// scoped to a project; the upsert is keyed on `(project_id, bc_name)`. The
-/// drag-to-place loop fires this on drag end; preserved through ADR-005 soft
-/// delete (the 30-day retention window covers `bc_positions` exactly like
-/// `tile_positions`, since `bc_positions.project_id ON DELETE CASCADE` only
-/// kicks in on hard-delete).
+/// IPC command — persist a BC's accordion view-state inside its project frame
+/// (`canvas-023`, ADR-021). Per-BC view-state (collapse flag + drag-reorder
+/// `sort_order`) is scoped to a project; the upsert is keyed on
+/// `(project_id, bc_name)`. The accordion interaction fires this on
+/// collapse/expand toggle and on drag-reorder end; preserved through ADR-005
+/// soft delete (the 30-day retention window covers `bc_view_state` exactly
+/// like `tile_positions`, since `bc_view_state.project_id ON DELETE CASCADE`
+/// only kicks in on hard-delete). `sort_order = None` writes SQL NULL — the
+/// canvas falls back to the stable BC-name order for that row.
 #[tauri::command]
-fn save_bc_position(
+fn save_bc_view_state(
     state: tauri::State<'_, AppState>,
     project_id: i64,
     bc_name: String,
-    x: f64,
-    y: f64,
+    collapsed: bool,
+    sort_order: Option<i64>,
 ) -> Result<(), String> {
     state
         .db
-        .save_bc_position(project_id, &bc_name, x, y)
+        .save_bc_view_state(project_id, &bc_name, collapsed, sort_order)
         .map_err(|e| {
-            tracing::error!(error = %e, project_id, bc_name = %bc_name, "save_bc_position failed");
+            tracing::error!(error = %e, project_id, bc_name = %bc_name, "save_bc_view_state failed");
             e.to_string()
         })
 }
 
-/// IPC command — read back one BC's persisted position, if any
-/// (`project-registry-004`).
+/// IPC command — read back one BC's persisted accordion view-state, if any
+/// (`canvas-023`, ADR-021).
 #[tauri::command]
-fn load_bc_position(
+fn load_bc_view_state(
     state: tauri::State<'_, AppState>,
     project_id: i64,
     bc_name: String,
-) -> Result<Option<(f64, f64)>, String> {
+) -> Result<Option<db::BcViewStateRow>, String> {
     state
         .db
-        .bc_position(project_id, &bc_name)
+        .bc_view_state(project_id, &bc_name)
         .map_err(|e| e.to_string())
 }
 
-/// IPC command — batch-load every persisted BC position for a project
-/// (`project-registry-004`). Consumed by the canvas's project-frame paint to
-/// hydrate all BC bubble positions in one round-trip on project mount.
+/// IPC command — batch-load every persisted BC view-state for a project
+/// (`canvas-023`, ADR-021). Consumed by the canvas's project-frame paint to
+/// hydrate all BC collapse + order state in one round-trip on project mount.
 #[tauri::command]
-fn load_bc_positions(
+fn load_bc_view_states(
     state: tauri::State<'_, AppState>,
     project_id: i64,
-) -> Result<std::collections::HashMap<String, (f64, f64)>, String> {
+) -> Result<std::collections::HashMap<String, db::BcViewStateRow>, String> {
     state
         .db
-        .bc_positions(project_id)
+        .bc_view_states(project_id)
         .map_err(|e| e.to_string())
 }
 
@@ -1099,9 +1101,9 @@ pub fn run() {
             remove_scan_root,
             save_tile_position,
             load_tile_position,
-            save_bc_position,
-            load_bc_position,
-            load_bc_positions,
+            save_bc_view_state,
+            load_bc_view_state,
+            load_bc_view_states,
             save_camera,
             load_camera,
             get_preference,
