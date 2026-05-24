@@ -7,12 +7,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
 	AddScanRootResult,
+	BcRollup,
 	CameraState,
 	DomainEvent,
 	Point,
 	ProjectSnapshot,
 	ScanCandidate,
-	ScanRootRow
+	ScanRootRow,
+	TaskAgentState
 } from './types';
 
 /** The single Tauri event name the core's frontend bridge emits on (ADR-009). */
@@ -202,6 +204,31 @@ export async function getPreference(key: string): Promise<string | null> {
  *  overlay layer) can react without polling. */
 export function setPreference(key: string, value: string): Promise<void> {
 	return invoke('set_preference', { key, value });
+}
+
+/** Read one task's live agent state (`agent-awareness-002`, ADR-018). Returns
+ *  the unified read-model shape the canvas folds into a card's live-agent
+ *  indicator (canvas-021 owns the indicator CONTENT; canvas-020 only wires the
+ *  read). Idle for a task with no live signal. */
+export function getTaskAgentState(
+	projectId: number,
+	bc: string,
+	taskId: string
+): Promise<TaskAgentState> {
+	return invoke<TaskAgentState>('get_task_agent_state', { projectId, bc, taskId });
+}
+
+/** Read a BC's agent roll-up (`active / blocked / idling`) for the accordion-row
+ *  header slot (`agent-awareness-002`, ADR-018). `totalTasks` is the BC's task
+ *  count from the project snapshot; the core derives `idling = total − active −
+ *  blocked` so tasks with no live signal count as idling without a per-task
+ *  projection entry. Re-fetched on `task_agent_state_changed` for the BC. */
+export function getBcAgentRollup(
+	projectId: number,
+	bc: string,
+	totalTasks: number
+): Promise<BcRollup> {
+	return invoke<BcRollup>('get_bc_agent_rollup', { projectId, bc, totalTasks });
 }
 
 /** Forward a frontend log line into the core's tracing log file (ADR-010). */

@@ -38,12 +38,12 @@
 	import Modal from './Modal.svelte';
 	import {
 		addScanRoot,
+		getBcAgentRollup,
 		getProject,
 		importScannedProjects,
 		listProjects,
 		listProjectsByScanRoot,
 		listScanRoots,
-		loadBcPositions,
 		loadCamera,
 		loadTilePosition,
 		onDomainEvent,
@@ -51,23 +51,30 @@
 		removeProject,
 		removeScanRoot,
 		rescanScanRoot,
-		saveBcPosition,
 		saveCamera,
 		saveTilePosition,
 		logToCore
 	} from './ipc';
 	import type {
+		BcRollup,
 		BoundedContext,
 		CameraState,
 		Point,
 		ProjectSnapshot,
-		Relationship,
 		ScanCandidate,
-		ScanRootRow
+		ScanRootRow,
+		TaskColumn
 	} from './types';
 	import { applyDomainEvent } from './snapshot-patch';
 	import { spiralPosition } from './tile-layout';
-	import { computeBcLayout, type BcFrameLayout, type BcPositionMap } from './bc-layout';
+	import {
+		COLUMN_ORDER,
+		bucketTasksByColumn,
+		frameSize,
+		frameScreenAabb,
+		shouldMountInterior,
+		type FrameSize
+	} from './frame-interior';
 	import {
 		IDLE,
 		onPointerDown as dragOnPointerDown,
@@ -424,26 +431,24 @@
 	// in-place mutation of `bcs` / `task_counts` is picked up on the next
 	// ticker frame, exactly as in canvas-001.
 	//
-	// `canvas-007` extends the entry shape from `{ id, snapshot, pos }` to
-	// `{ id, snapshot, pos, bcLayout, bcPositions }`:
-	//   - `pos`         : world-space top-left of the project's FRAME
-	//                     (replaces the orbit-baseline `pos` of the project
-	//                     tile, semantically the same anchor).
-	//   - `bcLayout`    : deterministic force-directed positions of the
-	//                     BCs inside the frame, plus the auto-fit frame
-	//                     width/height. Recomputed on BC add / remove /
-	//                     relationship-change and on BC drag end.
-	//   - `bcPositions` : per-BC manual-drag overrides in frame-local
-	//                     coords. Persisted via `saveBcPosition` and
-	//                     batch-loaded via `loadBcPositions` at project
-	//                     paint. BCs present here are pinned during
-	//                     force-directed re-layout (`bc-layout.ts`).
+	// canvas-020 (ADR-017 pivot) reshapes the entry from canvas-007's
+	// `{ id, snapshot, pos, bcLayout, bcPositions }` to
+	// `{ id, snapshot, pos, size }`:
+	//   - `pos`   : world-space top-left of the project's FRAME (unchanged).
+	//   - `size`  : world-space frame-shell size. The retired `bc-layout.ts`
+	//               grew the frame per-BC to fit a force-directed bubble
+	//               cloud; the pivot makes the frame a fixed-size region whose
+	//               kanban-accordion DOM interior scrolls within it
+	//               (`frame-interior.frameSize`). The Pixi shell only ever
+	//               draws this rect; the interior is a DOM overlay.
+	// The BC bubble + intra-project edge interior (canvas-007 / ADR-015) and
+	// `bc-layout.ts` are retired here (ADR-017): BCs render as DOM accordion
+	// rows in the overlay, not Pixi bubbles, and BC↔BC edges are not drawn.
 	interface ProjectEntry {
 		id: number;
 		snapshot: ProjectSnapshot;
 		pos: Point;
-		bcLayout: BcFrameLayout;
-		bcPositions: BcPositionMap;
+		size: FrameSize;
 	}
 	let projects = $state<ProjectEntry[]>([]);
 
@@ -456,32 +461,21 @@
 	//
 	// `Map<number, FrameDisplayObjects>` keyed by `entry.id`. Kept OUTSIDE
 	// `$state` — these are imperative Pixi handles, not reactive data.
-	interface BcDisplayObjects {
-		container: Container; // BC bubble container (frame-local coords)
-		body: Graphics;       // bubble body (fill + border)
-		focusRing: Graphics;  // hover focus ring (toggled via .visible)
-		pillBg: Graphics;     // counts pill background
-		pillText: Text;       // counts label
-		title: Text;          // BC name
-		badge: BadgeDisplayObjects;
-	}
-	interface BadgeDisplayObjects {
-		container: Container;
-		body: Graphics;
-		glyph: Text;
-	}
+	// canvas-020 (ADR-017): the frame SHELL is the only Pixi-rendered part of a
+	// project. The BC-bubble (`BcDisplayObjects`) + intra-project-edge (`edges`,
+	// `bcsRoot`, `bcs`) interior of canvas-007/canvas-015 is retired — the
+	// accordion-kanban interior is a DOM overlay (see the markup + `#interiors`).
+	// The empty-frame placeholder also moves to the DOM interior, so the Pixi
+	// shell keeps only border + header + title + counts + focus-ring + missing
+	// glyph.
 	interface FrameDisplayObjects {
-		container: Container;          // parent of everything for one project; positioned at entry.pos
+		container: Container;          // parent of the shell for one project; positioned at entry.pos
 		body: Graphics;                // frame body (fill + border)
 		header: Graphics;              // header fill + divider
 		title: Text;                   // project title
 		counts: Text;                  // total task count
 		focusRing: Graphics;           // hover halo (toggled via .visible)
 		missingGlyph: Text;            // missing-tile ✕ glyph (toggled via .visible)
-		emptyText: Text;               // "No bounded contexts yet" placeholder (toggled via .visible)
-		edges: Graphics;               // all intra-project edges in one Graphics (cleared+redrawn on layout change)
-		bcsRoot: Container;            // parent of BC bubbles
-		bcs: Map<string, BcDisplayObjects>; // BC name -> display objects
 	}
 	const frameObjects = new Map<number, FrameDisplayObjects>();
 
@@ -498,16 +492,155 @@
 	// rings do not collide across tiles.
 	let hoveredKey = $state<string | null>(null);
 
+	// --- canvas-020: kanban-accordion DOM interior state (ADR-017) ----------
+	// The frame INTERIOR is a DOM overlay (ADR-017 hybrid substrate). These
+	// `$state` stores back the reactive overlay markup; the Pixi side never
+	// reads them. The overlay derives its mounted set + positions from the
+	// camera runes + `projects` reactively (`mountedInteriors` $derived).
+
+	// Camera runes are not `$state` on `this` component (they live on the
+	// `Camera` instance), so a manual tick bumps `cameraVersion` whenever pan /
+	// zoom changes to re-run the `mountedInteriors` $derived (the overlay must
+	// re-position on every camera change, exactly the `worldToScreen` contract
+	// ADR-016 / ADR-017 lean on). Pan/zoom/drag/resize handlers bump it.
+	let cameraVersion = $state(0);
+	let viewportW = $state(0);
+	let viewportH = $state(0);
+
+	// Per-BC accordion expand/collapse state, keyed `${projectId}:${bcName}`.
+	// Default is all-expanded (in-memory only; persistence is canvas-023). A
+	// key absent from the map means "use the default" (expanded).
+	let accordionExpanded = $state<Map<string, boolean>>(new Map());
+	function accordionKey(projectId: number, bcName: string): string {
+		return `${projectId}:${bcName}`;
+	}
+	function isExpanded(projectId: number, bcName: string): boolean {
+		const v = accordionExpanded.get(accordionKey(projectId, bcName));
+		return v === undefined ? true : v;
+	}
+	function toggleAccordion(projectId: number, bcName: string) {
+		const key = accordionKey(projectId, bcName);
+		const next = new Map(accordionExpanded);
+		next.set(key, !isExpanded(projectId, bcName));
+		accordionExpanded = next;
+	}
+
+	// Per-BC live agent roll-up (`active / blocked / idling`) from
+	// agent-awareness-002, keyed `${projectId}:${bcName}`. Fetched lazily by the
+	// interior on mount and refreshed on `task_agent_state_changed` / task
+	// events. Absent ⇒ the accordion row shows the static count only until the
+	// fetch lands.
+	let bcRollups = $state<Map<string, BcRollup>>(new Map());
+
 	/** Find a project entry by id; null if not currently rendered. */
 	function findProject(id: number): ProjectEntry | null {
 		return projects.find((p) => p.id === id) ?? null;
 	}
 
-	/** Recompute one project's BC layout in place. Called on BC add /
-	 *  remove / relationship-change and on BC drag end. Deterministic and
-	 *  one-shot — no requestAnimationFrame loop. */
-	function recomputeBcLayout(entry: ProjectEntry) {
-		entry.bcLayout = computeBcLayout(entry.snapshot.bcs, entry.bcPositions);
+	/** Re-fetch one BC's agent roll-up (`agent-awareness-002`, ADR-018) and
+	 *  store it for the accordion-row header slot. Best-effort: a failed IPC
+	 *  leaves the row on its static count. The roll-up's `idling` denominator
+	 *  is the BC's current task total, so we pass the live snapshot count. */
+	async function refreshBcRollup(entry: ProjectEntry, bcName: string) {
+		const bc = entry.snapshot.bcs.find((b) => b.name === bcName);
+		if (!bc) return;
+		const total =
+			bc.task_counts.backlog +
+			bc.task_counts.todo +
+			bc.task_counts.doing +
+			bc.task_counts.done;
+		try {
+			const rollup = await getBcAgentRollup(entry.id, bcName, total);
+			const next = new Map(bcRollups);
+			next.set(accordionKey(entry.id, bcName), rollup);
+			bcRollups = next;
+		} catch (e) {
+			void logToCore('warn', `get_bc_agent_rollup failed for ${entry.id}/${bcName}: ${e}`);
+		}
+	}
+
+	/** One frame's DOM interior view-model: where to anchor it on screen and at
+	 *  what zoom scale. `cameraVersion` is read so this recomputes on every
+	 *  camera change (pan / zoom / frame-drag / resize). */
+	interface InteriorView {
+		id: number;
+		name: string;
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+		zoom: number;
+		bcs: BoundedContext[];
+		missing: boolean;
+	}
+
+	// The set of frame interiors to MOUNT this frame, per the ADR-017 cost
+	// governors (viewport culling + zoom-floor LOD). Off-screen / zoomed-out
+	// frames are NOT in this list — they render the cheap Pixi shell only.
+	// Reading `cameraVersion`, `viewportW/H`, and `projects` makes this a pure
+	// reactive function of the camera + model; Svelte's keyed `{#each}` then
+	// reconciles the actual DOM nodes (only frames crossing the cull boundary
+	// mount/unmount — ADR-017).
+	const mountedInteriors = $derived.by<InteriorView[]>(() => {
+		void cameraVersion; // re-run on any camera change (worldToScreen moved)
+		const z = camera.zoom;
+		const viewport = { w: viewportW, h: viewportH };
+		const views: InteriorView[] = [];
+		for (const entry of projects) {
+			const aabb = frameScreenAabb(entry.pos, entry.size, camera);
+			if (!shouldMountInterior(aabb, viewport, z)) continue;
+			const screen = camera.worldToScreen(entry.pos.x, entry.pos.y);
+			views.push({
+				id: entry.id,
+				name: entry.snapshot.name,
+				left: screen.x,
+				top: screen.y,
+				width: entry.size.width,
+				height: entry.size.height,
+				zoom: z,
+				bcs: entry.snapshot.bcs,
+				missing: entry.snapshot.missing
+			});
+		}
+		return views;
+	});
+
+	/** The roll-up pills to show in an accordion-row header: one capsule per
+	 *  non-zero live-agent state (active = running, blocked, idling), each with
+	 *  its colourblind-safe glyph (§3.9). Absent roll-up ⇒ no pills (the static
+	 *  count still shows). */
+	function rollupPills(
+		projectId: number,
+		bcName: string
+	): { state: TaskState; glyph: string; count: number; color: number }[] {
+		const r = bcRollups.get(accordionKey(projectId, bcName));
+		if (!r) return [];
+		const pills: { state: TaskState; glyph: string; count: number; color: number }[] = [];
+		if (r.active > 0)
+			pills.push({ state: 'running', glyph: statusGlyph.running, count: r.active, color: statusColor.running });
+		if (r.blocked > 0)
+			pills.push({ state: 'blocked', glyph: statusGlyph.blocked, count: r.blocked, color: statusColor.blocked });
+		if (r.idling > 0)
+			pills.push({ state: 'idle', glyph: statusGlyph.idle, count: r.idling, color: statusColor.idle });
+		return pills;
+	}
+
+	/** Total task count for a BC (the accordion-row right-aligned read-out). */
+	function bcTotal(bc: BoundedContext): number {
+		const c = bc.task_counts;
+		return c.backlog + c.todo + c.doing + c.done;
+	}
+
+	/** A hex `#rrggbb` string from a tokens numeric, for inline DOM styling of
+	 *  the status-coloured roll-up glyph (the only place we need a runtime hex —
+	 *  the colour is data-driven per status, not a static token class). */
+	function hexColor(n: number): string {
+		return '#' + n.toString(16).padStart(6, '0');
+	}
+
+	/** The kanban column label (uppercase) for a `TaskColumn`. */
+	function columnLabel(col: TaskColumn): string {
+		return col.toUpperCase();
 	}
 
 	/**
@@ -663,6 +796,9 @@
 			}
 			host.appendChild(app.canvas);
 			app.stage.addChild(world);
+			// canvas-020: prime the reactive viewport size for the DOM interior
+			// overlay's cull test (ADR-017). Kept current by the resize listener.
+			syncViewport();
 
 			// --- restore persisted camera (ADR-004) ----------------------
 			try {
@@ -746,6 +882,12 @@
 					updateFrameDisplayObjects(entry, obj, z);
 				}
 				updateVoiceIndicator();
+				// canvas-020: repaint runs on every zoom change (wheel, eased
+				// zoom-to-fit tick, theme flip). Bump the camera version so the
+				// DOM interior overlay re-positions + re-applies `scale(z)` and
+				// the LOD gate re-evaluates (ADR-017). Pan does not call repaint
+				// — it bumps `cameraVersion` directly in the pointermove handler.
+				cameraVersion++;
 			}
 
 			// --- theme flip → repaint persistent geometry (design-system-004) -
@@ -773,110 +915,7 @@
 				repaint();
 			});
 
-			/** World-space center of one BC inside its project frame. The
-			 *  layout's `positions` map carries frame-local coords; we add
-			 *  the frame's world-space origin (`entry.pos`). Edges now live
-			 *  in world space, so no camera projection is applied —
-			 *  `world.scale` carries the on-screen zoom (canvas-015). */
-			function bcCenterWorld(
-				entry: ProjectEntry,
-				bcName: string
-			): Point | null {
-				const local = entry.bcLayout.positions.get(bcName);
-				if (!local) return null;
-				return {
-					x: entry.pos.x + local.x + shape.bcInsideWidth / 2,
-					y: entry.pos.y + local.y + shape.bcInsideHeight / 2
-				};
-			}
-
-			/** Draw a filled triangular arrowhead at `to`, pointing from
-			 *  `from -> to`. Coordinates are in WORLD space; geometry that
-			 *  must read at constant screen-space CSS px (head length / head
-			 *  width) is pre-divided by `z` so the parent `world.scale`'s
-			 *  multiplication restores the token value on screen.
-			 *  pullBack stays in world-space (`shape.bcInsideWidth / 2`)
-			 *  because it is the distance from the BC bubble's edge — the
-			 *  bubble itself lives in world space now (canvas-015). */
-			function drawArrowhead(
-				g: Graphics,
-				from: Point,
-				to: Point,
-				z: number,
-				col: number
-			) {
-				const dx = to.x - from.x;
-				const dy = to.y - from.y;
-				const len = Math.sqrt(dx * dx + dy * dy);
-				if (len < 0.0001) return;
-				const ux = dx / len;
-				const uy = dy / len;
-				// canvas-015: world-space arrowhead size = screen-px / z so the
-				// world.scale = z multiplication makes the on-screen size match
-				// the design token. pullBack is the world-space distance from
-				// the bubble edge — bubble is now drawn in world coords, so
-				// pullBack is a world-space token value (no `* z` and no `/ z`).
-				const headLen = shape.arrowheadLength / z;
-				const headW = shape.arrowheadWidth / z;
-				const pullBack = shape.bcInsideWidth / 2;
-				const tipX = to.x - ux * pullBack;
-				const tipY = to.y - uy * pullBack;
-				const baseX = tipX - ux * headLen;
-				const baseY = tipY - uy * headLen;
-				// Perpendicular for the arrowhead's width axis.
-				const px = -uy;
-				const py = ux;
-				const leftX = baseX + px * (headW / 2);
-				const leftY = baseY + py * (headW / 2);
-				const rightX = baseX - px * (headW / 2);
-				const rightY = baseY - py * (headW / 2);
-				g.moveTo(tipX, tipY)
-					.lineTo(leftX, leftY)
-					.lineTo(rightX, rightY)
-					.lineTo(tipX, tipY)
-					.fill(col);
-			}
-
-			/** Draw the ACL notch — a small filled triangle at the midpoint
-			 *  pointing toward the upstream end of the edge. World-space
-			 *  coordinates with size pre-divided by `z` for the same reason
-			 *  as `drawArrowhead`. */
-			function drawAclNotch(
-				g: Graphics,
-				upstream: Point,
-				downstream: Point,
-				z: number,
-				col: number
-			) {
-				const dx = downstream.x - upstream.x;
-				const dy = downstream.y - upstream.y;
-				const len = Math.sqrt(dx * dx + dy * dy);
-				if (len < 0.0001) return;
-				const ux = dx / len;
-				const uy = dy / len;
-				const midX = (upstream.x + downstream.x) / 2;
-				const midY = (upstream.y + downstream.y) / 2;
-				// canvas-015 — world-space notch size = screen-px / z.
-				const size = shape.aclNotchSize / z;
-				// Tip points toward upstream.
-				const tipX = midX - ux * (size / 2);
-				const tipY = midY - uy * (size / 2);
-				const baseX = midX + ux * (size / 2);
-				const baseY = midY + uy * (size / 2);
-				const px = -uy;
-				const py = ux;
-				const leftX = baseX + px * (size / 2);
-				const leftY = baseY + py * (size / 2);
-				const rightX = baseX - px * (size / 2);
-				const rightY = baseY - py * (size / 2);
-				g.moveTo(tipX, tipY)
-					.lineTo(leftX, leftY)
-					.lineTo(rightX, rightY)
-					.lineTo(tipX, tipY)
-					.fill(col);
-			}
-
-			// --- canvas-015: persistent project frame lifecycle --------------
+			// --- canvas-015 / canvas-020: persistent project frame SHELL ----
 			// `createFrameDisplayObjects` instantiates each Pixi object ONCE
 			// per project (body, header, title, counts, focus ring, missing
 			// glyph, empty-state text, edges Graphics, BC bubbles parent).
@@ -893,8 +932,6 @@
 				const header = new Graphics();
 				const focusRing = new Graphics();
 				focusRing.visible = false;
-				const edges = new Graphics();
-				const bcsRoot = new Container();
 				const missingGlyph = new Text({
 					text: statusGlyph.missing,
 					style: {
@@ -924,29 +961,12 @@
 					}
 				});
 				counts.anchor.set(1, 0.5);
-				const emptyText = new Text({
-					text: 'No bounded contexts yet',
-					style: {
-						fill: color.frameEmptyText,
-						fontFamily: typography.fontFamily,
-						fontSize: typography.sizeBody
-					}
-				});
-				emptyText.anchor.set(0.5, 0.5);
-				emptyText.visible = false;
-
-				// Edges live ABOVE the body/header so they aren't occluded by
-				// the body fill, but BELOW BC bubbles so the bubble bodies
-				// cover the edge endpoints.
 				container.addChild(body);
 				container.addChild(header);
 				container.addChild(title);
 				container.addChild(counts);
 				container.addChild(missingGlyph);
-				container.addChild(emptyText);
 				container.addChild(focusRing);
-				container.addChild(edges);
-				container.addChild(bcsRoot);
 
 				// Header bar drag + hover wiring. The hit area is updated in
 				// `updateFrameDisplayObjects` whenever the frame size changes
@@ -960,11 +980,7 @@
 					title,
 					counts,
 					focusRing,
-					missingGlyph,
-					emptyText,
-					edges,
-					bcsRoot,
-					bcs: new Map()
+					missingGlyph
 				};
 			}
 
@@ -973,8 +989,8 @@
 				obj: FrameDisplayObjects,
 				z: number
 			) {
-				const fw = entry.bcLayout.width;
-				const fh = entry.bcLayout.height;
+				const fw = entry.size.width;
+				const fh = entry.size.height;
 				const headerH = shape.frameHeaderHeight;
 				const isMissing = entry.snapshot.missing;
 				const borderCol = isMissing ? color.statusMissing : color.frameBorder;
@@ -1078,48 +1094,6 @@
 					.stroke({ width: strokeFocus, color: color.focusRing });
 				obj.focusRing.visible = hoveredKey === `project:${entry.id}`;
 
-				// --- Intra-project edges ---
-				// All edges live in ONE persistent Graphics — clear+redraw on
-				// every update. The Graphics's local coords are RELATIVE to
-				// the frame container, so we offset world coords by entry.pos
-				// before drawing. (Edges still use `bcCenterWorld` which
-				// returns absolute world coords; we adjust for the frame
-				// container origin here.)
-				drawIntraProjectEdgesIntoFrame(entry, obj.edges, z);
-
-				// --- Empty-state placeholder ---
-				const isEmpty = entry.snapshot.bcs.length === 0 && !isMissing;
-				obj.emptyText.visible = isEmpty;
-				if (isEmpty) {
-					obj.emptyText.style.fill = color.frameEmptyText;
-					obj.emptyText.position.set(fw / 2, headerH + (fh - headerH) / 2);
-				}
-
-				// --- BC bubbles (per entry) ---
-				// Reconcile: drop BC display objects that no longer exist;
-				// create or update each currently-present BC.
-				const liveBcNames = new Set(entry.snapshot.bcs.map((b) => b.name));
-				for (const name of Array.from(obj.bcs.keys())) {
-					if (!liveBcNames.has(name)) {
-						const bcObj = obj.bcs.get(name)!;
-						obj.bcsRoot.removeChild(bcObj.container);
-						bcObj.container.destroy({ children: true });
-						obj.bcs.delete(name);
-					}
-				}
-				for (const bc of entry.snapshot.bcs) {
-					const local = entry.bcLayout.positions.get(bc.name);
-					if (!local) continue;
-					let bcObj = obj.bcs.get(bc.name);
-					if (!bcObj) {
-						bcObj = createBcDisplayObjects(bc);
-						attachBcInteractivity(bcObj.container, entry.id, bc.name);
-						obj.bcs.set(bc.name, bcObj);
-						obj.bcsRoot.addChild(bcObj.container);
-					}
-					updateBcDisplayObjects(entry.id, bc, local, bcObj, z);
-				}
-
 				// --- Header hit area (CSS-px aware via world.scale) ---
 				// Hit-test predicates run in WORLD space because we set
 				// `hitArea.contains` against the container's local coords.
@@ -1133,125 +1107,6 @@
 					contains: (x: number, y: number) =>
 						x >= 0 && x <= fw && y >= 0 && y <= headerH
 				};
-			}
-
-			/** Edges live in WORLD space, but rendered into a Graphics that is
-			 *  a child of the per-frame container (translated by entry.pos).
-			 *  Adjust the absolute world coords from `bcCenterWorld` by
-			 *  subtracting the frame origin so the Graphics's local coord
-			 *  system places lines correctly. */
-			function drawIntraProjectEdgesIntoFrame(
-				entry: ProjectEntry,
-				g: Graphics,
-				z: number
-			) {
-				g.clear();
-				// Translate so the Graphics's local space is the frame's
-				// local space. We do this by drawing in (worldX - entry.pos.x,
-				// worldY - entry.pos.y) coordinates. Implementation: temporarily
-				// shift `bcCenterWorld`'s output by `-entry.pos` inside this fn.
-				const bcs = entry.snapshot.bcs;
-				if (bcs.length < 2) return;
-
-				const indexByName = new Map<string, number>();
-				bcs.forEach((bc, i) => indexByName.set(bc.name, i));
-
-				const seen = new Set<string>();
-				for (const bc of bcs) {
-					for (const rel of bc.relationships) {
-						const otherIdx = indexByName.get(rel.to);
-						if (otherIdx === undefined) continue;
-						const ownIdx = indexByName.get(bc.name);
-						if (ownIdx === undefined || ownIdx === otherIdx) continue;
-						const lo = Math.min(ownIdx, otherIdx);
-						const hi = Math.max(ownIdx, otherIdx);
-						const key = `${lo}-${hi}`;
-						if (seen.has(key)) continue;
-						seen.add(key);
-
-						const fromAbs = bcCenterWorld(entry, bc.name);
-						const toAbs = bcCenterWorld(entry, rel.to);
-						if (!fromAbs || !toAbs) continue;
-						const fromLocal = {
-							x: fromAbs.x - entry.pos.x,
-							y: fromAbs.y - entry.pos.y
-						};
-						const toLocal = {
-							x: toAbs.x - entry.pos.x,
-							y: toAbs.y - entry.pos.y
-						};
-						drawRelationshipEdgeLocal(bc, rel, g, fromLocal, toLocal, z);
-					}
-				}
-			}
-
-			/** Frame-local version of `drawRelationshipEdge`: callers
-			 *  pre-compute the from/to points in the frame's local coord
-			 *  system. Stroke widths and arrowhead/notch sizes are still
-			 *  pre-divided by `z` for the constant-screen-px invariant. */
-			function drawRelationshipEdgeLocal(
-				from: BoundedContext,
-				rel: Relationship,
-				g: Graphics,
-				fromCenter: Point,
-				toCenter: Point,
-				z: number
-			) {
-				void from; // direction comes off `rel`; `from` is unused here
-				const w = shape.edgeWeight / z;
-				const wConf = shape.edgeWeightConformist / z;
-
-				switch (rel.type) {
-					case 'shared-kernel':
-					case 'partnership': {
-						g.moveTo(fromCenter.x, fromCenter.y).lineTo(toCenter.x, toCenter.y);
-						g.stroke({
-							width: Math.max(1 / z, w),
-							color: color.edgeMutual
-						});
-						break;
-					}
-					case 'customer-supplier': {
-						const downstream =
-							rel.direction === 'upstream' ? fromCenter : toCenter;
-						const upstream =
-							rel.direction === 'upstream' ? toCenter : fromCenter;
-						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
-						g.stroke({
-							width: Math.max(1 / z, w),
-							color: color.edgeUpstream
-						});
-						drawArrowhead(g, upstream, downstream, z, color.edgeUpstream);
-						break;
-					}
-					case 'anticorruption-layer': {
-						const downstream =
-							rel.direction === 'upstream' ? fromCenter : toCenter;
-						const upstream =
-							rel.direction === 'upstream' ? toCenter : fromCenter;
-						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
-						g.stroke({
-							width: Math.max(1 / z, w),
-							color: color.edgeACL
-						});
-						drawArrowhead(g, upstream, downstream, z, color.edgeACL);
-						drawAclNotch(g, upstream, downstream, z, color.edgeACL);
-						break;
-					}
-					case 'conformist': {
-						const downstream =
-							rel.direction === 'upstream' ? fromCenter : toCenter;
-						const upstream =
-							rel.direction === 'upstream' ? toCenter : fromCenter;
-						g.moveTo(upstream.x, upstream.y).lineTo(downstream.x, downstream.y);
-						g.stroke({
-							width: Math.max(1 / z, wConf),
-							color: color.edgeConformist
-						});
-						drawArrowhead(g, upstream, downstream, z, color.edgeConformist);
-						break;
-					}
-				}
 			}
 
 			// --- camera interaction: pan (drag empty space) + zoom (wheel) -
@@ -1323,6 +1178,11 @@
 					// during pan, so no repaint is needed.
 					camera.panBy(delta.dx, delta.dy);
 					world.position.set(camera.pan_x, camera.pan_y);
+					// canvas-020: bump the camera version so the DOM interior
+					// overlay re-positions to the new pan (ADR-017 worldToScreen
+					// + transform contract). Cheap: the $derived restyles ≤9
+					// mounted interior roots, never the hundreds of card nodes.
+					cameraVersion++;
 					return;
 				}
 				if (delta.kind === 'frame') {
@@ -1336,35 +1196,17 @@
 					entry.pos = { x: entry.pos.x + delta.dx, y: entry.pos.y + delta.dy };
 					const obj = frameObjects.get(entry.id);
 					if (obj) obj.container.position.set(entry.pos.x, entry.pos.y);
+					// canvas-020: the frame's DOM interior tracks the shell — its
+					// `entry.pos` mutation is `$state`-reactive, but bump the
+					// camera version too so the position $derived recomputes now.
+					cameraVersion++;
 					return;
 				}
-				// delta.kind === 'bc'
-				const entry = findProject(delta.projectId);
-				if (!entry) return;
-				const current = entry.bcPositions.get(delta.bcName);
-				const layoutPos =
-					current ?? entry.bcLayout.positions.get(delta.bcName);
-				if (!layoutPos) return;
-				const nextPos: Point = {
-					x: layoutPos.x + delta.dx,
-					y: layoutPos.y + delta.dy
-				};
-				// Pin the BC at its new position; mirror it into the
-				// layout's positions Map so the render reads the updated
-				// spot without a full re-layout on every mouse move (we do
-				// recompute on drag END to allow other BCs to re-flow
-				// around the new pin).
-				entry.bcPositions.set(delta.bcName, nextPos);
-				entry.bcLayout.positions.set(delta.bcName, nextPos);
-				// canvas-015: update only the single BC bubble's container
-				// position and the project's edges Graphics (so the moving
-				// BC's edges follow). No full renderScene needed.
-				const frame = frameObjects.get(entry.id);
-				if (frame) {
-					const bcObj = frame.bcs.get(delta.bcName);
-					if (bcObj) bcObj.container.position.set(nextPos.x, nextPos.y);
-					drawIntraProjectEdgesIntoFrame(entry, frame.edges, camera.zoom);
-				}
+				// delta.kind === 'bc' — RETIRED by canvas-020 (ADR-017). BCs are
+				// no longer draggable Pixi bubbles; they are DOM accordion rows
+				// inside the interior overlay. No Pixi hit-area starts a BC drag,
+				// so this delta never fires. The controller's three-kind union is
+				// preserved (ADR-017), so the branch stays as a defensive no-op.
 			});
 			window.addEventListener('pointerup', () => {
 				const { next, persist } = dragOnPointerUp(dragState);
@@ -1378,18 +1220,10 @@
 					return;
 				}
 				if (persist.kind === 'bc') {
-					// Persist the dragged BC's new frame-local position
-					// and re-run the one-shot layout so the rest of the
-					// graph re-flows around the new pin.
-					const entry = findProject(persist.projectId);
-					if (entry) {
-						const pos = entry.bcPositions.get(persist.bcName);
-						if (pos) {
-							void saveBcPosition(entry.id, persist.bcName, pos);
-						}
-						recomputeBcLayout(entry);
-						renderScene();
-					}
+					// RETIRED by canvas-020 (ADR-017) — BC drag no longer
+					// originates (BCs are DOM accordion rows, not Pixi bubbles).
+					// Defensive no-op: the controller union still carries the
+					// kind, but nothing emits it.
 					return;
 				}
 				// persist.kind === 'camera'
@@ -1570,51 +1404,52 @@
 						}
 						return;
 					}
+					case 'task_agent_state_changed': {
+						// `agent-awareness-002` (ADR-018) — a task's live agent
+						// state changed. canvas-020 consumes this ONLY to
+						// refresh the affected BC's accordion-header roll-up
+						// slot (`active / blocked / idling`); the per-card live
+						// indicator CONTENT is canvas-021. The agent state is a
+						// separate read model (not on the snapshot), so we
+						// re-fetch the roll-up via IPC rather than patching the
+						// snapshot. No `renderScene()` — the roll-up renders in
+						// the DOM interior, driven by the reactive `bcRollups`
+						// store this update mutates.
+						const entry = findProject(event.project_id);
+						if (!entry) return;
+						void refreshBcRollup(entry, event.bc);
+						return;
+					}
 					default: {
 						// A fine-grained filesystem-observation event:
 						// `task_moved` / `task_added` / `task_removed` /
-						// `bc_appeared` / `bc_disappeared`. Route by id; if
-						// the project is not rendered, ignore (it is a
-						// project the canvas does not have — or the live-add
-						// race, in which case the matching `project_added`
-						// will arrive and trigger a fresh fetch that already
-						// reflects the change).
+						// `task_changed` / `bc_appeared` / `bc_disappeared`.
+						// Route by id; if the project is not rendered, ignore
+						// (it is a project the canvas does not have — or the
+						// live-add race, in which case the matching
+						// `project_added` will arrive and trigger a fresh fetch
+						// that already reflects the change).
 						const entry = findProject(event.project_id);
 						if (!entry) return;
 						applyDomainEvent(entry.snapshot, event, (msg) =>
 							void logToCore('warn', msg)
 						);
-						// `entry.snapshot` is part of Svelte 5 `$state`
-						// (deeply reactive). The mutation is picked up by
-						// the explicit `renderScene()` call at the end of
-						// this branch (canvas-014 retired the unconditional
-						// ticker-tick rebuild that previously covered for
-						// the dispatcher's missing render).
-						//
-						// BC topology changes (appear / disappear) require
-						// a one-shot layout recompute so the frame auto-
-						// fits and the new node finds a slot. Task-count
-						// events leave the BC set untouched and need no
-						// re-layout.
+						// `entry.snapshot` is part of Svelte 5 `$state` (deeply
+						// reactive). The kanban-accordion DOM interior derives
+						// from `projects` reactively, so a card add/move/remove/
+						// edit and a BC appear/disappear re-render the overlay
+						// with no imperative call. `renderScene()` repaints the
+						// Pixi shell (the header total-task count ticks). A
+						// task event that changes a BC's task count also nudges
+						// that BC's roll-up "idling" denominator, so refresh it.
 						if (
-							event.kind === 'bc_appeared' ||
-							event.kind === 'bc_disappeared' ||
 							event.kind === 'task_added' ||
 							event.kind === 'task_moved' ||
-							event.kind === 'task_removed'
+							event.kind === 'task_removed' ||
+							event.kind === 'bc_appeared'
 						) {
-							// `task_*` events may lazily create a BC node
-							// (`snapshot-patch.ts`'s `bcNode`), so they too
-							// can change topology. Re-running the layout
-							// is cheap on these tiny graphs and keeps the
-							// frame coherent.
-							recomputeBcLayout(entry);
+							void refreshBcRollup(entry, event.bc);
 						}
-						// Repaint so the snapshot mutation (count tick, new
-						// BC bubble, etc.) becomes visible. Before
-						// canvas-014's ticker fix this was implicit on the
-						// next animation frame; with the ticker dormant
-						// we must drive the render explicitly.
 						renderScene();
 						return;
 					}
@@ -1653,9 +1488,21 @@
 			// double duty here; an explicit `resize` listener is cheaper and
 			// makes the contract obvious.
 			window.addEventListener('resize', () => {
-				if (!disposed) renderScene();
+				if (disposed) return;
+				syncViewport();
+				renderScene();
 			});
 		})();
+
+		/** Mirror the canvas host's CSS-px size into the reactive viewport runes
+		 *  + bump the camera version. The DOM interior overlay's cull test
+		 *  (`shouldMountInterior`) reads these CSS-px dimensions — NOT
+		 *  `app.renderer.width/height`, which are DPR-multiplied device px. */
+		function syncViewport() {
+			viewportW = host.clientWidth;
+			viewportH = host.clientHeight;
+			cameraVersion++;
+		}
 
 		// Start an eased zoom-to-fit transition framing every rendered tile
 		// and its BCs within the viewport.
@@ -1707,8 +1554,8 @@
 			for (const entry of projects) {
 				minX = Math.min(minX, entry.pos.x);
 				minY = Math.min(minY, entry.pos.y);
-				maxX = Math.max(maxX, entry.pos.x + entry.bcLayout.width);
-				maxY = Math.max(maxY, entry.pos.y + entry.bcLayout.height);
+				maxX = Math.max(maxX, entry.pos.x + entry.size.width);
+				maxY = Math.max(maxY, entry.pos.y + entry.size.height);
 			}
 			return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 		}
@@ -1716,12 +1563,14 @@
 		/** Build a `ProjectEntry` for `snapshot`: restore its saved frame
 		 * position if any, otherwise pick the next spiral slot and persist
 		 * it immediately so it is stable across restarts even if never
-		 * dragged. Also batch-loads every persisted per-BC position for
-		 * this project (`loadBcPositions` — one IPC round-trip per project
-		 * paint) and computes the deterministic force-directed initial
-		 * layout that will draw the BCs inside the frame. `spiralIndex` is
-		 * the registration-order index used when no saved frame position
-		 * exists. */
+		 * dragged. `spiralIndex` is the registration-order index used when no
+		 * saved frame position exists.
+		 *
+		 * canvas-020 (ADR-017): the frame size is the deterministic default
+		 * (`frameSize`) — the kanban-accordion DOM interior scrolls within it.
+		 * The retired `bc-layout.ts` per-BC autofit + `loadBcPositions`
+		 * round-trip are gone; the accordion-row roll-ups are fetched lazily
+		 * by the interior overlay (`refreshBcRollup`). */
 		async function buildEntry(
 			snapshot: ProjectSnapshot,
 			spiralIndex: number
@@ -1752,21 +1601,12 @@
 				pos = spiralPosition(spiralIndex);
 			}
 
-			// Batch-load every persisted BC position for this project —
-			// the project-frame paint's single round-trip on mount
-			// (`project-registry-004`, `canvas-007`). BCs without a saved
-			// position fall through to the force-directed layout.
-			let bcPositions: BcPositionMap = new Map();
-			try {
-				bcPositions = await loadBcPositions(snapshot.id);
-			} catch (e) {
-				logToCore(
-					'warn',
-					`could not load BC positions for project ${snapshot.id}: ${e}`
-				);
-			}
-			const bcLayout = computeBcLayout(snapshot.bcs, bcPositions);
-			return { id: snapshot.id, snapshot, pos, bcLayout, bcPositions };
+			return {
+				id: snapshot.id,
+				snapshot,
+				pos,
+				size: frameSize(snapshot.bcs.length)
+			};
 		}
 
 		/** On-mount initial population: list every registered project, build
@@ -1788,6 +1628,12 @@
 				projects = entries;
 				status = `${projects.length} project${projects.length === 1 ? '' : 's'} · press F to fit`;
 				renderScene();
+				// canvas-020: prime each BC's accordion-header agent roll-up
+				// (agent-awareness-002). Lazy + best-effort; the interior shows
+				// the static count until each fetch lands.
+				for (const entry of entries) {
+					for (const bc of entry.snapshot.bcs) void refreshBcRollup(entry, bc.name);
+				}
 			} catch (e) {
 				status = `error: ${e}`;
 				logToCore('error', `list_projects failed: ${e}`);
@@ -1795,27 +1641,25 @@
 		}
 
 		/** Re-fetch exactly one project's snapshot (`resync_required` —
-		 * ADR-009 — and `bc_relationships_changed` — `canvas-007`).
-		 * Preserves the entry's existing world-space position AND the
-		 * persisted per-BC drag positions so the frame and its bubbles do
-		 * not jump on a refresh. The BC layout is recomputed against the
-		 * fresh `bcs` / `relationships` set (force-directed re-runs once;
-		 * pinned-by-saved-position BCs stay where the user dragged them). */
+		 * ADR-009 — and `bc_relationships_changed`). Preserves the entry's
+		 * existing world-space position so the frame does not jump on a
+		 * refresh. canvas-020 (ADR-017): the frame size is the deterministic
+		 * default; the kanban-accordion DOM interior re-derives from the fresh
+		 * snapshot, and each BC's roll-up is re-fetched. */
 		async function refreshOne(id: number) {
 			try {
 				const fresh = await getProject(id);
 				const idx = projects.findIndex((p) => p.id === id);
 				if (idx === -1) return;
 				const existing = projects[idx];
-				const bcLayout = computeBcLayout(fresh.bcs, existing.bcPositions);
 				projects[idx] = {
 					id,
 					snapshot: fresh,
 					pos: existing.pos,
-					bcLayout,
-					bcPositions: existing.bcPositions
+					size: frameSize(fresh.bcs.length)
 				};
 				renderScene();
+				for (const bc of fresh.bcs) void refreshBcRollup(projects[idx], bc.name);
 			} catch (e) {
 				logToCore('error', `get_project failed for ${id}: ${e}`);
 			}
@@ -1866,6 +1710,7 @@
 				projects = [...projects, entry];
 				status = `${projects.length} project${projects.length === 1 ? '' : 's'} · press F to fit`;
 				renderScene();
+				for (const bc of entry.snapshot.bcs) void refreshBcRollup(entry, bc.name);
 			} catch (e) {
 				logToCore('error', `live-add get_project failed for ${id}: ${e}`);
 			}
@@ -1982,169 +1827,6 @@
 			}
 		}
 
-		// --- canvas-015: persistent BC bubble + ambient overlays ---------
-		// Per the canvas-015 persistent-scene-graph rewrite, each BC bubble
-		// is a persistent Container instantiated ONCE on first render and
-		// updated in place. Its children — body Graphics (rect+focus ring),
-		// counts pill, title Text, badge — all persist; only contents and
-		// stroke widths refresh per-zoom/per-theme.
-
-		/** Build one inside-the-frame BC bubble (§3.7). World-space size
-		 *  driven by `bcInsideWidth` / `bcInsideHeight`. The BC's
-		 *  `container.position` is set by `updateBcDisplayObjects` to its
-		 *  frame-local coords on every update (frame-local coord system is
-		 *  inherited from the parent frame container). */
-		function createBcDisplayObjects(bc: BoundedContext): BcDisplayObjects {
-			const container = new Container();
-			const body = new Graphics();
-			const focusRing = new Graphics();
-			focusRing.visible = false;
-			const pillBg = new Graphics();
-			const pillText = new Text({
-				text: '',
-				style: {
-					fill: color.bcInsideTextMuted,
-					fontFamily: typography.fontFamilyMono,
-					fontSize: typography.sizeCaption
-				}
-			});
-			pillText.anchor.set(0.5);
-			const title = new Text({
-				text: bc.name,
-				style: {
-					fill: color.bcInsideText,
-					fontFamily: typography.fontFamily,
-					fontSize: typography.sizeBody,
-					fontWeight: String(typography.weightMedium) as '500'
-				}
-			});
-			const badge = createStatusBadge();
-			container.addChild(body);
-			container.addChild(focusRing);
-			container.addChild(pillBg);
-			container.addChild(pillText);
-			container.addChild(title);
-			container.addChild(badge.container);
-			return { container, body, focusRing, pillBg, pillText, title, badge };
-		}
-
-		/** Update one BC bubble's geometry, text, and pill in place. Called
-		 *  on initial render, on every zoom change (stroke widths), on
-		 *  count ticks (pillText), and on theme flip (palette). No allocation. */
-		function updateBcDisplayObjects(
-			projectId: number,
-			bc: BoundedContext,
-			local: Point,
-			obj: BcDisplayObjects,
-			z: number
-		) {
-			void projectId; // key parts already wired up at creation time
-			const w = shape.bcInsideWidth;
-			const h = shape.bcInsideHeight;
-			obj.container.position.set(local.x, local.y);
-
-			const strokeBody = Math.max(1 / z, shape.borderWidth / z);
-			const strokeFocus = Math.max(1 / z, shape.borderWidthFocus / z);
-
-			// --- Body ---
-			obj.body.clear();
-			obj.body
-				.roundRect(0, 0, w, h, shape.radiusBcInside)
-				.fill(color.bcInsideFill)
-				.stroke({ width: strokeBody, color: color.bcInsideBorder });
-
-			// --- Focus ring (own Graphics, toggled via .visible — AC #9) ---
-			obj.focusRing.clear();
-			obj.focusRing
-				.roundRect(-2, -2, w + 4, h + 4, shape.radiusBcInside + 2)
-				.stroke({ width: strokeFocus, color: color.focusRing });
-			obj.focusRing.visible = hoveredKey === `bc:${projectId}:${bc.name}`;
-
-			// --- Counts pill ---
-			const c = bc.task_counts;
-			obj.pillText.text = `b${c.backlog} t${c.todo} d${c.doing} ✓${c.done}`;
-			obj.pillText.style.fill = color.bcInsideTextMuted;
-			// ADR-003 invariant #6 — text floor counter-scale. Apply BEFORE
-			// reading `obj.pillText.width` so the pill background is sized to
-			// the actually-rendered text (which grows when scaled up).
-			obj.pillText.scale.set(
-				screenSpaceTitleScale(typography.sizeCaption, z)
-			);
-			const pillTextPadX = 6;
-			const pillH = shape.bcInsidePillHeight;
-			const pillW = Math.max(
-				shape.bcInsidePillMinWidth,
-				obj.pillText.width + pillTextPadX * 2
-			);
-			const pillX = w - shape.framePadding * 0.5 - pillW;
-			const pillY = shape.framePadding * 0.5;
-			obj.pillBg.clear();
-			obj.pillBg
-				.roundRect(pillX, pillY, pillW, pillH, shape.bcInsidePillRadius)
-				.fill(color.bcInsidePillFill);
-			obj.pillText.position.set(pillX + pillW / 2, pillY + pillH / 2);
-
-			// --- Title (BC name) ---
-			const bcTitleX = shape.framePadding * 0.5;
-			const bcTitleGap = shape.framePadding * 0.5;
-			const bcTitleMaxW = Math.max(0, pillX - bcTitleX - bcTitleGap);
-			obj.title.style.fill = color.bcInsideText;
-			// ADR-003 invariant #6 — text floor counter-scale; apply BEFORE
-			// truncate so the binary search measures the rendered width.
-			obj.title.scale.set(screenSpaceTitleScale(typography.sizeBody, z));
-			truncateTextToWidth(obj.title, bc.name, bcTitleMaxW);
-			obj.title.position.set(bcTitleX, shape.framePadding * 0.5);
-
-			// --- Status badge ---
-			updateStatusBadge(obj.badge, w, deriveBcStatus(bc));
-
-			// --- Hit area (frame-local; no `z` factor — world.scale handles
-			// it; hit-test coordinates arrive in the container's local
-			// space, which is the BC's local space here). ---
-			obj.container.eventMode = 'static';
-			obj.container.hitArea = {
-				contains: (x: number, y: number) =>
-					x >= 0 && x <= w && y >= 0 && y <= h
-			};
-		}
-
-		// Status badge — coloured pill with the status glyph, pinned to a
-		// bubble's top-right corner. Persistent across renders.
-		function createStatusBadge(): BadgeDisplayObjects {
-			const container = new Container();
-			const body = new Graphics();
-			const glyph = new Text({
-				text: '',
-				style: {
-					fill: color.statusText,
-					fontFamily: typography.fontFamily,
-					fontSize: typography.sizeCaption,
-					fontWeight: String(typography.weightBold) as '700'
-				}
-			});
-			glyph.anchor.set(0.5);
-			container.addChild(body);
-			container.addChild(glyph);
-			return { container, body, glyph };
-		}
-
-		function updateStatusBadge(
-			badge: BadgeDisplayObjects,
-			nodeW: number,
-			state: TaskState
-		) {
-			const size = shape.badgeHeight;
-			const bx = nodeW - size - 6;
-			const by = 6;
-			badge.body.clear();
-			badge.body
-				.roundRect(bx, by, size, size, shape.radiusBadge)
-				.fill(statusColor[state]);
-			badge.glyph.text = statusGlyph[state];
-			badge.glyph.style.fill = color.statusText;
-			badge.glyph.position.set(bx + size / 2, by + size / 2);
-		}
-
 		// --- Voice indicator (screen-space overlay on app.stage) -----------
 		// Instantiated once on mount via `ensureVoiceIndicator`; updated in
 		// place via `updateVoiceIndicator`. Lives on `app.stage` (NOT
@@ -2244,48 +1926,6 @@
 			});
 		}
 
-		/** Wire one BC bubble's container into the shared drag controller +
-		 *  hover state. canvas-015: instantiated once per BC at create time;
-		 *  handlers persist across renders. */
-		function attachBcInteractivity(
-			bubble: Container,
-			projectId: number,
-			bcName: string
-		) {
-			const key = `bc:${projectId}:${bcName}`;
-			bubble.on('pointerover', () => {
-				hoveredKey = key;
-				// canvas-015 hover focus ring (AC #9): redraw just this
-				// one BC's body+ring in place. The body Graphics carries
-				// both the bubble shape and the optional focus-ring
-				// stroke; clear+restroke is allocation-free.
-				toggleBcFocusRing(projectId, bcName, true);
-			});
-			bubble.on('pointerout', () => {
-				if (hoveredKey === key) {
-					hoveredKey = null;
-					toggleBcFocusRing(projectId, bcName, false);
-				}
-			});
-			bubble.on('pointerdown', (e) => {
-				e.stopPropagation();
-				if (e.button === 2) {
-					if (e.nativeEvent && 'stopImmediatePropagation' in e.nativeEvent) {
-						e.nativeEvent.stopImmediatePropagation();
-					}
-					return;
-				}
-				cameraTarget = null;
-				dragState = dragOnPointerDown(
-					dragState,
-					{ kind: 'bcBubble', projectId, bcName },
-					e.global.x,
-					e.global.y,
-					e.button
-				);
-			});
-		}
-
 		/** Toggle one project frame's focus ring without rebuilding the
 		 *  scene (canvas-015 AC #9). The ring's geometry was already laid
 		 *  down by `updateFrameDisplayObjects` at last render, so a pure
@@ -2294,20 +1934,6 @@
 			const obj = frameObjects.get(id);
 			if (!obj) return;
 			obj.focusRing.visible = visible;
-		}
-
-		/** Toggle one BC bubble's focus ring without rebuilding the scene
-		 *  (canvas-015 AC #9). */
-		function toggleBcFocusRing(
-			projectId: number,
-			bcName: string,
-			visible: boolean
-		) {
-			const frame = frameObjects.get(projectId);
-			if (!frame) return;
-			const bcObj = frame.bcs.get(bcName);
-			if (!bcObj) return;
-			bcObj.focusRing.visible = visible;
 		}
 
 		return () => {
@@ -2320,6 +1946,105 @@
 </script>
 
 <div class="canvas-host" bind:this={host}></div>
+
+<!--
+	Kanban-accordion frame INTERIOR (canvas-020, ADR-017). The hybrid substrate:
+	the Pixi shell (border + header + drag) lives on the WebGL canvas above; this
+	DOM overlay carries each on-screen frame's accordion-of-BCs → kanban board.
+	Each `.frame-interior` is absolutely positioned at `worldToScreen(frame.pos)`
+	and `transform: scale(z)` matches the Pixi zoom, so the interior tracks the
+	shell exactly (layout computed once at zoom-1, zoom is a compositor scale —
+	never a reflow). Only frames that pass the ADR-017 cull + LOD gate
+	(`mountedInteriors`) are here; off-screen / zoomed-out frames render the
+	cheap Pixi shell only. The keyed `{#each}` reconciles card nodes across pan.
+
+	`pointer-events` are off on the wrapper so empty space + the header still
+	reach the Pixi pan/drag hit-areas underneath; the interior body re-enables
+	them so scroll + accordion clicks work.
+-->
+<div id="interiors" class="interiors-layer" aria-hidden={false}>
+	{#each mountedInteriors as view (view.id)}
+		<div
+			class="frame-interior"
+			style="left: {view.left}px; top: {view.top}px; width: {view.width}px;
+				height: {view.height}px; transform: scale({view.zoom});
+				transform-origin: top left;"
+			data-project-id={view.id}
+		>
+			<!-- The interior sits below the Pixi header band; offset by the
+			     header height so it fills the frame body region. The layout is
+			     computed once at zoom-1 px; `transform: scale(z)` on this root is
+			     a compositor move, not a reflow (ADR-017). -->
+			<div class="frame-interior-body">
+				{#if view.missing}
+					<p class="interior-empty">Project directory missing on disk.</p>
+				{:else if view.bcs.length === 0}
+					<p class="interior-empty">
+						No bounded contexts yet — add a <code>contexts/&lt;bc&gt;/</code> directory.
+					</p>
+				{:else}
+					<div class="accordion">
+						{#each view.bcs as bc (bc.name)}
+							{@const expanded = isExpanded(view.id, bc.name)}
+							{@const pills = rollupPills(view.id, bc.name)}
+							<section class="accordion-row" class:expanded>
+								<button
+									type="button"
+									class="accordion-header"
+									aria-expanded={expanded}
+									onclick={() => toggleAccordion(view.id, bc.name)}
+								>
+									<span class="accordion-chevron" class:open={expanded} aria-hidden="true">▶</span>
+									<span class="accordion-bc-name">{bc.name}</span>
+									<span class="accordion-rollup">
+										{#each pills as pill (pill.state)}
+											<span class="rollup-pill" style="color: {hexColor(pill.color)};">
+												<span class="rollup-glyph" aria-hidden="true">{pill.glyph}</span>
+												<span class="rollup-count">{pill.count}</span>
+											</span>
+										{/each}
+									</span>
+									<span class="accordion-total">{bcTotal(bc)} task{bcTotal(bc) === 1 ? '' : 's'}</span>
+								</button>
+								{#if expanded}
+									{@const buckets = bucketTasksByColumn(bc.tasks)}
+									<div class="kanban-board">
+										{#each COLUMN_ORDER as col (col)}
+											<div class="kanban-column">
+												<div class="kanban-column-header">{columnLabel(col)}</div>
+												<div class="kanban-column-stack">
+													{#if buckets[col].length === 0}
+														<div class="kanban-empty">—</div>
+													{:else}
+														{#each buckets[col] as t (t.id)}
+															<!-- Card STRUCTURE only; the live-agent indicator
+															     CONTENT + selection/detail panel are canvas-021/022. -->
+															<article class="task-card">
+																<div class="task-card-id">{t.id}</div>
+																<div class="task-card-title">{t.title}</div>
+																{#if t.tags.length > 0}
+																	<div class="task-card-tags">
+																		{#each t.tags as tag (tag)}
+																			<span class="task-card-tag">{tag}</span>
+																		{/each}
+																	</div>
+																{/if}
+															</article>
+														{/each}
+													{/if}
+												</div>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							</section>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/each}
+</div>
 
 <div class="status">{status}</div>
 
@@ -2669,6 +2394,244 @@
 		font-size: var(--guppi-size-caption);
 		color: var(--guppi-bc-text-muted);
 		pointer-events: none;
+	}
+
+	/* ===== Kanban-accordion frame interior (canvas-020, ADR-017) =========
+	 * The DOM half of the hybrid substrate: each on-screen frame's interior
+	 * (BC accordion → kanban board → task cards) rendered as a DOM overlay
+	 * positioned at `worldToScreen(frame.pos)` + `transform: scale(z)`. The
+	 * Pixi frame shell (border + header + drag) sits on the WebGL canvas
+	 * beneath. Every value is a `--guppi-*` token (styleguide §3.9–3.11). */
+	.interiors-layer {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		/* Off so empty space + the Pixi header band keep receiving pan / drag
+		   pointer events; re-enabled on the scrollable interior body. */
+		pointer-events: none;
+		z-index: 2;
+	}
+	.frame-interior {
+		position: absolute;
+		/* width / height / left / top / transform set inline per-frame. The
+		   layout is computed once at this zoom-1 size; the inline
+		   `transform: scale(z)` is a compositor move, never a reflow. */
+		box-sizing: border-box;
+	}
+	.frame-interior-body {
+		position: absolute;
+		/* The Pixi header band owns the top strip; the interior fills the body
+		   region below it. */
+		top: var(--guppi-frame-header-height);
+		left: 0;
+		right: 0;
+		bottom: 0;
+		box-sizing: border-box;
+		padding: var(--guppi-frame-padding);
+		overflow: hidden;
+		pointer-events: auto;
+	}
+	.interior-empty {
+		margin: 0;
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-body);
+		color: var(--guppi-frame-empty-text);
+		text-align: center;
+	}
+	.interior-empty code {
+		font-family: var(--guppi-font-family-mono);
+	}
+
+	/* --- BC accordion (§3.9) --- */
+	.accordion {
+		display: flex;
+		flex-direction: column;
+		gap: var(--guppi-accordion-row-gap);
+		height: 100%;
+		overflow-y: auto;
+	}
+	.accordion-row {
+		flex: 0 0 auto;
+		display: flex;
+		flex-direction: column;
+		background: var(--guppi-accordion-row-fill);
+		border-radius: var(--guppi-accordion-row-radius);
+		overflow: hidden;
+	}
+	.accordion-row.expanded {
+		/* Let an expanded row take a share of the interior height so its board
+		   scrolls vertically rather than pushing siblings off. */
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+	.accordion-header {
+		display: flex;
+		align-items: center;
+		gap: var(--guppi-space-sm);
+		height: var(--guppi-accordion-row-header-height);
+		padding: 0 var(--guppi-accordion-row-padding);
+		background: var(--guppi-accordion-row-header-fill);
+		border: 0;
+		width: 100%;
+		cursor: pointer;
+		font-family: var(--guppi-font-family);
+		text-align: left;
+		color: var(--guppi-accordion-row-text);
+	}
+	.accordion-header:hover {
+		outline: 1px solid var(--guppi-focus-ring);
+		outline-offset: -1px;
+	}
+	.accordion-chevron {
+		flex: 0 0 auto;
+		width: var(--guppi-accordion-chevron-size);
+		font-size: var(--guppi-accordion-chevron-size);
+		line-height: 1;
+		color: var(--guppi-accordion-chevron);
+		transition: transform var(--guppi-duration-accordion) var(--guppi-ease-panel);
+	}
+	.accordion-chevron.open {
+		transform: rotate(90deg);
+	}
+	.accordion-bc-name {
+		flex: 0 1 auto;
+		font-size: var(--guppi-size-body);
+		font-weight: var(--guppi-weight-medium);
+		color: var(--guppi-accordion-row-text);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.accordion-rollup {
+		flex: 1 1 auto;
+		display: flex;
+		align-items: center;
+		gap: var(--guppi-space-xs);
+	}
+	.rollup-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--guppi-space-xs);
+		height: var(--guppi-accordion-rollup-pill-height);
+		padding: 0 var(--guppi-space-sm);
+		border-radius: var(--guppi-accordion-rollup-pill-radius);
+		background: var(--guppi-accordion-rollup-pill-fill);
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-caption);
+		/* the per-state status colour is applied inline (data-driven) */
+	}
+	.rollup-glyph {
+		line-height: 1;
+	}
+	.accordion-total {
+		flex: 0 0 auto;
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-caption);
+		color: var(--guppi-accordion-row-text-muted);
+	}
+
+	/* --- Kanban board + column (§3.10) --- */
+	.kanban-board {
+		display: flex;
+		gap: var(--guppi-kanban-column-gap);
+		padding: var(--guppi-accordion-row-padding);
+		border-top: 1px solid var(--guppi-accordion-row-divider);
+		overflow-x: auto;
+		overflow-y: hidden;
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+	.kanban-column {
+		display: flex;
+		flex-direction: column;
+		flex: 1 0 var(--guppi-kanban-column-min-width);
+		min-width: var(--guppi-kanban-column-min-width);
+		max-width: var(--guppi-kanban-column-max-width);
+		background: var(--guppi-kanban-column-fill);
+		border-radius: var(--guppi-kanban-column-radius);
+		padding: var(--guppi-kanban-column-padding);
+		min-height: 0;
+	}
+	.kanban-column-header {
+		flex: 0 0 auto;
+		height: var(--guppi-kanban-column-header-height);
+		display: flex;
+		align-items: center;
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-caption);
+		font-weight: var(--guppi-weight-medium);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--guppi-kanban-column-header-text);
+		border-bottom: 1px solid var(--guppi-kanban-column-divider);
+	}
+	.kanban-column-stack {
+		display: flex;
+		flex-direction: column;
+		gap: var(--guppi-card-gap);
+		padding-top: var(--guppi-card-gap);
+		overflow-y: auto;
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+	.kanban-empty {
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-caption);
+		color: var(--guppi-kanban-column-empty-text);
+		text-align: center;
+		padding: var(--guppi-space-sm) 0;
+	}
+
+	/* --- Task card (§3.11) — STRUCTURE only; live-agent line + selection
+	 *     are canvas-021 / canvas-022. --- */
+	.task-card {
+		flex: 0 0 auto;
+		min-height: var(--guppi-card-min-height);
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		gap: var(--guppi-space-xs);
+		padding: var(--guppi-card-padding);
+		background: var(--guppi-card-fill);
+		border: var(--guppi-card-border-width) solid var(--guppi-card-border);
+		border-radius: var(--guppi-card-radius);
+		cursor: pointer;
+	}
+	.task-card:hover {
+		background: var(--guppi-card-fill-hover);
+	}
+	.task-card-id {
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-caption);
+		color: var(--guppi-card-id-text);
+	}
+	.task-card-title {
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-body);
+		font-weight: var(--guppi-weight-medium);
+		color: var(--guppi-card-title-text);
+		/* wrap to 2 lines then ellipsis (§3.11 / Q11d); full title in panel */
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.task-card-tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--guppi-space-xs);
+	}
+	.task-card-tag {
+		display: inline-flex;
+		align-items: center;
+		height: var(--guppi-card-tag-height);
+		padding: 0 var(--guppi-space-xs);
+		border-radius: var(--guppi-card-tag-radius);
+		background: var(--guppi-card-tag-fill);
+		color: var(--guppi-card-tag-text);
+		font-family: var(--guppi-font-family);
+		font-size: var(--guppi-size-caption);
 	}
 
 	/*

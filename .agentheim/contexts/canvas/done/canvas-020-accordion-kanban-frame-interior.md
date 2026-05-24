@@ -1,11 +1,11 @@
 ---
 id: canvas-020
 title: "Frame interior: BC accordion + kanban board layout (retire bubbles + edges)"
-status: todo
+status: done
 type: feature
 context: canvas
 created: 2026-05-24
-completed:
+completed: 2026-05-24
 commit:
 depends_on: [canvas-019, design-system-006, project-registry-005]
 blocks: [canvas-021, canvas-022, canvas-023]
@@ -59,29 +59,80 @@ contract level; the implementation follows ADR-017):
 
 ## Acceptance criteria
 
-- [ ] Every project frame's interior renders as a vertical accordion of BC
+- [x] Every project frame's interior renders as a vertical accordion of BC
       rows; expanding a row shows that BC's four-column kanban board of task
       cards (card CONTENT detail is canvas-021; this task establishes the
       board/column/accordion structure + placement).
-- [ ] Columns are BACKLOG/TODO/DOING/DONE; each lists the BC's tasks by
+- [x] Columns are BACKLOG/TODO/DOING/DONE; each lists the BC's tasks by
       `task.column`; horizontal + per-column vertical scroll work.
-- [ ] Accordion rows collapse/expand on click (persistence is canvas-023;
+- [x] Accordion rows collapse/expand on click (persistence is canvas-023;
       this task ships the interaction with an in-memory default of all
       expanded).
-- [ ] BC bubbles, intra-project edges, and `bc-layout.ts` are removed;
+- [x] BC bubbles, intra-project edges, and `bc-layout.ts` are removed;
       `Canvas.svelte` no longer draws §3.7/§3.8 interior elements. Frame
       shell (border/header/drag/right-click/missing-tile) preserved and all
       canvas-005a/005b/006/012 affordances still work.
-- [ ] Targeted updates: `TaskAdded`/`TaskMoved`/`TaskRemoved`/`TaskChanged`/
+- [x] Targeted updates: `TaskAdded`/`TaskMoved`/`TaskRemoved`/`TaskChanged`/
       `BCAppeared`/`BCDisappeared` patch the interior in place via
       `snapshot-patch.ts`; no full `get_project` except on `resync_required`.
       (`canvas-001` invariant preserved at task granularity.)
-- [ ] Pan/zoom/drag-to-reposition of the whole frame still works (camera +
+- [x] Pan/zoom/drag-to-reposition of the whole frame still works (camera +
       drag-controller preserved per canvas-019); the culling/LOD policy from
       ADR-017 is implemented.
-- [ ] Built against `STYLEGUIDE.md` (design-system-006 sections); no raw
+- [x] Built against `STYLEGUIDE.md` (design-system-006 sections); no raw
       hex/sizing. `pnpm check` 0/0/0; `cargo test --lib` unchanged
       (frontend-only unless the patch layer needs Rust — not expected).
+
+## Outcome
+
+Implemented the ADR-017 hybrid frame interior. The Pixi **shell** (border +
+header bar + drag hit-area + missing glyph + focus ring) survives unchanged;
+the BC-bubble + intra-project-edge interior and `bc-layout.ts` are **deleted**.
+The kanban-accordion interior is now a **DOM overlay** positioned at
+`worldToScreen(frame.pos)` + `transform: scale(z)`.
+
+Key files:
+- `src/lib/frame-interior.ts` (new) — pure helpers + the tested verification
+  surface: `bucketTasksByColumn`, `frameSize`, `frameScreenAabb`,
+  `shouldMountInterior` (the ADR-017 culling + LOD policy with
+  `CULL_MARGIN_PX = 120` / `LOD_ZOOM_FLOOR = 0.45`), `COLUMN_ORDER`.
+  Tested in `src/lib/frame-interior.test.ts` (11 tests).
+- `src/lib/Canvas.svelte` — retired the BC-bubble/edge interior path,
+  `bc-layout` import, `recomputeBcLayout`/`bcCenterWorld`/`drawArrowhead`/
+  `drawAclNotch`/`drawIntraProjectEdges*`/`createBcDisplayObjects`/
+  `updateBcDisplayObjects`/`createStatusBadge`/`updateStatusBadge`/
+  `attachBcInteractivity`/`toggleBcFocusRing`; `ProjectEntry` is now
+  `{ id, snapshot, pos, size }`; added the `mountedInteriors` `$derived`
+  (cull/LOD gate) + the `cameraVersion` reactive bridge (ADR-019) + the DOM
+  interior markup (accordion rows → kanban columns → task cards) + styles (all
+  `--guppi-*` tokens, styleguide §3.9–3.11) + the accordion expand/collapse
+  state (in-memory all-expanded default) + the `bcRollups` store wired to
+  `get_bc_agent_rollup` and refreshed on `task_agent_state_changed` + task
+  events.
+- `src/lib/ipc.ts` — added `getTaskAgentState` + `getBcAgentRollup` (the
+  agent-awareness-002 read contract).
+- Deleted `src/lib/bc-layout.ts` + `src/lib/bc-layout.test.ts` (ADR-017 retires
+  them; no production importer remains).
+
+The snapshot-patch layer needed **no extension** — project-registry-005 already
+patches the task records and BCs in place; the DOM interior derives reactively
+from the `$state` snapshot. The live agent state is a separate read model (not
+on the snapshot), so the accordion roll-up re-fetches `get_bc_agent_rollup`.
+
+Decision recorded: **ADR-019** (kanban-accordion DOM-interior overlay) — the
+`cameraVersion` reactive bridge between the imperative Pixi camera and the
+reactive DOM overlay; the fixed frame-shell size (interior scrolls within);
+the one runtime-hex exception (data-driven roll-up glyph colour from a token
+numeric).
+
+The drag-controller's `bc` kind is preserved (ADR-017 contract) but is now a
+defensive no-op — no Pixi hit-area starts a BC drag. `bc_positions` schema +
+`save/load_bc_position` IPC remain in project-registry-004, now unused by the
+canvas (harmless; out of scope to remove).
+
+Gates: `pnpm check` 0/0/0; `pnpm test` 34/34 passing; `pnpm build` succeeds.
+No Rust changes (`cargo test --lib` unchanged). Styleguide §5 Q11 sign-off is a
+deferred human gate (Marco runs it in `pnpm tauri dev`), not a blocker.
 
 ## Notes
 
