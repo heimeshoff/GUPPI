@@ -23,7 +23,7 @@
 //! paired — they stay separate `TaskAdded` / `TaskRemoved`.
 
 use crate::events::{DomainEvent, EventBus};
-use crate::project::{parse_relationships, Relationship};
+use crate::project::{parse_relationships, parse_task_file, Relationship, TaskColumn};
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
@@ -111,8 +111,59 @@ impl AgentheimWatcher {
                     // domain events — the only events the watcher publishes.
                     let raw: Vec<Event> =
                         events.iter().map(|e| e.event.clone()).collect();
-                    for event in correlate(project_id, &agentheim_root, &raw) {
-                        bus.publish(event);
+                    let correlated = correlate(project_id, &agentheim_root, &raw);
+                    // `project-registry-005`: `correlate` is pure and emits
+                    // `TaskAdded` with empty metadata; enrich each from the
+                    // just-created file's frontmatter before publishing so the
+                    // canvas can draw the card without a resync. A task that
+                    // both appeared AND only-changed in the same batch is a
+                    // move/add, never a `TaskChanged` (those task_ids are
+                    // tracked here so the in-place detector skips them).
+                    let mut placement_changed: Vec<String> = Vec::new();
+                    for event in correlated {
+                        match &event {
+                            DomainEvent::TaskAdded { bc, state, task_id, .. } => {
+                                placement_changed.push(task_id.clone());
+                                bus.publish(enrich_task_added(
+                                    project_id,
+                                    &agentheim_root,
+                                    event.clone(),
+                                    bc,
+                                    state,
+                                    task_id,
+                                ));
+                            }
+                            DomainEvent::TaskMoved { task_id, .. }
+                            | DomainEvent::TaskRemoved { task_id, .. } => {
+                                placement_changed.push(task_id.clone());
+                                bus.publish(event);
+                            }
+                            _ => {
+                                bus.publish(event);
+                            }
+                        }
+                    }
+                    // `project-registry-005`: detect in-place writes to an
+                    // existing task file (a `Modify(Data)`/`Modify(Any)` whose
+                    // task_id did NOT also move/add/remove in this batch) and
+                    // fire `TaskChanged` with the re-read frontmatter so the
+                    // canvas patches the card's metadata in place.
+                    for (path, column, task_id, bc) in
+                        changed_task_files(&agentheim_root, &raw)
+                    {
+                        if placement_changed.contains(&task_id) {
+                            continue;
+                        }
+                        let task = parse_task_file(&path, column);
+                        bus.publish(DomainEvent::TaskChanged {
+                            project_id,
+                            bc,
+                            task_id: task.id,
+                            title: task.title,
+                            type_: task.type_,
+                            tags: task.tags,
+                            blocked_question: task.blocked_question,
+                        });
                     }
                     // `project-registry-004`: scan the same batch for BC
                     // README writes and fire `BcRelationshipsChanged` for each
@@ -277,6 +328,85 @@ fn reparse_bc_relationships(agentheim_root: &Path, bc_name: &str) -> Vec<Relatio
     parse_relationships(&bc_dir, bc_name, &sibling_names)
 }
 
+/// Re-read a just-created task file's frontmatter and fill the `TaskAdded`
+/// event's metadata (`title`, `type_`, `tags`) so the canvas can draw the new
+/// card in place (`project-registry-005`). The file is on disk by the time the
+/// debounced batch is processed; a missing/malformed frontmatter degrades to
+/// empty metadata via `parse_task_file` (the `task_id` is preserved from
+/// `correlate`'s filename-stem-based id). Returns the input event unchanged for
+/// any non-`TaskAdded` variant (defensive — the caller only passes `TaskAdded`).
+fn enrich_task_added(
+    project_id: i64,
+    agentheim_root: &Path,
+    event: DomainEvent,
+    bc: &str,
+    state: &str,
+    task_id: &str,
+) -> DomainEvent {
+    let column = match TaskColumn::from_state(state) {
+        Some(c) => c,
+        None => return event,
+    };
+    let path = agentheim_root
+        .join("contexts")
+        .join(bc)
+        .join(state)
+        .join(format!("{task_id}.md"));
+    let task = parse_task_file(&path, column);
+    DomainEvent::TaskAdded {
+        project_id,
+        bc: bc.to_string(),
+        state: state.to_string(),
+        // Keep `correlate`'s task_id (filename-stem based) as the identity on
+        // the event so a follow-up `TaskMoved`/`TaskRemoved` correlates; the
+        // re-read frontmatter only fills the display metadata.
+        task_id: task_id.to_string(),
+        title: task.title,
+        type_: task.type_,
+        tags: task.tags,
+    }
+}
+
+/// Scan a debounced batch for in-place content writes to existing task files —
+/// a `Modify(Data)` / `Modify(Any)` on a `contexts/<bc>/<state>/<task_id>.md`
+/// path (NOT a create, remove, or rename — those are handled by `correlate`).
+/// Returns `(absolute_path, column, task_id, bc)` per unique touched task file
+/// so the watcher can re-read frontmatter and fire `TaskChanged`
+/// (`project-registry-005`). The caller filters out task_ids that also moved /
+/// were added in the same batch.
+fn changed_task_files(
+    agentheim_root: &Path,
+    events: &[Event],
+) -> Vec<(PathBuf, TaskColumn, String, String)> {
+    let mut out: Vec<(PathBuf, TaskColumn, String, String)> = Vec::new();
+    for event in events {
+        // Only content/metadata modifications — explicitly NOT rename
+        // (`Modify(Name)`), which is a placement change handled by `correlate`.
+        let is_content_modify = matches!(
+            event.kind,
+            EventKind::Modify(ModifyKind::Data(_))
+                | EventKind::Modify(ModifyKind::Any)
+                | EventKind::Modify(ModifyKind::Metadata(_))
+        );
+        if !is_content_modify {
+            continue;
+        }
+        for path in &event.paths {
+            if let PathKind::Task { bc, state, task_id } = classify(agentheim_root, path) {
+                let column = match TaskColumn::from_state(&state) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                if out.iter().any(|(_, _, id, _)| id == &task_id) {
+                    continue;
+                }
+                out.push((path.clone(), column, task_id, bc));
+            }
+        }
+    }
+    out
+}
+
 /// Split one debounced `notify::Event` into the paths that *appeared* and the
 /// paths that *were removed* by it. Content-only modifications (editor saves
 /// inside a task file) carry no placement change and contribute nothing.
@@ -382,11 +512,17 @@ fn correlate(project_id: i64, agentheim_root: &Path, events: &[Event]) -> Vec<Do
     }
 
     for (task_id, (bc, state)) in appeared_tasks {
+        // `correlate` is pure (no I/O): it emits `TaskAdded` with empty
+        // metadata. The watcher closure enriches it from disk via
+        // `enrich_task_added` before publishing (`project-registry-005`).
         out.push(DomainEvent::TaskAdded {
             project_id,
             bc,
             state,
             task_id,
+            title: String::new(),
+            type_: String::new(),
+            tags: Vec::new(),
         });
     }
     for (task_id, (bc, state)) in removed_tasks {
@@ -726,6 +862,151 @@ mod tests {
             paths: vec![path],
             attrs: Default::default(),
         }
+    }
+
+    // --- `project-registry-005`: in-place TaskChanged detection -----------
+
+    #[test]
+    fn changed_task_files_picks_up_a_content_modify_on_a_task_file() {
+        let root = Path::new("/fake/.agentheim");
+        let path = task_path(root, "canvas", "doing", "canvas-020");
+        let events = vec![modify_data(path.clone())];
+        let out = changed_task_files(root, &events);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, path);
+        assert_eq!(out[0].1, TaskColumn::Doing);
+        assert_eq!(out[0].2, "canvas-020");
+        assert_eq!(out[0].3, "canvas");
+    }
+
+    #[test]
+    fn changed_task_files_ignores_create_remove_and_rename() {
+        // Creates/removes/renames are placement changes handled by `correlate`,
+        // not in-place edits — they must not surface as TaskChanged candidates.
+        let root = Path::new("/fake/.agentheim");
+        let p = task_path(root, "canvas", "doing", "canvas-020");
+        let events = vec![
+            create(p.clone()),
+            remove(p.clone()),
+            Event {
+                kind: EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+                paths: vec![
+                    task_path(root, "canvas", "todo", "canvas-020"),
+                    task_path(root, "canvas", "doing", "canvas-020"),
+                ],
+                attrs: Default::default(),
+            },
+        ];
+        assert!(changed_task_files(root, &events).is_empty());
+    }
+
+    #[test]
+    fn changed_task_files_ignores_non_task_modifies() {
+        let root = Path::new("/fake/.agentheim");
+        let readme = root.join("contexts").join("canvas").join("README.md");
+        let vision = root.join("vision.md");
+        let events = vec![modify_data(readme), modify_data(vision)];
+        assert!(changed_task_files(root, &events).is_empty());
+    }
+
+    #[test]
+    fn enrich_task_added_fills_metadata_from_the_files_frontmatter() {
+        let dir = scratch_project();
+        let agentheim = dir.join(".agentheim");
+        let task = agentheim
+            .join("contexts")
+            .join("canvas")
+            .join("doing")
+            .join("canvas-020.md");
+        fs::write(
+            &task,
+            "---\nid: canvas-020\ntitle: Kanban interior\ntype: feature\ntags: [canvas]\n---\n",
+        )
+        .unwrap();
+
+        let base = DomainEvent::TaskAdded {
+            project_id: 7,
+            bc: "canvas".to_string(),
+            state: "doing".to_string(),
+            task_id: "canvas-020".to_string(),
+            title: String::new(),
+            type_: String::new(),
+            tags: Vec::new(),
+        };
+        let enriched = enrich_task_added(7, &agentheim, base, "canvas", "doing", "canvas-020");
+        match enriched {
+            DomainEvent::TaskAdded { title, type_, tags, task_id, .. } => {
+                assert_eq!(task_id, "canvas-020");
+                assert_eq!(title, "Kanban interior");
+                assert_eq!(type_, "feature");
+                assert_eq!(tags, vec!["canvas".to_string()]);
+            }
+            other => panic!("expected TaskAdded, got {other:?}"),
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn in_place_task_frontmatter_write_fires_task_changed() {
+        // Acceptance: an in-place edit of a task file's frontmatter (no column
+        // move) fires `TaskChanged` carrying the re-read metadata.
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Changed\n").unwrap();
+        let task = dir
+            .join(".agentheim/contexts/canvas/doing/canvas-020.md");
+        fs::write(
+            &task,
+            "---\nid: canvas-020\ntitle: Original\ntype: feature\n---\n",
+        )
+        .unwrap();
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let _watcher = AgentheimWatcher::start(7, &dir, bus).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // In-place rewrite: same path, changed title + a blocked question.
+        fs::write(
+            &task,
+            "---\nid: canvas-020\ntitle: Renamed\ntype: feature\nblocked_question: \"Dock left or right?\"\n---\n",
+        )
+        .unwrap();
+
+        let mut saw_changed = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !saw_changed {
+            let event = tokio::time::timeout_at(deadline, rx.recv())
+                .await
+                .expect("events should arrive within the timeout")
+                .expect("the bus should deliver the event");
+            match event {
+                DomainEvent::TaskChanged {
+                    project_id,
+                    ref bc,
+                    ref task_id,
+                    ref title,
+                    ref blocked_question,
+                    ..
+                } => {
+                    assert_eq!(project_id, 7);
+                    assert_eq!(bc, "canvas");
+                    assert_eq!(task_id, "canvas-020");
+                    assert_eq!(title, "Renamed");
+                    assert_eq!(
+                        blocked_question.as_deref(),
+                        Some("Dock left or right?")
+                    );
+                    saw_changed = true;
+                }
+                // A spurious TaskAdded/TaskMoved here would mean the platform
+                // reported the write as a create/rename; tolerate by continuing
+                // — only a timeout (no TaskChanged at all) fails the test.
+                _ => continue,
+            }
+        }
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

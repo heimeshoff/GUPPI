@@ -69,9 +69,12 @@ enum DomainEvent {
     ProjectAdded { project_id, path },
     ProjectMissing { project_id },
 
-    // Filesystem observation (ADR-008 / infrastructure-014 / canvas-001)
+    // Filesystem observation (ADR-008 / infrastructure-014 / canvas-001 /
+    // project-registry-005 — see 2026-05-24 note for TaskAdded payload growth
+    // + the new TaskChanged variant)
     TaskMoved { project_id, bc, from, to, task_id },
-    TaskAdded { project_id, bc, state, task_id },
+    TaskAdded { project_id, bc, state, task_id, title, type_, tags },
+    TaskChanged { project_id, bc, task_id, title, type_, tags, blocked_question },
     TaskRemoved { project_id, bc, state, task_id },
     BCAppeared { project_id, bc },
     BCDisappeared { project_id, bc },
@@ -145,6 +148,39 @@ kept aligned with the filesystem-observation work in ADR-008.
 > light-mode-by-time-of-day, etc.) reuse the same generic key/value shape;
 > consumers ignore keys they do not recognise. The frontend bridge forwards
 > the variant under the existing `guppi://event` name — no new event channel.
+
+> **Reconciliation note (project-registry-005, 2026-05-24):** the
+> filesystem-observation taxonomy grows for the canvas kanban pivot, which
+> draws **individual task cards** (not a counts pill) and so needs per-task
+> metadata on the wire. Two changes:
+>
+> 1. **`TaskAdded` payload extended** — it now carries the just-created task
+>    file's frontmatter metadata: `{ project_id, bc, state, task_id, title,
+>    type_, tags }` (was `{ project_id, bc, state, task_id }`). The
+>    single-project `AgentheimWatcher` re-reads the file's frontmatter when
+>    emitting it (`correlate` stays pure and emits empty metadata; the watcher
+>    closure enriches via `enrich_task_added`). A malformed/missing frontmatter
+>    degrades to empty `title`/`type_`/`tags` with the filename-stem `task_id`
+>    — never aborts the event. `TaskMoved` is **unchanged** (a move carries no
+>    metadata change); `TaskRemoved` is **unchanged**.
+> 2. **New variant `TaskChanged { project_id, bc, task_id, title, type_, tags,
+>    blocked_question }`** — fires when a task file's frontmatter changes *in
+>    place* (a `Modify(Data)`/`Modify(Any)` on an existing
+>    `contexts/<bc>/<state>/<task_id>.md`, no column move) so the canvas can
+>    patch the matching card's metadata without a resync. The watcher's
+>    `changed_task_files` detector filters out task_ids that also moved/added/
+>    removed in the same debounce batch (those are placement changes already
+>    covered by `correlate`). `type_` is serialised as `type_` (not `type`) to
+>    dodge the JS reserved word on the frontend mirror; `blocked_question` is
+>    the on-disk fallback only — the **live** "AGENT NEEDS AN ANSWER" callout
+>    text is `agent-awareness-002`'s surface.
+>
+> Both changes honour the enum's "expected to grow" contract: existing
+> producers/consumers that do not care are untouched, and the frontend bridge
+> forwards the new/extended variants under the existing `guppi://event` name —
+> no new event channel. The frontend mirrors them in `src/lib/types.ts`
+> (`task_added` gains the fields, `task_changed` added) and patches cards in
+> place via `src/lib/snapshot-patch.ts`.
 
 ### Frontend bridge
 

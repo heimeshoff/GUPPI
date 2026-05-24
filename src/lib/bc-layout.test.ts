@@ -21,6 +21,7 @@ function bc(name: string, relTo: string[] = []): BoundedContext {
 	return {
 		name,
 		task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+		tasks: [],
 		relationships: relTo.map((to) => ({
 			to,
 			type: 'shared-kernel' as const,

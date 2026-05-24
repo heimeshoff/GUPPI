@@ -108,14 +108,94 @@ pub struct Relationship {
     pub direction: Option<Direction>,
 }
 
+/// Which of the four Agentheim task-state columns a task currently lives in —
+/// derived from the subdirectory the task file sits under
+/// (`backlog`/`todo`/`doing`/`done`). Serialised lowercase to match the
+/// task-state vocabulary already used on the wire (`project-registry-005`).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskColumn {
+    Backlog,
+    Todo,
+    Doing,
+    Done,
+}
+
+impl TaskColumn {
+    /// The state-directory name → column mapping. Returns `None` for any other
+    /// directory name (the caller only ever asks about the four task states).
+    pub(crate) fn from_state(state: &str) -> Option<TaskColumn> {
+        match state {
+            "backlog" => Some(TaskColumn::Backlog),
+            "todo" => Some(TaskColumn::Todo),
+            "doing" => Some(TaskColumn::Doing),
+            "done" => Some(TaskColumn::Done),
+            _ => None,
+        }
+    }
+
+    /// Stable ordering rank for sorting `tasks` within a BC (backlog → todo →
+    /// doing → done), matching the left-to-right kanban column order.
+    fn rank(self) -> u8 {
+        match self {
+            TaskColumn::Backlog => 0,
+            TaskColumn::Todo => 1,
+            TaskColumn::Doing => 2,
+            TaskColumn::Done => 3,
+        }
+    }
+}
+
+/// One individual task record, as the canvas needs to draw a kanban card
+/// (`project-registry-005`). Read from a `contexts/<bc>/<column>/<file>.md`
+/// task file's YAML frontmatter at enumeration time. A malformed or absent
+/// frontmatter degrades gracefully: `id` falls back to the filename stem and
+/// the metadata fields are empty (logged once), so a single broken task file
+/// never aborts the snapshot.
+///
+/// Coordination with `agent-awareness-002`: the registry owns the **static**
+/// on-disk record (incl. a `blocked_question` if the Agentheim plugin wrote
+/// one into frontmatter). The **live** per-task agent state and the
+/// "AGENT NEEDS AN ANSWER" callout are agent-awareness's surface — the
+/// registry supplies `blocked_question` only as a disk-artifact fallback.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Task {
+    /// The task file's `id:` frontmatter, with a filename-stem fallback.
+    pub id: String,
+    /// The task's `title:` frontmatter; empty string if absent/unparseable.
+    pub title: String,
+    /// Which kanban column the task is in (derived from its subdirectory).
+    pub column: TaskColumn,
+    /// The task's `type:` frontmatter (`feature`/`bug`/`spike`/`decision`);
+    /// empty string if absent. Serialised as `type_` to dodge the JS reserved
+    /// word on the frontend mirror.
+    #[serde(rename = "type_")]
+    pub type_: String,
+    /// The task's `tags:` frontmatter; empty if absent.
+    pub tags: Vec<String>,
+    /// A `blocked_question:` frontmatter field, if the task carries one on
+    /// disk. `None` is the common case — most tasks are not blocked-on-question
+    /// and the live callout text comes from `agent-awareness-002`, not here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_question: Option<String>,
+}
+
 /// One bounded context as the canvas needs to draw it. The `relationships`
 /// vector is parsed from the BC's `README.md` YAML frontmatter at enumeration
 /// time; malformed frontmatter degrades to an empty vector with a single
 /// warning log (the BC still enumerates).
+///
+/// `tasks` (`project-registry-005`) carries the individual task records the
+/// kanban-accordion canvas draws as cards, in a stable order (column then id).
+/// `task_counts` is **derived** from `tasks` — kept so existing count-consuming
+/// code paths (the counts pill / accordion "N tasks" row) need no second
+/// source and no flag-day.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BoundedContext {
     pub name: String,
     pub task_counts: TaskCounts,
+    /// Individual task records, ordered by column (backlog→done) then by id.
+    pub tasks: Vec<Task>,
     /// BC↔BC relationships declared in this BC's README frontmatter. Empty if
     /// the README is absent, has no frontmatter, or fails to parse.
     pub relationships: Vec<Relationship>,
@@ -237,11 +317,13 @@ fn read_bounded_contexts(agentheim: &Path) -> Result<Vec<BoundedContext>, Projec
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
         let bc_dir = entry.path();
-        let task_counts = count_tasks(&bc_dir);
+        let tasks = read_tasks(&bc_dir);
+        let task_counts = counts_from_tasks(&tasks);
         let relationships = parse_relationships(&bc_dir, &name, &sibling_names);
         bcs.push(BoundedContext {
             name,
             task_counts,
+            tasks,
             relationships,
         });
     }
@@ -384,31 +466,141 @@ fn extract_frontmatter(contents: &str) -> Option<&str> {
     None
 }
 
-/// Count `.md` task files in each of a bounded context's four state folders.
-/// Missing state folders count as zero — a BC need not have all four.
-fn count_tasks(bc_dir: &Path) -> TaskCounts {
-    let count_in = |state: &str| -> u32 {
+/// Internal `serde_yaml` target for a task file's frontmatter. Every field is
+/// optional so a partial or empty frontmatter still deserialises (graceful
+/// degradation — `project-registry-005`); unknown keys (e.g. `status`,
+/// `created`, `depends_on`, `related_adrs`) are ignored.
+#[derive(Debug, Default, Deserialize)]
+struct TaskFrontmatter {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default, rename = "type")]
+    type_: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    blocked_question: Option<String>,
+}
+
+/// Read every `.md` task file in a bounded context's four state folders into
+/// `Task` records (`project-registry-005`). Missing state folders contribute
+/// nothing — a BC need not have all four. The returned vector is ordered by
+/// column (backlog→done) then by id so the canvas does not reshuffle cards
+/// between fetches.
+///
+/// Cost is O(tasks) frontmatter parses per snapshot; acceptable because
+/// snapshots are produced on mount + resync only — the canvas patches in place
+/// from fine-grained events on the hot path (`canvas-001`).
+fn read_tasks(bc_dir: &Path) -> Vec<Task> {
+    let mut tasks = Vec::new();
+    for state in TASK_STATES {
+        let column = match TaskColumn::from_state(state) {
+            Some(c) => c,
+            None => continue,
+        };
         let dir = bc_dir.join(state);
-        match std::fs::read_dir(&dir) {
-            Ok(entries) => entries
-                .filter_map(Result::ok)
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .map(|ext| ext.eq_ignore_ascii_case("md"))
-                        .unwrap_or(false)
-                })
-                .count() as u32,
-            Err(_) => 0,
+        let read = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for entry in read.filter_map(Result::ok) {
+            let path = entry.path();
+            let is_md = path
+                .extension()
+                .map(|ext| ext.eq_ignore_ascii_case("md"))
+                .unwrap_or(false);
+            if !is_md {
+                continue;
+            }
+            tasks.push(parse_task_file(&path, column));
+        }
+    }
+    tasks.sort_by(|a, b| a.column.rank().cmp(&b.column.rank()).then_with(|| a.id.cmp(&b.id)));
+    tasks
+}
+
+/// Parse one task file at `path` (already known to be in `column`) into a
+/// `Task`. Graceful degradation (`project-registry-005`): a missing file, an
+/// absent/unparseable frontmatter, or a frontmatter without an `id:` all
+/// degrade to the filename stem as `id` with empty metadata — logged once at
+/// `warn`, never panics. Reused by the watcher to fill `TaskAdded`/`TaskChanged`
+/// payloads.
+pub(crate) fn parse_task_file(path: &Path, column: TaskColumn) -> Task {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let fm = read_task_frontmatter(path);
+    match fm {
+        Some(fm) => Task {
+            id: fm.id.filter(|s| !s.is_empty()).unwrap_or_else(|| stem.clone()),
+            title: fm.title.unwrap_or_default(),
+            column,
+            type_: fm.type_.unwrap_or_default(),
+            tags: fm.tags,
+            blocked_question: fm.blocked_question.filter(|s| !s.is_empty()),
+        },
+        None => Task {
+            id: stem,
+            title: String::new(),
+            column,
+            type_: String::new(),
+            tags: Vec::new(),
+            blocked_question: None,
+        },
+    }
+}
+
+/// Read + parse a task file's YAML frontmatter. Returns `None` (logged once at
+/// `warn`) for a missing file, a file without a leading `---` frontmatter
+/// block, or frontmatter that does not parse as YAML — the caller falls back to
+/// the filename stem in every such case.
+fn read_task_frontmatter(path: &Path) -> Option<TaskFrontmatter> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "parse_task_file: cannot read task file; degrading to filename stem");
+            return None;
         }
     };
-
-    TaskCounts {
-        backlog: count_in(TASK_STATES[0]),
-        todo: count_in(TASK_STATES[1]),
-        doing: count_in(TASK_STATES[2]),
-        done: count_in(TASK_STATES[3]),
+    let frontmatter = match extract_frontmatter(&contents) {
+        Some(fm) => fm,
+        None => {
+            tracing::warn!(path = %path.display(), "parse_task_file: no YAML frontmatter; degrading to filename stem");
+            return None;
+        }
+    };
+    match serde_yaml::from_str::<TaskFrontmatter>(frontmatter) {
+        Ok(fm) => Some(fm),
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "parse_task_file: malformed frontmatter; degrading to filename stem");
+            None
+        }
     }
+}
+
+/// Derive a `TaskCounts` from the per-task records — `task_counts` is kept as a
+/// convenience for count-only consumers but is no longer a second source of
+/// truth (`project-registry-005`).
+fn counts_from_tasks(tasks: &[Task]) -> TaskCounts {
+    let mut counts = TaskCounts {
+        backlog: 0,
+        todo: 0,
+        doing: 0,
+        done: 0,
+    };
+    for task in tasks {
+        match task.column {
+            TaskColumn::Backlog => counts.backlog += 1,
+            TaskColumn::Todo => counts.todo += 1,
+            TaskColumn::Doing => counts.doing += 1,
+            TaskColumn::Done => counts.done += 1,
+        }
+    }
+    counts
 }
 
 #[cfg(test)]
@@ -551,6 +743,148 @@ mod tests {
         let folder = dir.file_name().unwrap().to_string_lossy().into_owned();
         assert_eq!(snap.name, folder);
         assert_eq!(snap.path, dir.to_string_lossy());
+    }
+
+    // -------- `project-registry-005`: per-task records ----------------------
+
+    #[test]
+    fn reads_individual_task_records_with_frontmatter_metadata() {
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Tasks\n").unwrap();
+        let bc = dir.join(".agentheim/contexts/canvas");
+        fs::create_dir_all(bc.join("doing")).unwrap();
+        fs::write(
+            bc.join("doing/canvas-020-kanban.md"),
+            "---\nid: canvas-020\ntitle: Kanban accordion interior\ntype: feature\ntags: [canvas, kanban]\nstatus: doing\n---\n# body\n",
+        )
+        .unwrap();
+
+        let snap = get_project(1, &dir).unwrap();
+        let canvas = snap.bcs.iter().find(|b| b.name == "canvas").unwrap();
+        assert_eq!(canvas.tasks.len(), 1);
+        let t = &canvas.tasks[0];
+        assert_eq!(t.id, "canvas-020");
+        assert_eq!(t.title, "Kanban accordion interior");
+        assert_eq!(t.column, TaskColumn::Doing);
+        assert_eq!(t.type_, "feature");
+        assert_eq!(t.tags, vec!["canvas".to_string(), "kanban".to_string()]);
+        assert_eq!(t.blocked_question, None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn malformed_task_file_degrades_to_filename_stem_without_aborting_snapshot() {
+        // Acceptance: ≥1 well-formed + ≥1 malformed task file in one BC. The
+        // malformed file must yield a stem-id Task with empty metadata, and the
+        // snapshot as a whole must still succeed.
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Degrade\n").unwrap();
+        let bc = dir.join(".agentheim/contexts/canvas");
+        fs::create_dir_all(bc.join("backlog")).unwrap();
+        // Well-formed.
+        fs::write(
+            bc.join("backlog/canvas-021-good.md"),
+            "---\nid: canvas-021\ntitle: Good\ntype: feature\n---\nbody\n",
+        )
+        .unwrap();
+        // Malformed YAML in the frontmatter block.
+        fs::write(
+            bc.join("backlog/canvas-022-broken.md"),
+            "---\ntitle: [unterminated: : :\n---\nbody\n",
+        )
+        .unwrap();
+        // No frontmatter at all.
+        fs::write(bc.join("backlog/canvas-023-noyaml.md"), "just prose, no frontmatter\n").unwrap();
+
+        let snap = get_project(1, &dir).unwrap();
+        let canvas = snap.bcs.iter().find(|b| b.name == "canvas").unwrap();
+        assert_eq!(canvas.tasks.len(), 3, "all three task files enumerate: {:?}", canvas.tasks);
+
+        let broken = canvas.tasks.iter().find(|t| t.id == "canvas-022-broken").unwrap();
+        assert_eq!(broken.title, "", "malformed frontmatter => empty title");
+        assert_eq!(broken.type_, "");
+        assert!(broken.tags.is_empty());
+
+        let noyaml = canvas.tasks.iter().find(|t| t.id == "canvas-023-noyaml").unwrap();
+        assert_eq!(noyaml.title, "");
+
+        // The well-formed one still carries its id from frontmatter (not stem).
+        assert!(canvas.tasks.iter().any(|t| t.id == "canvas-021" && t.title == "Good"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn task_counts_stay_correct_when_derived_from_tasks() {
+        // Regression: `task_counts` is now derived from `tasks` — it must still
+        // equal the per-column file count, including a non-md file being
+        // ignored.
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Counts\n").unwrap();
+        let bc = dir.join(".agentheim/contexts/infrastructure");
+        for state in ["backlog", "todo", "doing", "done"] {
+            fs::create_dir_all(bc.join(state)).unwrap();
+        }
+        fs::write(bc.join("backlog/a.md"), "---\nid: a\n---\n").unwrap();
+        fs::write(bc.join("backlog/b.md"), "---\nid: b\n---\n").unwrap();
+        fs::write(bc.join("doing/c.md"), "---\nid: c\n---\n").unwrap();
+        fs::write(bc.join("done/d.md"), "---\nid: d\n---\n").unwrap();
+        fs::write(bc.join("done/notes.txt"), "x").unwrap();
+
+        let snap = get_project(1, &dir).unwrap();
+        let infra = snap.bcs.iter().find(|b| b.name == "infrastructure").unwrap();
+        assert_eq!(
+            infra.task_counts,
+            TaskCounts { backlog: 2, todo: 0, doing: 1, done: 1 }
+        );
+        // And the derived count matches `tasks.len()`.
+        assert_eq!(infra.tasks.len(), 4);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tasks_are_ordered_by_column_then_id() {
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Order\n").unwrap();
+        let bc = dir.join(".agentheim/contexts/canvas");
+        for state in ["backlog", "doing"] {
+            fs::create_dir_all(bc.join(state)).unwrap();
+        }
+        fs::write(bc.join("doing/z.md"), "---\nid: z\n---\n").unwrap();
+        fs::write(bc.join("backlog/m.md"), "---\nid: m\n---\n").unwrap();
+        fs::write(bc.join("backlog/a.md"), "---\nid: a\n---\n").unwrap();
+
+        let snap = get_project(1, &dir).unwrap();
+        let canvas = snap.bcs.iter().find(|b| b.name == "canvas").unwrap();
+        let ids: Vec<&str> = canvas.tasks.iter().map(|t| t.id.as_str()).collect();
+        // backlog (a, m) before doing (z).
+        assert_eq!(ids, vec!["a", "m", "z"]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn task_blocked_question_is_read_from_frontmatter_when_present() {
+        let dir = scratch_project();
+        fs::write(dir.join(".agentheim/vision.md"), "# Blocked\n").unwrap();
+        let bc = dir.join(".agentheim/contexts/canvas");
+        fs::create_dir_all(bc.join("doing")).unwrap();
+        fs::write(
+            bc.join("doing/canvas-099.md"),
+            "---\nid: canvas-099\ntitle: Blocked one\nblocked_question: \"Should the panel dock left or right?\"\n---\n",
+        )
+        .unwrap();
+
+        let snap = get_project(1, &dir).unwrap();
+        let canvas = snap.bcs.iter().find(|b| b.name == "canvas").unwrap();
+        assert_eq!(
+            canvas.tasks[0].blocked_question.as_deref(),
+            Some("Should the panel dock left or right?")
+        );
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

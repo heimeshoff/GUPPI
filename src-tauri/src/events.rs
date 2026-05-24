@@ -56,11 +56,22 @@ pub enum DomainEvent {
     },
     /// An unpaired create — a brand-new task file appeared (ADR-008's
     /// "sensible fallback", decided in `infrastructure-014`: no silent drop).
+    ///
+    /// `project-registry-005` extended the payload with the task file's
+    /// frontmatter metadata (`title`, `type_`, `tags`) so the canvas can draw
+    /// the new card in place without a `get_project` resync. The watcher reads
+    /// the just-created file's frontmatter when emitting this; a
+    /// malformed/missing frontmatter degrades to a filename-stem `task_id`,
+    /// empty `title`/`type_`, and empty `tags` (never aborts the event).
     TaskAdded {
         project_id: i64,
         bc: String,
         state: String,
         task_id: String,
+        title: String,
+        #[serde(rename = "type_")]
+        type_: String,
+        tags: Vec<String>,
     },
     /// An unpaired delete — a task file was removed outright.
     TaskRemoved {
@@ -68,6 +79,24 @@ pub enum DomainEvent {
         bc: String,
         state: String,
         task_id: String,
+    },
+    /// A task file's frontmatter changed *in place* — an edit to `title`,
+    /// `type`, `tags`, or `blocked_question` without the file moving between
+    /// task-state directories (a move is `TaskMoved`; a create is `TaskAdded`).
+    /// `project-registry-005`: the canvas patches the matching card's metadata
+    /// in place without a resync. The watcher detects a `Modify(Data)` /
+    /// `Modify(Any)` on an existing `contexts/<bc>/<state>/<task_id>.md` and
+    /// re-reads its frontmatter to fill this payload. ADR-009's enum is
+    /// "expected to grow"; adding this variant touches no existing consumer.
+    TaskChanged {
+        project_id: i64,
+        bc: String,
+        task_id: String,
+        title: String,
+        #[serde(rename = "type_")]
+        type_: String,
+        tags: Vec<String>,
+        blocked_question: Option<String>,
     },
     /// A new `contexts/<bc>/` directory was created.
     BCAppeared { project_id: i64, bc: String },

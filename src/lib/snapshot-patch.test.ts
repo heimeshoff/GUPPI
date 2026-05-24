@@ -45,7 +45,10 @@ describe('applyDomainEvent — lazy BC creation', () => {
 			project_id: 1,
 			bc: 'canvas',
 			state: 'backlog',
-			task_id: 'canvas-001'
+			task_id: 'canvas-001',
+			title: 'First canvas task',
+			type_: 'feature',
+			tags: []
 		};
 
 		const handled = applyDomainEvent(snap, event, warn);
@@ -74,7 +77,10 @@ describe('applyDomainEvent — lazy BC creation', () => {
 				project_id: 1,
 				bc: 'canvas',
 				state: 'todo',
-				task_id: 't1'
+				task_id: 't1',
+				title: '',
+				type_: '',
+				tags: []
 			},
 			warn
 		);
@@ -94,11 +100,13 @@ describe('applyDomainEvent — lazy BC creation', () => {
 			{
 				name: 'design-system',
 				task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			},
 			{
 				name: 'project-registry',
 				task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			}
 		]);
@@ -111,7 +119,10 @@ describe('applyDomainEvent — lazy BC creation', () => {
 				project_id: 1,
 				bc: 'canvas',
 				state: 'backlog',
-				task_id: 'canvas-x'
+				task_id: 'canvas-x',
+				title: '',
+				type_: '',
+				tags: []
 			},
 			warn
 		);
@@ -127,6 +138,7 @@ describe('applyDomainEvent — count clamping at zero', () => {
 			{
 				name: 'canvas',
 				task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			}
 		]);
@@ -157,6 +169,7 @@ describe('applyDomainEvent — count clamping at zero', () => {
 			{
 				name: 'canvas',
 				task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			}
 		]);
@@ -189,6 +202,7 @@ describe('applyDomainEvent — task_moved and task_removed normal path', () => {
 			{
 				name: 'canvas',
 				task_counts: { backlog: 2, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			}
 		]);
@@ -221,11 +235,13 @@ describe('applyDomainEvent — task_moved and task_removed normal path', () => {
 			{
 				name: 'canvas',
 				task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			},
 			{
 				name: 'voice',
 				task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			}
 		]);
@@ -266,6 +282,7 @@ describe('applyDomainEvent — bc_relationships_changed', () => {
 			{
 				name: 'canvas',
 				task_counts: { backlog: 3, todo: 1, doing: 0, done: 7 },
+				tasks: [],
 				relationships: [
 					{ to: 'design-system', type: 'shared-kernel', direction: null }
 				]
@@ -290,12 +307,166 @@ describe('applyDomainEvent — bc_relationships_changed', () => {
 	});
 });
 
+describe('applyDomainEvent — per-task records (project-registry-005)', () => {
+	it('adds a card record with the event metadata on `task_added`', () => {
+		const snap = snapshot();
+		const warn = spyWarn();
+
+		applyDomainEvent(
+			snap,
+			{
+				kind: 'task_added',
+				project_id: 1,
+				bc: 'canvas',
+				state: 'doing',
+				task_id: 'canvas-020',
+				title: 'Kanban interior',
+				type_: 'feature',
+				tags: ['canvas', 'kanban']
+			},
+			warn
+		);
+
+		const tasks = snap.bcs[0].tasks;
+		expect(tasks.length).toBe(1);
+		expect(tasks[0]).toEqual({
+			id: 'canvas-020',
+			title: 'Kanban interior',
+			column: 'doing',
+			type_: 'feature',
+			tags: ['canvas', 'kanban'],
+			blocked_question: null
+		});
+	});
+
+	it('moves the card record between columns on `task_moved`, preserving metadata', () => {
+		const snap = snapshot([
+			{
+				name: 'canvas',
+				task_counts: { backlog: 1, todo: 0, doing: 0, done: 0 },
+				tasks: [
+					{
+						id: 'canvas-020',
+						title: 'Kanban interior',
+						column: 'backlog',
+						type_: 'feature',
+						tags: ['canvas'],
+						blocked_question: null
+					}
+				],
+				relationships: []
+			}
+		]);
+		const warn = spyWarn();
+
+		applyDomainEvent(
+			snap,
+			{
+				kind: 'task_moved',
+				project_id: 1,
+				bc: 'canvas',
+				from: 'backlog',
+				to: 'doing',
+				task_id: 'canvas-020'
+			},
+			warn
+		);
+
+		const t = snap.bcs[0].tasks[0];
+		expect(t.column).toBe('doing');
+		expect(t.title).toBe('Kanban interior'); // metadata preserved
+		expect(t.tags).toEqual(['canvas']);
+	});
+
+	it('drops the card record on `task_removed`', () => {
+		const snap = snapshot([
+			{
+				name: 'canvas',
+				task_counts: { backlog: 1, todo: 0, doing: 0, done: 0 },
+				tasks: [
+					{
+						id: 'canvas-020',
+						title: 'x',
+						column: 'backlog',
+						type_: 'feature',
+						tags: [],
+						blocked_question: null
+					}
+				],
+				relationships: []
+			}
+		]);
+		const warn = spyWarn();
+
+		applyDomainEvent(
+			snap,
+			{
+				kind: 'task_removed',
+				project_id: 1,
+				bc: 'canvas',
+				state: 'backlog',
+				task_id: 'canvas-020'
+			},
+			warn
+		);
+
+		expect(snap.bcs[0].tasks).toEqual([]);
+		expect(snap.bcs[0].task_counts.backlog).toBe(0);
+	});
+
+	it('patches metadata in place on `task_changed` without changing the column or counts', () => {
+		const snap = snapshot([
+			{
+				name: 'canvas',
+				task_counts: { backlog: 0, todo: 0, doing: 1, done: 0 },
+				tasks: [
+					{
+						id: 'canvas-020',
+						title: 'Original',
+						column: 'doing',
+						type_: 'feature',
+						tags: [],
+						blocked_question: null
+					}
+				],
+				relationships: []
+			}
+		]);
+		const warn = spyWarn();
+
+		const handled = applyDomainEvent(
+			snap,
+			{
+				kind: 'task_changed',
+				project_id: 1,
+				bc: 'canvas',
+				task_id: 'canvas-020',
+				title: 'Renamed',
+				type_: 'feature',
+				tags: ['urgent'],
+				blocked_question: 'Dock left or right?'
+			},
+			warn
+		);
+
+		expect(handled).toBe(true);
+		const t = snap.bcs[0].tasks[0];
+		expect(t.title).toBe('Renamed');
+		expect(t.column).toBe('doing'); // unchanged
+		expect(t.tags).toEqual(['urgent']);
+		expect(t.blocked_question).toBe('Dock left or right?');
+		// Counts untouched by an in-place metadata change.
+		expect(snap.bcs[0].task_counts).toEqual({ backlog: 0, todo: 0, doing: 1, done: 0 });
+	});
+});
+
 describe('applyDomainEvent — non-patch events', () => {
 	it('returns `false` for `project_added` / `project_missing` / `resync_required` without touching the snapshot', () => {
 		const snap = snapshot([
 			{
 				name: 'canvas',
 				task_counts: { backlog: 1, todo: 0, doing: 0, done: 0 },
+				tasks: [],
 				relationships: []
 			}
 		]);

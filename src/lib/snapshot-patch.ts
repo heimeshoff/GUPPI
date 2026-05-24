@@ -13,7 +13,14 @@
 // picked up on the next ticker frame). Keeping it pure also keeps it reviewable
 // and unit-testable in isolation.
 
-import type { AgentheimState, BoundedContext, DomainEvent, ProjectSnapshot } from './types';
+import type {
+	AgentheimState,
+	BoundedContext,
+	DomainEvent,
+	ProjectSnapshot,
+	Task,
+	TaskColumn
+} from './types';
 
 /** A sink for the count-clamping warnings — `logToCore` in production, a spy
  * in tests. Kept as a parameter so this module imports no IPC. */
@@ -32,6 +39,10 @@ function bcNode(snapshot: ProjectSnapshot, name: string): BoundedContext {
 	const created: BoundedContext = {
 		name,
 		task_counts: { backlog: 0, todo: 0, doing: 0, done: 0 },
+		// `project-registry-005`: lazily-created BC nodes start with no task
+		// records; the `task_added` event that lazily created the node (or a
+		// `resync_required` re-fetch) populates them.
+		tasks: [],
 		// `project-registry-004`: lazily-created BC nodes start with no
 		// relationships — the canvas will receive a `bc_relationships_changed`
 		// event once the README is written, or a `resync_required` lag
@@ -72,6 +83,37 @@ function decrement(
 	bc.task_counts[state] -= 1;
 }
 
+/** Keep a BC's `tasks[]` in the same stable order the Rust `get_project`
+ * snapshot uses (column rank backlog→done, then id) so a later
+ * `resync_required` re-fetch does not reshuffle cards relative to what
+ * patching produced (`project-registry-005`). */
+const COLUMN_RANK: Record<TaskColumn, number> = {
+	backlog: 0,
+	todo: 1,
+	doing: 2,
+	done: 3
+};
+
+function sortTasks(bc: BoundedContext): void {
+	bc.tasks.sort(
+		(a, b) => COLUMN_RANK[a.column] - COLUMN_RANK[b.column] || a.id.localeCompare(b.id)
+	);
+}
+
+/** Insert (or replace) a task record in a BC, then re-sort. */
+function upsertTask(bc: BoundedContext, task: Task): void {
+	const idx = bc.tasks.findIndex((t) => t.id === task.id);
+	if (idx === -1) bc.tasks.push(task);
+	else bc.tasks[idx] = task;
+	sortTasks(bc);
+}
+
+/** Remove a task record by id; no-op if absent. */
+function removeTask(bc: BoundedContext, taskId: string): void {
+	const idx = bc.tasks.findIndex((t) => t.id === taskId);
+	if (idx !== -1) bc.tasks.splice(idx, 1);
+}
+
 /**
  * Patch `snapshot` in place for one filesystem-observation `DomainEvent`.
  *
@@ -93,16 +135,57 @@ export function applyDomainEvent(
 			const bc = bcNode(snapshot, event.bc);
 			decrement(bc, event.from, warn);
 			increment(bc, event.to);
+			// `project-registry-005`: also move the card record between columns.
+			// The metadata is unchanged on a move; if we don't have the record
+			// (model drift) the column rank still places a synthesised stub so
+			// the card does not vanish — a resync will re-hydrate it.
+			const existing = bc.tasks.find((t) => t.id === event.task_id);
+			upsertTask(bc, {
+				id: event.task_id,
+				title: existing?.title ?? '',
+				column: event.to as TaskColumn,
+				type_: existing?.type_ ?? '',
+				tags: existing?.tags ?? [],
+				blocked_question: existing?.blocked_question ?? null
+			});
 			return true;
 		}
 		case 'task_added': {
 			const bc = bcNode(snapshot, event.bc);
 			increment(bc, event.state);
+			// `project-registry-005`: add the card record with the metadata the
+			// watcher read off the just-created file's frontmatter.
+			upsertTask(bc, {
+				id: event.task_id,
+				title: event.title,
+				column: event.state as TaskColumn,
+				type_: event.type_,
+				tags: event.tags,
+				blocked_question: null
+			});
 			return true;
 		}
 		case 'task_removed': {
 			const bc = bcNode(snapshot, event.bc);
 			decrement(bc, event.state, warn);
+			removeTask(bc, event.task_id);
+			return true;
+		}
+		case 'task_changed': {
+			// `project-registry-005`: an in-place frontmatter edit — patch the
+			// matching card's metadata, leaving its column (and the counts)
+			// untouched. If the record is missing (model drift) create it in a
+			// best-effort column; a resync will reconcile.
+			const bc = bcNode(snapshot, event.bc);
+			const existing = bc.tasks.find((t) => t.id === event.task_id);
+			upsertTask(bc, {
+				id: event.task_id,
+				title: event.title,
+				column: existing?.column ?? 'backlog',
+				type_: event.type_,
+				tags: event.tags,
+				blocked_question: event.blocked_question ?? null
+			});
 			return true;
 		}
 		case 'bc_appeared': {

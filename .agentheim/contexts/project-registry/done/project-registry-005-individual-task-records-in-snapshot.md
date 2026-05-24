@@ -1,11 +1,11 @@
 ---
 id: project-registry-005
 title: Individual task records in the project snapshot (counts → tasks)
-status: todo
+status: done
 type: feature
 context: project-registry
 created: 2026-05-24
-completed:
+completed: 2026-05-24
 commit:
 depends_on: []
 blocks: [canvas-020, canvas-021, canvas-022, agent-awareness-002]
@@ -126,3 +126,49 @@ fallback `blocked_question` only if present on disk.
 2 blocked · 1 idling") is a per-BC roll-up of live agent state →
 agent-awareness-002's surface, NOT a registry count. Registry counts stay
 column-based.
+
+## Outcome
+
+The read-model grew from per-BC counts to **per-task records**, end-to-end
+through the watcher and the ADR-009 event taxonomy.
+
+**Rust (`src-tauri/src/`):**
+- `project.rs` — new `TaskColumn` enum (`backlog|todo|doing|done`, lowercase
+  serde) and `Task` struct `{ id, title, column, type_, tags,
+  blocked_question }`. `BoundedContext` gained `tasks: Vec<Task>` (ordered by
+  column rank then id); `task_counts` is now **derived** from `tasks`
+  (`counts_from_tasks`) — kept so count-only consumers need no second source.
+  `read_tasks` + `parse_task_file` (pub(crate), reused by the watcher) read
+  each `{backlog,todo,doing,done}/*.md` frontmatter via `serde_yaml`; a
+  malformed/missing frontmatter degrades to a filename-stem `id` + empty
+  metadata (logged, never aborts the snapshot).
+- `events.rs` — `TaskAdded` payload extended with `title`, `type_`, `tags`;
+  new `TaskChanged { project_id, bc, task_id, title, type_, tags,
+  blocked_question }` variant. `type_` serialised as `type_` to dodge the JS
+  keyword.
+- `watcher.rs` — `correlate` stays pure (emits empty `TaskAdded` metadata);
+  the closure enriches each `TaskAdded` from disk (`enrich_task_added`) and
+  detects in-place content modifies on existing task files
+  (`changed_task_files`, excluding task_ids that moved/added/removed in the
+  same batch) → `TaskChanged`. `TaskMoved` / `TaskRemoved` unchanged.
+
+**Frontend (`src/lib/`):** `types.ts` mirrors `TaskColumn`, `Task`,
+`BoundedContext.tasks`, the extended `task_added` and new `task_changed`
+events. `snapshot-patch.ts` maintains `bc.tasks[]` in place across
+add/move/remove/change (stable column-then-id sort) alongside the existing
+count patching. `Canvas.svelte` needed no change — `task_changed` flows
+through the existing fine-grained `default` branch.
+
+**Decisions:** ADR-009 gained a 2026-05-24 reconciliation note documenting
+the `TaskAdded` payload growth + the new `TaskChanged` variant (edit to the
+existing global ADR per the task's acceptance criteria — no new ADR warranted;
+every choice followed established ADR-008/009 patterns).
+
+**Tests:** `cargo test --lib` 132 passing (+15: per-task records, malformed
+degradation, counts-from-tasks regression, column ordering, blocked_question,
+`changed_task_files`, `enrich_task_added`, live in-place `TaskChanged`,
+`TaskMoved` regression retained). Frontend `pnpm test` 33 passing (+4 in
+`snapshot-patch.test.ts` for the tasks[] patching) and `pnpm check` clean.
+
+Key files: `src-tauri/src/project.rs`, `src-tauri/src/events.rs`,
+`src-tauri/src/watcher.rs`, `src/lib/types.ts`, `src/lib/snapshot-patch.ts`.

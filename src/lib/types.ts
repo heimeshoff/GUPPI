@@ -42,13 +42,49 @@ export interface Relationship {
 	direction?: Direction | null;
 }
 
+/** Which kanban column a task currently lives in — derived from its
+ * subdirectory (`backlog`/`todo`/`doing`/`done`). Mirrors `project::TaskColumn`
+ * in Rust (`project-registry-005`). Same vocabulary as `AgentheimState`, kept
+ * as its own alias for the per-task record where it reads as a column. */
+export type TaskColumn = 'backlog' | 'todo' | 'doing' | 'done';
+
+/** One individual task record the kanban-accordion canvas draws as a card
+ * (`project-registry-005`). Read from a task file's YAML frontmatter; a
+ * malformed/missing frontmatter degrades on the Rust side to a filename-stem
+ * `id` with empty metadata. Mirrors `project::Task` in Rust.
+ *
+ * Coordination with `agent-awareness-002`: this is the **static** on-disk
+ * record. The **live** per-task agent state and the "AGENT NEEDS AN ANSWER"
+ * callout are agent-awareness's surface; `blocked_question` here is only the
+ * disk-artifact fallback when the task file carries one. */
+export interface Task {
+	id: string;
+	title: string;
+	column: TaskColumn;
+	/** The task's `type:` frontmatter (`feature`/`bug`/`spike`/`decision`).
+	 * Named `type_` (not `type`) to match the Rust serde field and dodge no
+	 * JS keyword clash; empty string if absent. */
+	type_: string;
+	tags: string[];
+	/** A `blocked_question:` from the task's frontmatter, if present on disk.
+	 * Absent for the common (not-blocked) case. */
+	blocked_question?: string | null;
+}
+
 /** One bounded context as the canvas draws it. `relationships` is parsed from
  * the BC's README YAML frontmatter at enumeration time (`project-registry-004`);
  * malformed frontmatter degrades to an empty array without breaking BC
- * enumeration. Mirrors the Rust `BoundedContext` type. */
+ * enumeration. Mirrors the Rust `BoundedContext` type.
+ *
+ * `tasks` (`project-registry-005`) carries the individual task records drawn as
+ * kanban cards, ordered by column (backlog→done) then id. `task_counts` is
+ * **derived** from `tasks` on the Rust side — kept so the counts pill /
+ * accordion "N tasks" row needs no second source. */
 export interface BoundedContext {
 	name: string;
 	task_counts: TaskCounts;
+	/** Individual task records, ordered by column then id. */
+	tasks: Task[];
 	/** Intra-project BC↔BC relationships. Empty for BCs whose README has no
 	 * frontmatter, whose frontmatter has no `relationships:` block, or whose
 	 * frontmatter fails to parse. */
@@ -151,6 +187,13 @@ export type DomainEvent =
 			bc: string;
 			state: AgentheimState;
 			task_id: string;
+			/** Task metadata read from the just-created file's frontmatter so the
+			 * canvas can draw the new card in place without a resync
+			 * (`project-registry-005`). Empty strings / empty array if the file
+			 * had no parseable frontmatter. */
+			title: string;
+			type_: string;
+			tags: string[];
 	  }
 	| {
 			kind: 'task_removed';
@@ -158,6 +201,22 @@ export type DomainEvent =
 			bc: string;
 			state: AgentheimState;
 			task_id: string;
+	  }
+	/**
+	 * A task file's frontmatter changed *in place* — a `title`/`type`/`tags`/
+	 * `blocked_question` edit without the file moving columns
+	 * (`project-registry-005`). The canvas patches the matching card's metadata
+	 * in place; no resync. A move is `task_moved`, a create is `task_added`.
+	 */
+	| {
+			kind: 'task_changed';
+			project_id: number;
+			bc: string;
+			task_id: string;
+			title: string;
+			type_: string;
+			tags: string[];
+			blocked_question?: string | null;
 	  }
 	| { kind: 'bc_appeared'; project_id: number; bc: string }
 	| { kind: 'bc_disappeared'; project_id: number; bc: string }
