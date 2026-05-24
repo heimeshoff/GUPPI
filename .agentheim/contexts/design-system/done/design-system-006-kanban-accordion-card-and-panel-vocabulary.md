@@ -6,7 +6,7 @@ type: feature
 context: design-system
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: 15c9fb4
 depends_on: []
 blocks: [canvas-020, canvas-021, canvas-022, agent-awareness-002]
 tags: [styleguide, tokens, kanban, accordion, task-card, detail-panel, gate]

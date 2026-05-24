@@ -6,7 +6,7 @@ type: feature
 context: project-registry
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: a34b801
 depends_on: []
 blocks: [canvas-020, canvas-021, canvas-022, agent-awareness-002]
 tags: [data-contract, snapshot, watcher, events, tasks]

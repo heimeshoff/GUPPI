@@ -5,6 +5,52 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 15:42 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 2 (first-try PASS: 2, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 2 work (a34b801 project-registry-005, 15c9fb4 design-system-006) + this chore commit (SHA frontmatter + protocol)
+**Note:** Both kanban-accordion pivot ROOTS are now done — the data-contract spine (project-registry-005) and the styleguide gate (design-system-006). They ran in true parallel with disjoint file sets (Rust+types.ts+ADR-009 vs STYLEGUIDE+tokens), no conflict materialised. Both blockers for canvas-020/021/022 + agent-awareness-002 are cleared, but those tasks remain in `backlog/` — promote them via `model` before the next `work` run. canvas-023/024 stay blocked on the canvas-020+ chain.
+
+---
+
+## 2026-05-24 15:40 -- Task verified and completed: design-system-006 - Styleguide: BC accordion row, kanban board/column, task card, docked detail panel
+
+**Type:** Work / Task completion
+**Task:** design-system-006 - Styleguide: BC accordion row, kanban board/column, task card, docked detail panel
+**Summary:** Added the canvas-pivot interior vocabulary to STYLEGUIDE.md (§3.9 accordion row, §3.10 kanban board/column, §3.11 task card all-states + live-agent line, §3.12 docked detail panel + callout + slide motion); tokens mirrored across tokens.ts + tokens.css in both themes; §3.7/§3.8 BC-bubble/edge vocabulary annotated as superseded for the interior (preserved for a future cross-project view).
+**Verification:** PASS (iteration 1)
+**Commit:** 15c9fb4
+**Files changed:** 5 (STYLEGUIDE.md, tokens.ts, tokens.css, references/kanban-accordion-sketch.md NEW, design-system/README.md) + task move + INDEX (orchestrator)
+**Tests added:** 0 — tokens + styleguide prose only; `pnpm check` 0/0/0, no Rust touched.
+**ADRs written:** none (open-question defaults recorded in STYLEGUIDE, design-system-002/003 pattern).
+
+---
+
+## 2026-05-24 15:39 -- Task verified and completed: project-registry-005 - Individual task records in the project snapshot (counts → tasks)
+
+**Type:** Work / Task completion
+**Task:** project-registry-005 - Individual task records in the project snapshot (counts → tasks)
+**Summary:** Grew the read-model from per-BC task counts to individual task records (Task { id, title, column, type_, tags, blocked_question }, mirrored in types.ts); get_project reads each task file's frontmatter (malformed degrades to filename-stem id, never aborts); extended TaskAdded payload + added TaskChanged variant so the kanban canvas patches cards in place without a resync.
+**Verification:** PASS (iteration 1)
+**Commit:** a34b801
+**Files changed:** 9 (project.rs, events.rs, watcher.rs, types.ts, snapshot-patch.ts, snapshot-patch.test.ts, bc-layout.test.ts, ADR-009 edit, project-registry/README.md) + task move + INDEX (orchestrator)
+**Tests added:** new cargo + frontend tests — `cargo test --lib` 132 green, 33 frontend tests pass, `pnpm check` 0/0/0.
+**ADRs written:** none — ADR-009 gained the TaskChanged variant + a reconciliation note (in-scope edit per the task AC, not a new ADR).
+
+---
+
+## 2026-05-24 15:30 -- Batch started: [project-registry-005, design-system-006]
+
+**Type:** Work / Batch start
+**Tasks:** project-registry-005 - Individual task records in the project snapshot (counts → tasks), design-system-006 - Styleguide: BC accordion row, kanban board/column, task card, docked detail panel
+**Parallel:** yes (2 workers — both pivot roots, `depends_on: []`, no shared files: registry touches Rust/types.ts/ADR-009, design-system touches STYLEGUIDE/tokens; together they unblock canvas-020/021/022 + agent-awareness-002)
+
+---
+
 ## 2026-05-24 -- Model / Promoted: the two remaining kanban-accordion pivot roots (project-registry-005 + design-system-006)
 
 **Type:** Model / Promote
