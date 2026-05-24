@@ -463,6 +463,9 @@
 		| undefined;
 	let setFrameHover: ((id: number, on: boolean) => void) | undefined;
 	let openFrameMenu: ((id: number, clientX: number, clientY: number) => void) | undefined;
+	// The frame currently under the pointer — drives the `.frame-interior.hovered`
+	// drop-shadow elevation (replaces the retired orange Pixi focus ring).
+	let hoveredFrameId = $state<number | null>(null);
 	const camera = new Camera();
 
 	// One record per rendered project. Keyed by `snapshot.id`; the canvas keys
@@ -1087,7 +1090,9 @@
 					button
 				);
 			};
-			setFrameHover = (id, on) => toggleProjectFocusRing(id, on);
+			setFrameHover = (id, on) => {
+				hoveredFrameId = on ? id : hoveredFrameId === id ? null : hoveredFrameId;
+			};
 			openFrameMenu = (id, clientX, clientY) => openTileMenu(clientX, clientY, id);
 
 			// --- restore persisted theme BEFORE the canvas boots ---------
@@ -1341,12 +1346,16 @@
 				const strokeFrame = Math.max(1 / z, shape.borderWidthFrame / z);
 				const strokeFocus = Math.max(1 / z, shape.borderWidthFocus / z);
 
-				// --- Body (frame fill + border) ---
+				// --- Body (frame fill; border only for the "missing" state) ---
+				// No orange boundary on a normal frame — the slight drop shadow on
+				// the `.frame-interior` DOM overlay (token `--guppi-frame-shadow`)
+				// gives the edge instead. A MISSING project keeps its magenta/orange
+				// border as a meaningful "expected but absent" signal.
 				obj.body.clear();
-				obj.body
-					.roundRect(0, 0, fw, fh, shape.radiusFrame)
-					.fill(color.frameFill)
-					.stroke({ width: strokeFrame, color: borderCol });
+				obj.body.roundRect(0, 0, fw, fh, shape.radiusFrame).fill(color.frameFill);
+				if (isMissing) {
+					obj.body.stroke({ width: strokeFrame, color: borderCol });
+				}
 
 				// --- Header bar (top-rounded band) + divider line ---
 				obj.header.clear();
@@ -1418,15 +1427,13 @@
 					);
 				}
 
-				// --- Focus ring (canvas-015 AC #9: geometry persistent,
-				// toggled via .visible). The ring is ALWAYS drawn with
-				// current geometry so a subsequent pointerover can just
-				// flip `.visible = true` without re-running this update.
+				// --- Focus ring retired: the orange hover ring is gone (the DOM
+				// overlay's `.frame-interior.hovered` drop-shadow elevation is the
+				// hover affordance now). Kept invisible so canvas-015's persistent-
+				// object contract is preserved without drawing anything.
+				void strokeFocus;
 				obj.focusRing.clear();
-				obj.focusRing
-					.roundRect(-2, -2, fw + 4, fh + 4, shape.radiusFrame + 2)
-					.stroke({ width: strokeFocus, color: color.focusRing });
-				obj.focusRing.visible = hoveredKey === `project:${entry.id}`;
+				obj.focusRing.visible = false;
 
 				// --- Header hit area (CSS-px aware via world.scale) ---
 				// Hit-test predicates run in WORLD space because we set
@@ -1576,6 +1583,29 @@
 			});
 
 			const onWheelZoom = (e: WheelEvent) => {
+				// Ctrl + wheel while over a BC interior scrolls that BC's content
+				// UP/DOWN instead of zooming (and blocks the browser's native
+				// ctrl-wheel page zoom). Prefer the column-stack under the cursor
+				// (its cards); fall back to the accordion (the whole sheet) so the
+				// gesture always scrolls something vertically. Outside a BC
+				// interior, ctrl+wheel falls through to canvas zoom.
+				if (e.ctrlKey) {
+					const target = e.target as Element | null;
+					const interior = target?.closest?.('.frame-interior-body');
+					if (interior) {
+						e.preventDefault();
+						const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+						const col = target?.closest?.(
+							'.kanban-column-stack'
+						) as HTMLElement | null;
+						const scroller =
+							col && col.scrollHeight > col.clientHeight
+								? col
+								: (interior.querySelector('.accordion') as HTMLElement | null);
+						if (scroller) scroller.scrollTop += delta;
+						return;
+					}
+				}
 				e.preventDefault();
 				const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
 				const rect = host.getBoundingClientRect();
@@ -1603,6 +1633,37 @@
 			// the SAME handler to the overlay layer (events bubble up to it) keeps
 			// wheel-zoom alive over a frame's interior, matching empty-canvas.
 			interiorsEl?.addEventListener('wheel', onWheelZoom, { passive: false });
+
+			// --- middle mouse button = always pan the canvas ----------------
+			// "Move the board around" with the middle button no matter where the
+			// cursor is — including over a frame's interior, where the overlay
+			// would otherwise capture the pointer (header handle → frame-drag,
+			// card → select). A CAPTURE-phase pointerdown on the overlay pre-empts
+			// those (stopPropagation), and `preventDefault` + a mousedown guard
+			// suppress Chromium's middle-click autoscroll. Empty canvas is already
+			// covered by the `app.canvas` pointerdown (empty → pan) below; we only
+			// add the autoscroll guard there.
+			const startMiddlePan = (e: PointerEvent) => {
+				if (e.button !== 1) return;
+				e.preventDefault();
+				e.stopPropagation();
+				cameraTarget = null;
+				dragState = dragOnPointerDown(
+					dragState,
+					{ kind: 'empty' },
+					e.clientX,
+					e.clientY,
+					e.button
+				);
+			};
+			const suppressMiddleAutoscroll = (e: MouseEvent) => {
+				if (e.button === 1) e.preventDefault();
+			};
+			interiorsEl?.addEventListener('pointerdown', startMiddlePan, { capture: true });
+			interiorsEl?.addEventListener('mousedown', suppressMiddleAutoscroll, {
+				capture: true
+			});
+			app.canvas.addEventListener('mousedown', suppressMiddleAutoscroll);
 
 			// --- camera affordance: zoom-to-fit on "f" --------------------
 			window.addEventListener('keydown', (e) => {
@@ -2293,14 +2354,14 @@
 			});
 		}
 
-		/** Toggle one project frame's focus ring without rebuilding the
-		 *  scene (canvas-015 AC #9). The ring's geometry was already laid
-		 *  down by `updateFrameDisplayObjects` at last render, so a pure
-		 *  `.visible` flip is enough. */
+		/** Retired (no-op): the orange Pixi focus ring is gone — hover is now the
+		 *  `.frame-interior.hovered` DOM drop-shadow (driven by `setFrameHover`).
+		 *  Kept as a no-op because the Pixi header `pointerover`/`pointerout`
+		 *  handlers still call it (harmless; the DOM handle is the real hover
+		 *  source now). */
 		function toggleProjectFocusRing(id: number, visible: boolean) {
-			const obj = frameObjects.get(id);
-			if (!obj) return;
-			obj.focusRing.visible = visible;
+			void id;
+			void visible;
 		}
 
 		return () => {
@@ -2334,6 +2395,7 @@
 	{#each framesOnScreen as view (view.id)}
 		<div
 			class="frame-interior"
+			class:hovered={hoveredFrameId === view.id}
 			style="left: {view.left}px; top: {view.top}px; width: {view.width}px;
 				height: {view.height}px; transform: scale({view.zoom});
 				transform-origin: top left;"
@@ -2859,6 +2921,13 @@
 		   height = width × √2); the interior scrolls within it. The inline
 		   `transform: scale(z)` is a compositor move, never a reflow. */
 		box-sizing: border-box;
+		/* The frame's edge is a slight drop shadow (no orange border anymore);
+		   hover lifts it a touch. The shadow is on the radius of the Pixi sheet. */
+		border-radius: var(--guppi-radius-frame);
+		box-shadow: var(--guppi-frame-shadow);
+	}
+	.frame-interior.hovered {
+		box-shadow: var(--guppi-frame-shadow-hover);
 	}
 	/* Transparent drag handle over the Pixi header band — the frame's title is
 	   the grab target (deterministic frame-drag; the Pixi title shows through). */
@@ -2914,6 +2983,11 @@
 		gap: var(--guppi-accordion-row-gap);
 		height: 100%;
 		overflow-y: auto;
+		/* Always reserve the scrollbar gutter so the column band width is
+		   constant whether or not the accordion is scrolling — the frame width
+		   includes this gutter (frameSize ACCORDION_SCROLLBAR_ALLOWANCE) so the
+		   DONE column is never clipped. */
+		scrollbar-gutter: stable;
 	}
 	.accordion-row {
 		flex: 0 0 auto;
@@ -2922,6 +2996,8 @@
 		background: var(--guppi-accordion-row-fill);
 		border-radius: var(--guppi-accordion-row-radius);
 		overflow: hidden;
+		/* Slight elevation per BC (replaces any orange boundary on the row). */
+		box-shadow: var(--guppi-accordion-shadow);
 	}
 	.accordion-row.expanded {
 		/* Let an expanded row take a share of the interior height so its board
@@ -2937,6 +3013,10 @@
 		display: flex;
 		align-items: center;
 		gap: var(--guppi-space-sm);
+		/* Fixed header height that NEVER changes between collapsed/expanded:
+		   `flex: 0 0 auto` stops a squeezed expanded row from shrinking the
+		   header band (the headline must not change size on expand/collapse). */
+		flex: 0 0 auto;
 		height: var(--guppi-accordion-row-header-height);
 		padding: 0 var(--guppi-accordion-row-padding);
 		background: var(--guppi-accordion-row-header-fill);
@@ -2952,10 +3032,7 @@
 	.accordion-header:active {
 		cursor: grabbing;
 	}
-	.accordion-header:hover {
-		outline: 1px solid var(--guppi-focus-ring);
-		outline-offset: -1px;
-	}
+	/* No orange hover boundary — the row's drop shadow is the affordance. */
 	.accordion-chevron {
 		flex: 0 0 auto;
 		width: var(--guppi-accordion-chevron-size);
@@ -3010,20 +3087,22 @@
 		gap: var(--guppi-kanban-column-gap);
 		padding: var(--guppi-accordion-row-padding);
 		border-top: 1px solid var(--guppi-accordion-row-divider);
-		/* The frame width fits all four columns, so no horizontal scroll in
-		   practice; keep `auto` as a safety net and let the board fill + scroll
-		   vertically within the fixed-ratio sheet. */
-		overflow-x: auto;
-		overflow-y: hidden;
+		/* The four columns always share the board width equally and SHRINK to
+		   fit (see `.kanban-column`), so the board never scrolls horizontally —
+		   `overflow: hidden` guarantees no horizontal scrollbar. Vertical scroll
+		   of cards lives on each column's stack. */
+		overflow: hidden;
 		flex: 1 1 auto;
 		min-height: 0;
 	}
 	.kanban-column {
 		display: flex;
 		flex-direction: column;
-		flex: 1 0 var(--guppi-kanban-column-min-width);
-		min-width: var(--guppi-kanban-column-min-width);
-		max-width: var(--guppi-kanban-column-max-width);
+		/* Equal quarters of the board that shrink to fit (`min-width: 0` lets
+		   them go below their content's natural width); this is what removes the
+		   horizontal scrollbar — the DONE column always fits. */
+		flex: 1 1 0;
+		min-width: 0;
 		background: var(--guppi-kanban-column-fill);
 		border-radius: var(--guppi-kanban-column-radius);
 		padding: var(--guppi-kanban-column-padding);
@@ -3081,6 +3160,11 @@
 		font-family: var(--guppi-font-family-mono);
 		font-size: var(--guppi-size-caption);
 		color: var(--guppi-card-id-text);
+		/* Never let a long mono id force the card (and column) wider than its
+		   share — truncate instead, so the board can't overflow horizontally. */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.task-card-title {
 		font-family: var(--guppi-font-family);

@@ -90,13 +90,23 @@ export interface FrameSize {
 export const FRAME_ASPECT_RATIO = Math.SQRT2;
 
 /**
+ * Width budget reserved for the accordion's vertical scrollbar so the four
+ * kanban columns still fit (the DONE column was getting clipped by the scrollbar
+ * gutter). Paired with `scrollbar-gutter: stable` on the accordion so the gutter
+ * is always reserved and the column band width stays constant.
+ */
+export const ACCORDION_SCROLLBAR_ALLOWANCE = 18;
+
+/**
  * The frame **shell** size — a fixed DIN-A4-ratio sheet (bc-layout.ts's per-BC
  * autofit is retired, ADR-017; the content-driven height tried in the ADR-019
  * amendment is superseded by this fixed A4 ratio).
  *
  * Width is wide enough to show **all four** kanban columns
- * (BACKLOG/TODO/DOING/DONE) side by side without horizontal scroll:
- *   body padding (both sides) + board padding (both sides) + 4 columns + 3 gaps.
+ * (BACKLOG/TODO/DOING/DONE) side by side without horizontal scroll, INCLUDING
+ * the accordion's vertical scrollbar gutter:
+ *   body padding (both sides) + board padding (both sides) + 4 columns + 3 gaps
+ *   + the scrollbar-gutter allowance (so DONE is never clipped).
  *
  * Height is that width × √2 (A4 portrait). The interior scrolls within the sheet
  * when its content is taller. `_bcCount` is unused (kept so call sites don't
@@ -107,7 +117,8 @@ export function frameSize(_bcCount: number): FrameSize {
 		shape.framePadding * 2 +
 		shape.accordionRowPadding * 2 +
 		shape.kanbanColumnMinWidth * 4 +
-		shape.kanbanColumnGap * 3;
+		shape.kanbanColumnGap * 3 +
+		ACCORDION_SCROLLBAR_ALLOWANCE;
 	const height = Math.round(width * FRAME_ASPECT_RATIO);
 	return { width, height };
 }

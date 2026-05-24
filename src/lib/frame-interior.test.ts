@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import type { BoundedContext, Task, TaskColumn } from './types';
 import { shape } from './design/tokens';
 import {
+	ACCORDION_SCROLLBAR_ALLOWANCE,
 	COLUMN_ORDER,
 	CULL_MARGIN_PX,
 	FRAME_ASPECT_RATIO,
@@ -93,17 +94,23 @@ describe('frameSize', () => {
 		expect(height).toBeGreaterThan(width);
 	});
 
-	it('is wide enough to show all four kanban columns without horizontal scroll', () => {
-		// body padding (both sides) + board padding (both sides) + 4 columns + 3 gaps.
+	it('is wide enough to show all four kanban columns plus the scrollbar gutter', () => {
+		// body padding (both sides) + board padding (both sides) + 4 columns +
+		// 3 gaps + the accordion scrollbar-gutter allowance.
 		const expected =
 			shape.framePadding * 2 +
 			shape.accordionRowPadding * 2 +
 			shape.kanbanColumnMinWidth * 4 +
-			shape.kanbanColumnGap * 3;
+			shape.kanbanColumnGap * 3 +
+			ACCORDION_SCROLLBAR_ALLOWANCE;
 		expect(frameSize(3).width).toBe(expected);
-		// Sanity: it really does fit four columns + their gaps inside the padding.
+		// Sanity: four columns + their gaps fit inside the padding even after the
+		// scrollbar gutter is taken (DONE is not clipped).
 		const innerForBoard =
-			frameSize(3).width - shape.framePadding * 2 - shape.accordionRowPadding * 2;
+			frameSize(3).width -
+			shape.framePadding * 2 -
+			shape.accordionRowPadding * 2 -
+			ACCORDION_SCROLLBAR_ALLOWANCE;
 		expect(innerForBoard).toBeGreaterThanOrEqual(
 			shape.kanbanColumnMinWidth * 4 + shape.kanbanColumnGap * 3
 		);

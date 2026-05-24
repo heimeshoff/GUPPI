@@ -150,6 +150,13 @@
 	   `rgb(22 22 28 / 70%)` literal as a stale dark-theme assumption. */
 	--guppi-modal-backdrop: rgba(10, 10, 14, 0.62);
 
+	/* --- Elevation: drop shadows (replace the orange frame/BC boundary) ---
+	   On the dark canvas a plain black shadow barely reads, so these lean on
+	   blur + spread to give a slight ambient lift. */
+	--guppi-frame-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+	--guppi-frame-shadow-hover: 0 12px 36px rgba(0, 0, 0, 0.65);
+	--guppi-accordion-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+
 	/* --- Typography --------------------------------------------------- */
 	--guppi-font-family: 'Inter', 'Segoe UI', system-ui, -apple-system,
 		'Helvetica Neue', Arial, sans-serif;
@@ -391,4 +398,9 @@
 	--guppi-panel-button-primary-text: #10131a;
 	--guppi-panel-button-secondary-fill: #f6f7fa;
 	--guppi-panel-button-secondary-text: #15161c;
+
+	/* --- Elevation: drop shadows (light theme) --- */
+	--guppi-frame-shadow: 0 6px 20px rgba(20, 22, 28, 0.14);
+	--guppi-frame-shadow-hover: 0 10px 28px rgba(20, 22, 28, 0.2);
+	--guppi-accordion-shadow: 0 1px 3px rgba(20, 22, 28, 0.1);
 }

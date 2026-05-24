@@ -171,3 +171,36 @@ Wired in `Canvas.svelte` (`framesOnScreen` + `view.mountInterior`, the
 `frame-interior.ts` (`FRAME_ASPECT_RATIO` + `frameSize`), and the kanban column
 width tokens. `frameSize`'s `bcCount` parameter is unused (the sheet is one fixed
 size).
+
+### Round-3 refinements (same day)
+
+- **No orange boundary — drop shadow instead.** The Pixi frame body no longer
+  strokes the brand-orange `frameBorder` for a normal frame (a MISSING project
+  keeps its border as a meaningful signal), and the orange hover focus ring is
+  retired (`toggleProjectFocusRing` is a no-op; the ring is kept invisible). The
+  frame's edge is now a slight drop shadow on the `.frame-interior` overlay
+  (`--guppi-frame-shadow`, lifting to `--guppi-frame-shadow-hover` on hover via
+  the `hoveredFrameId` state set by `setFrameHover`). The BC accordion row gets
+  the same treatment: no orange hover outline, a slight `--guppi-accordion-shadow`
+  elevation. New theme-aware shadow tokens live in `tokens.css`.
+- **DONE column no longer clipped — columns shrink to fit.** The exact-width-math
+  approach (reserving the scrollbar gutter) proved too fragile — sub-pixel +
+  gutter rounding still spilled the DONE column and produced a horizontal
+  scrollbar. The robust fix: the four columns are `flex: 1 1 0; min-width: 0` so
+  they always share the board width equally and shrink to fit, and `.kanban-board`
+  is `overflow: hidden` — there is no horizontal scrollbar under any width. The
+  task-card id truncates (`text-overflow: ellipsis`) so a long mono id can't force
+  a column wider than its share. (`scrollbar-gutter: stable` + the `frameSize`
+  allowance remain, keeping the columns comfortably wide.)
+- **Header height is constant across collapse/expand.** `.accordion-header` is
+  `flex: 0 0 auto` so a squeezed expanded row can't shrink the header band — the
+  BC headline never changes size.
+- **Middle mouse button always pans the canvas**, including over a frame's
+  interior: a capture-phase `pointerdown` on the overlay (`startMiddlePan`,
+  button 1) pre-empts the header handle / card and routes to the pan path;
+  `mousedown` guards suppress Chromium's middle-click autoscroll.
+- **Ctrl + wheel over a BC scrolls its content vertically** (up/down) instead of
+  zooming — `onWheelZoom` detects `e.ctrlKey` + a `.frame-interior-body` ancestor
+  and adjusts `scrollTop` of the column-stack under the cursor (its cards), or the
+  accordion as a fallback, also blocking the browser's native ctrl-wheel page
+  zoom. Plain wheel still zooms everywhere.
