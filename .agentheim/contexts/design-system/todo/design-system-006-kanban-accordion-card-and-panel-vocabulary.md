@@ -1,7 +1,7 @@
 ---
 id: design-system-006
 title: "Styleguide: BC accordion row, kanban board/column, task card, docked detail panel"
-status: backlog
+status: todo
 type: feature
 context: design-system
 created: 2026-05-24

@@ -1,7 +1,7 @@
 ---
 id: project-registry-005
 title: Individual task records in the project snapshot (counts → tasks)
-status: backlog
+status: todo
 type: feature
 context: project-registry
 created: 2026-05-24

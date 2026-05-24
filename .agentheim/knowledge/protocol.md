@@ -5,6 +5,15 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 -- Model / Promoted: the two remaining kanban-accordion pivot roots (project-registry-005 + design-system-006)
+
+**Type:** Model / Promote
+**BC:** project-registry + design-system
+**From → To:** backlog → todo (both)
+**Summary:** With `canvas-019` done (ADR-017 ratifying hybrid), promoted the two remaining pivot roots — both `depends_on: []`, both fully refined (7 and 6 concrete acceptance criteria). project-registry-005 (per-task snapshot records — the data spine) and design-system-006 (kanban/accordion/card/panel styleguide — the visual gate) now run in parallel; once both land, canvas-020 + agent-awareness-002 unblock. **Held in backlog** (not promotable — unmet deps): canvas-020/021/022/023 (chain on the two roots + each other), agent-awareness-002 (needs both roots), and canvas-024 (deps met but its own notes say retire the spike harness only after canvas-020+ are landing the real interior). The earlier session-end note's "canvas-020/021/022/023 are dependency-unblocked" was inaccurate and is corrected here.
+
+---
+
 ## 2026-05-24 -- Work session ended
 
 **Type:** Work / Session end

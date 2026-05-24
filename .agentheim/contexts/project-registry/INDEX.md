@@ -11,13 +11,13 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
-- [project-registry-005-individual-task-records-in-snapshot](backlog/project-registry-005-individual-task-records-in-snapshot.md) — `type: feature`. **Kanban-accordion pivot, data-contract spine.** Grows `ProjectSnapshot.bcs[]` from per-BC `task_counts` to per-task records (`Task { id, title, column, type_, tags, blocked_question }`); the ADR-008 watcher parses task-file frontmatter; extends the ADR-009 `TaskAdded` payload + adds a `TaskChanged` variant for in-place frontmatter edits. Substrate-agnostic — lands in parallel with `canvas-019`. Blocks canvas-020/021/022 + agent-awareness-002. Created 2026-05-24.
+*(None.)*
 <!-- backlog-list:end -->
 
 ## Todo
 
 <!-- todo-list:start -->
-*(None.)*
+- [project-registry-005-individual-task-records-in-snapshot](todo/project-registry-005-individual-task-records-in-snapshot.md) — `type: feature`. **Kanban-accordion pivot, data-contract spine.** Grows `ProjectSnapshot.bcs[]` from per-BC `task_counts` to per-task records (`Task { id, title, column, type_, tags, blocked_question }`); the ADR-008 watcher parses task-file frontmatter; extends the ADR-009 `TaskAdded` payload + adds a `TaskChanged` variant for in-place frontmatter edits. Substrate-agnostic root — `depends_on: []`. Blocks canvas-020/021/022 + agent-awareness-002. Promoted 2026-05-24.
 <!-- todo-list:end -->
 
 ## Doing
