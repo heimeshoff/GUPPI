@@ -11,7 +11,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
-- [agent-awareness-001-blocked-question-callout-spec](backlog/agent-awareness-001-blocked-question-callout-spec.md) — `type: feature`, depends on `design-system-001` + `design-system-003` + `design-system-004` (+ structured blocked-state from `claude-runner` or filesystem, hard upstream). 240px tethered red-border callout near a blocked BC, dashed tether + anchor dot, pulses on the same 1600ms cycle as the BC's badge, quick-answer chips, live timer ("2m 14s"), secondary blocked notices at 200px/0.78 opacity. Spec pinned from 2026-05-16 design §3 + `ViewBlockedMoment`. **v2+**.
+- [agent-awareness-002-per-task-agent-state](backlog/agent-awareness-002-per-task-agent-state.md) — `type: feature`, depends on `project-registry-005` + `design-system-006`. **Kanban-accordion pivot.** Extends the agent-state model from per-BC to per-**task** (keyed `(project_id, bc, task_id)`): `running | idle | blocked-on-question` + acting-agent label + `since` for the "orchestrator · waiting 2m 14s" card indicator; supplies the blocked-question text for the docked panel callout; per-BC active/blocked/idling roll-up for the accordion header. Re-homes the deleted `agent-awareness-001-blocked-question-callout-spec`. Created 2026-05-24.
 <!-- backlog-list:end -->
 
 ## Todo

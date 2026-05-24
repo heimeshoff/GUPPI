@@ -1,7 +1,7 @@
 ---
 id: canvas-004-styleguide-visuals
 type: feature
-status: done
+status: backlog
 scope: bc
 depends_on:
   - design-system-001-styleguide
@@ -9,35 +9,6 @@ related_adrs:
   - ADR-003
 related_research: []
 prior_art: []
-completed: 2026-05-16
-commit:
-subsumed_by: canvas-008
----
-
-## Closure note (2026-05-16)
-
-**Subsumed by `canvas-008-apply-revised-tokens`.** No work was done on
-this task; it is closed without a commit. Reasoning:
-
-- Originally captured as "replace greybox tiles/nodes/edges/counts/badge-slot
-  with `STYLEGUIDE.md` tokens" against the orbit baseline.
-- `canvas-002` retired the single-tile greybox path.
-- `canvas-007` (commit `e2296c2`, 2026-05-16) shipped the project-frame
-  rendering against the §3.6/§3.7/§3.8 tokens — most of what this task
-  was scoped to cover.
-- The 2026-05-16 design (`references/claude-design-2026-05-16/`)
-  revises the palette + status colors + v1 dimensions. Re-applying the
-  revised tokens against the existing canvas is the residual scope of
-  this task — captured fresh as `canvas-008-apply-revised-tokens` with
-  explicit acceptance criteria (token-application audit, theme-flip
-  end-to-end test, visual fidelity cross-check against the design
-  artboards).
-- Carrying canvas-004 forward against `canvas-008` would have meant two
-  near-identical tasks with the older one's scope already half-
-  obsolete. Closure is cleaner than refinement.
-
-Audit trail preserved here; original captured scope below.
-
 ---
 
 # Apply styleguide visuals — greybox → STYLEGUIDE.md

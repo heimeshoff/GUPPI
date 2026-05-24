@@ -6,7 +6,7 @@ type: feature
 context: design-system
 created: 2026-05-16
 completed: 2026-05-16
-commit: 6ce724e
+commit:
 depends_on: [design-system-003]
 blocks: []
 tags: [tokens, theme, light-mode, persistence]

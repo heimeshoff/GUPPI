@@ -11,6 +11,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Backlog
 
 <!-- backlog-list:start -->
+- [design-system-006-kanban-accordion-card-and-panel-vocabulary](backlog/design-system-006-kanban-accordion-card-and-panel-vocabulary.md) — `type: feature`. **Kanban-accordion pivot, styleguide GATE.** New `STYLEGUIDE.md` sections + dual-theme tokens (`tokens.ts` + `tokens.css`) for the BC accordion row, kanban board/column, task card (all states + live-agent indicator), and the docked detail panel (callout + slide motion). Annotates §3.7 (BC bubble) + §3.8 (intra-project edges) as superseded for the canvas interior. Blocks canvas-020/021/022 + agent-awareness-002. Created 2026-05-24.
 - [design-system-005-document-modal-backdrop-token](backlog/design-system-005-document-modal-backdrop-token.md) — `type: feature`. Documentation-only follow-up from canvas-008. Add `modalBackdrop` / `--guppi-modal-backdrop` to `STYLEGUIDE.md` §2.1 colour table (theme-invariant qualifier explicit), optionally a §3 `Modal` row pointing at `src/lib/Modal.svelte`. Source value: `rgba(10, 10, 14, 0.62)` per the 2026-05-16 design's §5 modal-scrim footnote.
 <!-- backlog-list:end -->
 

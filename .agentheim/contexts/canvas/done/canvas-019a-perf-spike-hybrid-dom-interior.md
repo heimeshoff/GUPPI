@@ -6,7 +6,7 @@ type: spike
 context: canvas
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: d8a1f59
 depends_on: []
 blocks: [canvas-019]
 tags: [architecture, rendering, spike, pivot, kanban, pixi, dom, perf]

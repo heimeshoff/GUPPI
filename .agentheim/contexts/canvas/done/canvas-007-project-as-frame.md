@@ -3,7 +3,6 @@ id: canvas-007-project-as-frame
 type: feature
 status: done
 completed: 2026-05-16
-commit: e2296c2
 scope: bc
 depends_on:
   - design-system-001-styleguide

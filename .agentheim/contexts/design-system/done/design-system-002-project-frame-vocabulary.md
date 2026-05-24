@@ -3,7 +3,6 @@ id: design-system-002-project-frame-vocabulary
 type: feature
 status: done
 completed: 2026-05-16
-commit: 38f48ab
 scope: bc
 depends_on:
   - design-system-001-styleguide

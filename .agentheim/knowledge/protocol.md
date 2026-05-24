@@ -5,6 +5,84 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 -- Model / Promoted: canvas-019 - Rendering substrate for the kanban-accordion frame interior (ADR-003 revisit)
+
+**Type:** Model / Promote
+**BC:** canvas
+**From → To:** backlog → todo
+**Readiness:** dependency `canvas-019a` done with PASS verdict; task already refined (6 concrete acceptance criteria, architect's hybrid recommendation embedded for ratification). The ADR (proposed ADR-017) now cites `canvas-019a`'s measured numbers to ratify hybrid; Option B (full-DOM) remains the costed fallback only. Gate task for the pivot — unblocks canvas-020/021/022 once decided.
+
+---
+
+## 2026-05-24 -- Spike verdict landed: canvas-019a hybrid perf = PASS (operator measurement)
+
+**Type:** Operator measurement / Spike verdict
+**BC:** canvas
+**Artifact:** `research/canvas-hybrid-perf-2026-05-24` (findings note + console-snapshot.md)
+**Verdict:** **PASS.** Release-build worst-case pan-circle (N=10 frames, all interiors mounted, default zoom, 120 cards/frame) = `p95 8.5 ms` — under the 16 ms bar, at the 8 ms headroom target. Knob sweep to 3 cards/col gave the SAME 8.5 ms → per-pan cost is independent of card density (hybrid scales with frame count, not card count), confirming the analytical prediction. The earlier `pnpm tauri dev` reading (33.3 ms / 42 FPS) was ~4× dev-mode overhead, not a hybrid cost; provisional FAIL retracted.
+**Harness change:** `src/routes/spike-019a/+page.svelte` extended with an on-screen HUD (live p95/avg/max/fps, DEV-vs-RELEASE + WebGL indicators, Autopan/Reset buttons, live cards-per-col + LOD-floor sliders) so the full protocol runs without devtools — required because release builds disable F12. `pnpm check` 0/0 (992).
+**Consequence:** `canvas-019` is cleared to ratify **hybrid** citing these numbers; Option B (full-DOM) not needed. Promote `canvas-019` from backlog → todo (via `model`) to run the substrate-decision ADR.
+
+---
+
+## 2026-05-24 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 1, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 1 (d8a1f59 canvas-019a)
+**Note:** Sole ready task was canvas-019a (kanban-pivot perf gate). canvas-019 is now dependency-unblocked but remains in backlog/ — promote it via `model` before the next `work` run. Working tree still carries the uncommitted prior `/model` pivot (design-reference deletions + new pivot task files + kanban.png); the canvas INDEX/protocol edits for this session ride with that pivot when committed.
+
+---
+
+## 2026-05-24 -- Task verified and completed: canvas-019a - Perf spike — hybrid Pixi-shell + DOM kanban interior at N≈10 frames
+
+**Type:** Work / Task completion
+**Task:** canvas-019a - Perf spike — hybrid Pixi-shell + DOM kanban interior at N≈10 frames
+**Summary:** Built a throwaway, instrumented Option A (hybrid Pixi-shell + DOM kanban-interior) perf harness at `src/routes/spike-019a/+page.svelte` — N≈10 frames, Pixi shells in world coords (stroke pre-divided by `z`), DOM kanban-accordion interiors positioned via the `world·zoom + pan` screen contract, viewport culling (screen-space AABB + margin) and zoom-threshold LOD (`LOD_ZOOM_FLOOR = 0.45`, suppress-below / re-mount-on-zoom-in). Wired a rolling rAF frame-time sampler + `window.__guppiSpike` seam (`autopan(5)`/`stats()`/`reset()`). Findings note `research/canvas-hybrid-perf-2026-05-24/` records thresholds, a `p95 ≤ 16 ms` PASS rule, the FAIL→Option-B escape, and a Marco-runnable reproducer protocol; frame-time numbers are OPERATOR-PENDING (worker shell can't drive the Tauri GPU — canvas-014 precedent), no fabricated numbers. Production `Canvas.svelte` untouched.
+**Verification:** PASS (iteration 1)
+**Commit:** d8a1f59
+**Files changed:** 4 (src/routes/spike-019a/+page.svelte NEW; research/canvas-hybrid-perf-2026-05-24/README.md NEW; research/canvas-hybrid-perf-2026-05-24/console-snapshot.md NEW; canvas/backlog/canvas-024 NEW)
+**Tests added:** 0 — `type: spike`, throwaway harness; `pnpm check` 0/0 (992 files).
+**ADRs written:** none — the substrate decision ADR is `canvas-019`'s job; this spike produces the empirical findings note it cites.
+**New backlog items:** canvas-024 (retire the throwaway harness once canvas-019 has consumed the findings note).
+**Note:** Committed in isolation (worker's 5 new files only) — the working tree carries a large *uncommitted prior `/model` pivot* (deleted design references, the new canvas-019/020/021/022/023 + sibling task files, kanban.png) that must NOT be bundled into a spike commit. The orchestrator's INDEX/protocol edits for this task therefore ride with that pivot when the user commits it, rather than this spike commit.
+
+---
+
+## 2026-05-24 -- Batch started: [canvas-019a]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-019a - Perf spike — hybrid Pixi-shell + DOM kanban interior at N≈10 frames
+**Parallel:** no (1 worker — sole ready task; unblocked root of the kanban-accordion pivot, gates canvas-019)
+
+---
+
+## 2026-05-24 -- Model / Refined: canvas-019 - Rendering substrate decision (split out the perf spike)
+
+**Type:** Model / Refine
+**BC:** canvas
+**Status after:** canvas-019 backlog (now `depends_on: [canvas-019a]`); canvas-019a → todo
+**Summary:** Interrogated the pivot's gate task. The sharpest tension was AC #4 welding an empirical perf spike into a `type: decision` task whose worker output is an ADR — two different verifier stories under one verdict. Split the perf gate into its own `type: spike` task **canvas-019a** ("validate hybrid only — Pixi shell + N≈10 DOM kanban interiors with viewport-culling + zoom-threshold LOD; measure pan/zoom frame-time via the canvas-perf-2026-05-17 protocol; full-DOM is the fallback only if hybrid fails"). canvas-019 now `depends_on` it and its AC #4 was rewritten to *cite* the spike's findings note (ratify hybrid on PASS, overturn toward Option B on FAIL). canvas-019 stays a clean ADR task. Promoted canvas-019a straight to todo/ as an unblocked root of the pivot — it now starts in parallel with project-registry-005 + design-system-006. No new ADR; no orchestrator round (the architect's hybrid recommendation already lives in canvas-019 and was not disturbed).
+**Split into:** canvas-019a (new `type: spike`, todo); canvas-019 (unchanged scope, now gated on 019a)
+**ADRs written:** none
+
+---
+
+## 2026-05-24 -- Model / Captured: kanban-accordion canvas redesign (8 tasks, 4 BCs)
+
+**Type:** Model / Capture
+**BC:** canvas (primary) + project-registry + agent-awareness + design-system
+**Filed to:** backlog (all 8)
+**Summary:** Captured a design pivot from the new `design-system/references/kanban.png` reference (in Facilitator mode). Each project frame's interior changes from Pixi BC bubbles + spring-electrical edges to a **vertical accordion of collapsible BCs, each holding a BACKLOG→DONE kanban of individual task cards**, with a **right-edge docked detail panel** that animates in/out and hosts the "AGENT NEEDS AN ANSWER" blocked callout. User decisions locked: (1) every project *always* renders as a full kanban-accordion frame, pan/zoom between them — no summary representation; (2) the accordion+kanban interior *fully replaces* the BC-bubble layout (ADR-015 canvas-layout consequence to be superseded); (3) decompose now via the orchestrator. The orchestrator (architect → strategic → tactical) confirmed no new BCs / no context-map change, and surfaced the central architecture fork: the text-heavy scrollable kanban is a DOM UI, forcing an **ADR-003 revisit** (hybrid Pixi-shell + DOM-interior recommended; full-DOM costed; pure-Pixi rejected).
+**Decomposed into:** `canvas-019` (decision: rendering substrate / ADR-003 revisit — gate), `project-registry-005` (per-task records in the snapshot — data spine), `design-system-006` (accordion/kanban/card/panel styleguide — gate), `agent-awareness-002` (per-task live agent state + blocked-question), `canvas-020` (accordion+kanban interior — spine, retires bubbles/edges + `bc-layout.ts`), `canvas-021` (task-card rendering), `canvas-022` (docked detail panel + callout), `canvas-023` (collapse + reorder persistence).
+**Dependency graph:** three independent roots start in parallel — `canvas-019` (decision), `project-registry-005` (data), `design-system-006` (gate). `agent-awareness-002` needs registry-005 + ds-006. `canvas-020` needs all three roots; 021/022 build on 020; 023 needs only 020.
+**Also reconciled:** removed the stale `canvas-009/010/011` spec lines from `canvas/INDEX.md` (their files were deleted in the working tree as part of this pivot, alongside the `agent-awareness-001` callout spec and the 2026-05-16 claude-design references). Working-tree deletions are uncommitted.
+
+---
+
 ## 2026-05-19 17:45 -- Work session ended
 
 **Type:** Work / Session end

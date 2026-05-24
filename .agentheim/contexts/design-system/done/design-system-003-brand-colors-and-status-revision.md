@@ -6,7 +6,7 @@ type: feature
 context: design-system
 created: 2026-05-16
 completed: 2026-05-16
-commit: ab441d0
+commit:
 depends_on: []
 blocks: []
 tags: [tokens, styleguide, branding, status-palette]
