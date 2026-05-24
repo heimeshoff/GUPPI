@@ -95,6 +95,49 @@
 	--guppi-voice-listening: #25abfe;
 	--guppi-voice-muted: #6e6e80;
 
+	/* --- Colour: kanban-accordion interior (design-system-006) -------- */
+	/* The DOM/HTML overlay interior (canvas-019 / ADR-017 — Pixi shell,
+	   DOM interior). Mirrors STYLEGUIDE.md §3.9–3.12. */
+	/* BC accordion row */
+	--guppi-accordion-row-fill: #1e1e26;
+	--guppi-accordion-row-header-fill: #20242b;
+	--guppi-accordion-row-divider: #2a2b35;
+	--guppi-accordion-row-text: #e6e6ec;
+	--guppi-accordion-row-text-muted: #9a9aa6;
+	--guppi-accordion-chevron: #9a9aa6;
+	--guppi-accordion-rollup-pill-fill: #262636;
+	/* Kanban board + column */
+	--guppi-kanban-column-fill: #1a1a22;
+	--guppi-kanban-column-header-text: #9a9aa6;
+	--guppi-kanban-column-divider: #2a2b35;
+	--guppi-kanban-column-empty-text: #6e6e80;
+	/* Task card */
+	--guppi-card-fill: #20242b;
+	--guppi-card-fill-hover: #262636;
+	--guppi-card-border: #2a2b35;
+	--guppi-card-border-selected: #25abfe;
+	--guppi-card-border-blocked: #e85454;
+	--guppi-card-id-text: #6e6e80;
+	--guppi-card-title-text: #e6e6ec;
+	--guppi-card-tag-fill: #262636;
+	--guppi-card-tag-text: #9a9aa6;
+	--guppi-card-agent-line-running: #25abfe;
+	--guppi-card-agent-line-blocked: #e85454;
+	/* Docked detail panel + callout */
+	--guppi-panel-fill: #1a1a22;
+	--guppi-panel-border: #2a2b35;
+	--guppi-panel-header-text: #f2f2f7;
+	--guppi-panel-header-text-muted: #9a9aa6;
+	--guppi-panel-body-text: #e6e6ec;
+	--guppi-panel-callout-fill: #2a211a;
+	--guppi-panel-callout-border: #ff8b00;
+	--guppi-panel-callout-label: #ff8b00;
+	--guppi-panel-callout-text: #f2f2f7;
+	--guppi-panel-button-primary-fill: #ff8b00;
+	--guppi-panel-button-primary-text: #10131a;
+	--guppi-panel-button-secondary-fill: #262636;
+	--guppi-panel-button-secondary-text: #e6e6ec;
+
 	/* --- Colour: modal backdrop (theme-invariant) --------------------- */
 	/* The full-viewport scrim behind a modal. Theme-invariant deep dim
 	   per the 2026-05-16 design reference ("modal scrim ·
@@ -161,12 +204,66 @@
 	--guppi-arrowhead-width: 8px;
 	--guppi-acl-notch-size: 10px;
 
+	/* --- Shape: kanban-accordion interior (design-system-006) --------- */
+	/* DOM-overlay px (screen-space, NOT world-space) — the interior is the
+	   HTML overlay layer (canvas-019 / ADR-017). */
+	/* BC accordion row */
+	--guppi-accordion-row-header-height: 44px;
+	--guppi-accordion-row-gap: 8px;
+	--guppi-accordion-row-radius: 10px;
+	--guppi-accordion-row-padding: 12px;
+	--guppi-accordion-chevron-size: 12px;
+	--guppi-accordion-rollup-pill-height: 18px;
+	--guppi-accordion-rollup-pill-radius: 9px;
+	/* Kanban board + column */
+	--guppi-kanban-column-min-width: 200px;
+	--guppi-kanban-column-max-width: 280px;
+	--guppi-kanban-column-gap: 12px;
+	--guppi-kanban-column-header-height: 28px;
+	--guppi-kanban-column-radius: 8px;
+	--guppi-kanban-column-padding: 8px;
+	/* Task card */
+	--guppi-card-min-height: 56px;
+	--guppi-card-radius: 8px;
+	--guppi-card-padding: 10px;
+	--guppi-card-gap: 8px;
+	--guppi-card-border-width: 1px;
+	--guppi-card-border-width-accent: 2px;
+	--guppi-card-tag-height: 16px;
+	--guppi-card-tag-radius: 4px;
+	/* Docked detail panel */
+	--guppi-panel-width: 340px;
+	--guppi-panel-radius: 12px;
+	--guppi-panel-padding: 20px;
+	--guppi-panel-border-width: 1px;
+	--guppi-panel-header-height: 52px;
+	--guppi-panel-callout-radius: 10px;
+	--guppi-panel-callout-padding: 14px;
+	--guppi-panel-callout-border-width: 1px;
+	--guppi-panel-button-height: 30px;
+	--guppi-panel-button-radius: 6px;
+
+	/* --- Typography: detail-panel reader body (design-system-006) ----- */
+	/* The panel body prose is denser-reading than canvas chrome: 14px Inter
+	   at line-height 1.65 (the canvas-009 reader pins). Distinct from the
+	   12px `--guppi-size-body` used for canvas labels. */
+	--guppi-size-panel-body: 14px;
+	--guppi-line-height-panel-body: 1.65;
+
 	/* --- Motion ------------------------------------------------------- */
 	--guppi-duration-camera: 320ms;
 	--guppi-duration-affordance: 120ms;
 	--guppi-duration-pulse: 1600ms;
 	--guppi-ease-standard: cubic-bezier(0.22, 0.61, 0.36, 1);
 	--guppi-ease-pulse: cubic-bezier(0.45, 0, 0.55, 1);
+
+	/* --- Motion: kanban-accordion interior (design-system-006) -------- */
+	/* Detail panel slide-in/out: 320ms (matches camera budget) but its own
+	   soft-settle ease. Accordion collapse: 240ms, shares the panel ease.
+	   See STYLEGUIDE.md §5 Q11. */
+	--guppi-duration-panel: 320ms;
+	--guppi-ease-panel: cubic-bezier(0.16, 0.84, 0.36, 1);
+	--guppi-duration-accordion: 240ms;
 }
 
 /*
@@ -252,4 +349,46 @@
 	--guppi-voice-idle: #8a8d99;
 	--guppi-voice-listening: #1d8cd4;
 	--guppi-voice-muted: #6b6c7a;
+
+	/* Kanban-accordion interior (design-system-006). White cards raised on a
+	   surface-2 board; light hairlines; AA-tuned light status accents. */
+	/* BC accordion row */
+	--guppi-accordion-row-fill: #ebedf2;
+	--guppi-accordion-row-header-fill: #f6f7fa;
+	--guppi-accordion-row-divider: #e2e4eb;
+	--guppi-accordion-row-text: #15161c;
+	--guppi-accordion-row-text-muted: #4a4b58;
+	--guppi-accordion-chevron: #4a4b58;
+	--guppi-accordion-rollup-pill-fill: #ffffff;
+	/* Kanban board + column */
+	--guppi-kanban-column-fill: #ebedf2;
+	--guppi-kanban-column-header-text: #4a4b58;
+	--guppi-kanban-column-divider: #e2e4eb;
+	--guppi-kanban-column-empty-text: #6b6c7a;
+	/* Task card */
+	--guppi-card-fill: #ffffff;
+	--guppi-card-fill-hover: #f6f7fa;
+	--guppi-card-border: #e2e4eb;
+	--guppi-card-border-selected: #1d8cd4;
+	--guppi-card-border-blocked: #d04545;
+	--guppi-card-id-text: #6b6c7a;
+	--guppi-card-title-text: #15161c;
+	--guppi-card-tag-fill: #ebedf2;
+	--guppi-card-tag-text: #4a4b58;
+	--guppi-card-agent-line-running: #1d8cd4;
+	--guppi-card-agent-line-blocked: #d04545;
+	/* Docked detail panel + callout */
+	--guppi-panel-fill: #ffffff;
+	--guppi-panel-border: #e2e4eb;
+	--guppi-panel-header-text: #15161c;
+	--guppi-panel-header-text-muted: #4a4b58;
+	--guppi-panel-body-text: #15161c;
+	--guppi-panel-callout-fill: #fff3e6;
+	--guppi-panel-callout-border: #ff8b00;
+	--guppi-panel-callout-label: #d97500;
+	--guppi-panel-callout-text: #15161c;
+	--guppi-panel-button-primary-fill: #ff8b00;
+	--guppi-panel-button-primary-text: #10131a;
+	--guppi-panel-button-secondary-fill: #f6f7fa;
+	--guppi-panel-button-secondary-text: #15161c;
 }

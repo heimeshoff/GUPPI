@@ -141,7 +141,73 @@ export const colorDark = {
 	/** Voice-state indicator — the ambient corner glyph. */
 	voiceIdle: 0x5a5a68, // mic available, not listening
 	voiceListening: 0x25abfe, // actively listening — matches statusRunning blue
-	voiceMuted: 0x6e6e80 // mic unavailable / muted — neutral fgMuted
+	voiceMuted: 0x6e6e80, // mic unavailable / muted — neutral fgMuted
+
+	/* --- Kanban-accordion interior (design-system-006) --------------- */
+	/* The DOM/HTML overlay interior introduced by the canvas pivot
+	 * (canvas-019 ratified the hybrid Pixi-shell + DOM-interior substrate,
+	 * ADR-017). The frame SHELL stays Pixi; this colour group dresses the
+	 * accordion rows, kanban columns, task cards, and docked detail panel
+	 * that live in the DOM overlay. Mirrors §3.9–3.12 of STYLEGUIDE.md. */
+
+	/** BC accordion row — header band + body when expanded. The row header
+	 *  is a quiet raised band; the body (holding the kanban board) drops back
+	 *  to the canvas tone so cards read as raised against it. */
+	accordionRowFill: 0x1e1e26,
+	accordionRowHeaderFill: 0x20242b,
+	accordionRowDivider: 0x2a2b35,
+	accordionRowText: 0xe6e6ec,
+	accordionRowTextMuted: 0x9a9aa6,
+	/** Disclosure chevron — the collapse/expand affordance glyph. */
+	accordionChevron: 0x9a9aa6,
+	/** Roll-up pill background — the neutral capsule behind "1 active · 2
+	 *  blocked · 1 idling"; the per-state glyph+count text inside uses the
+	 *  matching `statusColor[...]`. */
+	accordionRollupPillFill: 0x262636,
+
+	/** Kanban board — the scrollable strip of four columns inside an
+	 *  expanded accordion row. */
+	kanbanColumnFill: 0x1a1a22,
+	kanbanColumnHeaderText: 0x9a9aa6,
+	kanbanColumnDivider: 0x2a2b35,
+	/** Empty-column placeholder copy. */
+	kanbanColumnEmptyText: 0x6e6e80,
+
+	/** Task card — the per-task tile inside a column. Default body + border;
+	 *  hover/selected raise the border; blocked swaps to the red accent. */
+	cardFill: 0x20242b,
+	cardFillHover: 0x262636,
+	cardBorder: 0x2a2b35,
+	cardBorderSelected: 0x25abfe,
+	cardBorderBlocked: 0xe85454,
+	cardIdText: 0x6e6e80,
+	cardTitleText: 0xe6e6ec,
+	cardTagFill: 0x262636,
+	cardTagText: 0x9a9aa6,
+	/** Live-agent indicator line ("orchestrator · waiting 2m 14s"). Running
+	 *  reads brand-blue; blocked reads the status-red. The two are aliases of
+	 *  the status palette, named so card code reads intent. */
+	cardAgentLineRunning: 0x25abfe,
+	cardAgentLineBlocked: 0xe85454,
+
+	/** Docked detail panel — the right-edge panel + its blocked-question
+	 *  callout. */
+	panelFill: 0x1a1a22,
+	panelBorder: 0x2a2b35,
+	panelHeaderText: 0xf2f2f7,
+	panelHeaderTextMuted: 0x9a9aa6,
+	panelBodyText: 0xe6e6ec,
+	/** "AGENT NEEDS AN ANSWER" callout — the warm-accent boxed region.
+	 *  Tinted fill + brand-orange border + label; the primary answer button
+	 *  uses the brand-orange fill, secondary buttons stay quiet. */
+	panelCalloutFill: 0x2a211a,
+	panelCalloutBorder: 0xff8b00,
+	panelCalloutLabel: 0xff8b00,
+	panelCalloutText: 0xf2f2f7,
+	panelButtonPrimaryFill: 0xff8b00,
+	panelButtonPrimaryText: 0x10131a,
+	panelButtonSecondaryFill: 0x262636,
+	panelButtonSecondaryText: 0xe6e6ec
 } as const;
 
 export type Palette = { -readonly [K in keyof typeof colorDark]: number };
@@ -238,7 +304,54 @@ export const colorLight: Palette = {
 	// Voice — listening matches `statusRunning` blue; muted is `fgMuted`.
 	voiceIdle: 0x8a8d99,
 	voiceListening: 0x1d8cd4,
-	voiceMuted: 0x6b6c7a
+	voiceMuted: 0x6b6c7a,
+
+	// Kanban-accordion interior (design-system-006). On light, the
+	// accordion body sits on the near-white canvas; cards are `surface-1`
+	// (white) raised against the `surface-2` board, so the same raised/
+	// recessed reading holds, inverted. Borders use the light hairlines;
+	// blocked/selected accents use the AA-tuned light status hues.
+	accordionRowFill: 0xebedf2,
+	accordionRowHeaderFill: 0xf6f7fa,
+	accordionRowDivider: 0xe2e4eb,
+	accordionRowText: 0x15161c,
+	accordionRowTextMuted: 0x4a4b58,
+	accordionChevron: 0x4a4b58,
+	accordionRollupPillFill: 0xffffff,
+
+	kanbanColumnFill: 0xebedf2,
+	kanbanColumnHeaderText: 0x4a4b58,
+	kanbanColumnDivider: 0xe2e4eb,
+	kanbanColumnEmptyText: 0x6b6c7a,
+
+	cardFill: 0xffffff,
+	cardFillHover: 0xf6f7fa,
+	cardBorder: 0xe2e4eb,
+	cardBorderSelected: 0x1d8cd4,
+	cardBorderBlocked: 0xd04545,
+	cardIdText: 0x6b6c7a,
+	cardTitleText: 0x15161c,
+	cardTagFill: 0xebedf2,
+	cardTagText: 0x4a4b58,
+	cardAgentLineRunning: 0x1d8cd4,
+	cardAgentLineBlocked: 0xd04545,
+
+	panelFill: 0xffffff,
+	panelBorder: 0xe2e4eb,
+	panelHeaderText: 0x15161c,
+	panelHeaderTextMuted: 0x4a4b58,
+	panelBodyText: 0x15161c,
+	// Callout — a warm tint on white; brand-orange border + label survive on
+	// the near-white surface (the light status-missing #d97500 would muddy
+	// the brand label, so the label keeps the brand orange #ff8b00).
+	panelCalloutFill: 0xfff3e6,
+	panelCalloutBorder: 0xff8b00,
+	panelCalloutLabel: 0xd97500,
+	panelCalloutText: 0x15161c,
+	panelButtonPrimaryFill: 0xff8b00,
+	panelButtonPrimaryText: 0x10131a,
+	panelButtonSecondaryFill: 0xf6f7fa,
+	panelButtonSecondaryText: 0x15161c
 };
 
 /* ------------------------------------------------------------------ */
@@ -311,6 +424,13 @@ export const typography = {
 	sizeBody: 12, // subtitles, paths
 	sizeCaption: 10, // task counts, badge labels, hints
 
+	/** Detail-panel reader body (design-system-006). The docked panel's prose
+	 *  reads denser than canvas chrome: 14px Inter at line-height 1.65 (the
+	 *  canvas-009 reader pins). Distinct from `sizeBody` (12px canvas labels).
+	 *  DOM-overlay px, not world-space. */
+	sizePanelBody: 14,
+	lineHeightPanelBody: 1.65,
+
 	weightRegular: 400,
 	weightMedium: 500,
 	weightBold: 700
@@ -377,7 +497,52 @@ export const shape = {
 	edgeWeightConformist: 1,
 	arrowheadLength: 10,
 	arrowheadWidth: 8,
-	aclNotchSize: 10
+	aclNotchSize: 10,
+
+	/* --- Kanban-accordion interior (design-system-006) --------------- */
+	/* DOM-overlay px (screen-space, NOT world-space) — the interior is the
+	 * HTML overlay layer (canvas-019 / ADR-017), so these are device px the
+	 * DOM renders at, not zoom-1 world units like the orbit shape tokens. */
+
+	/** BC accordion row. Collapsed = just the header band; expanded adds the
+	 *  kanban board body. */
+	accordionRowHeaderHeight: 44,
+	accordionRowGap: 8,
+	accordionRowRadius: 10,
+	accordionRowPadding: 12,
+	accordionChevronSize: 12,
+	accordionRollupPillHeight: 18,
+	accordionRollupPillRadius: 9,
+
+	/** Kanban board + column. */
+	kanbanColumnMinWidth: 200,
+	kanbanColumnMaxWidth: 280,
+	kanbanColumnGap: 12,
+	kanbanColumnHeaderHeight: 28,
+	kanbanColumnRadius: 8,
+	kanbanColumnPadding: 8,
+
+	/** Task card. */
+	cardMinHeight: 56,
+	cardRadius: 8,
+	cardPadding: 10,
+	cardGap: 8,
+	cardBorderWidth: 1,
+	cardBorderWidthAccent: 2,
+	cardTagHeight: 16,
+	cardTagRadius: 4,
+
+	/** Docked detail panel. */
+	panelWidth: 340,
+	panelRadius: 12,
+	panelPadding: 20,
+	panelBorderWidth: 1,
+	panelHeaderHeight: 52,
+	panelCalloutRadius: 10,
+	panelCalloutPadding: 14,
+	panelCalloutBorderWidth: 1,
+	panelButtonHeight: 30,
+	panelButtonRadius: 6
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -389,7 +554,21 @@ export const motion = {
 	durationAffordance: 120, // ms
 	durationPulse: 1600, // ms
 	easeStandard: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
-	easePulse: 'cubic-bezier(0.45, 0, 0.55, 1)'
+	easePulse: 'cubic-bezier(0.45, 0, 0.55, 1)',
+
+	/* --- Kanban-accordion interior motion (design-system-006) -------- */
+	/** Docked detail panel slide-in / slide-out. 320ms matches the camera
+	 *  navigation budget (one "feel" for primary motion), but the panel gets
+	 *  its OWN ease — a soft settle (`easePanel`) rather than the camera's
+	 *  ease-out — because it docks against the viewport edge and a gentle
+	 *  decelerate reads as "snapping into place" without overshoot. Decided
+	 *  in design-system-006; see STYLEGUIDE.md §5 Q11. */
+	durationPanel: 320, // ms
+	easePanel: 'cubic-bezier(0.16, 0.84, 0.36, 1)',
+	/** BC accordion collapse / expand. Kept just under the panel budget so
+	 *  the row reflow reads quick (restrained budget — §5 Q3); shares the
+	 *  panel ease. */
+	durationAccordion: 240 // ms
 } as const;
 
 /* ------------------------------------------------------------------ */

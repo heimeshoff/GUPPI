@@ -1,11 +1,11 @@
 ---
 id: design-system-006
 title: "Styleguide: BC accordion row, kanban board/column, task card, docked detail panel"
-status: todo
+status: done
 type: feature
 context: design-system
 created: 2026-05-24
-completed:
+completed: 2026-05-24
 commit:
 depends_on: []
 blocks: [canvas-020, canvas-021, canvas-022, agent-awareness-002]
@@ -96,3 +96,42 @@ Marco's styleguide sign-off pattern: like design-system-002, the in-person
 visual confirmation happens when the first consumer (canvas-020) runs in
 `pnpm tauri dev`; this task fixes the contract + tokens + sketch, sign-off
 is the deferred human gate.
+
+## Outcome
+
+Extended `STYLEGUIDE.md` with the canvas-pivot interior vocabulary:
+new contract sections **§3.9 BC accordion row**, **§3.10 kanban
+board/column**, **§3.11 task card** (default / hover / selected / blocked
+states + the live-agent indicator line), **§3.12 docked detail panel** (+ the
+"AGENT NEEDS AN ANSWER" callout + slide-in motion). Each section cites tokens
+by name. The §2.1 colour table, §2.3 typography table (reader pins 14px /
+1.65), §2.5 shape table, and §2.6 motion table each gained a
+kanban-accordion-interior sub-grouping. §3.7 (BC bubble) + §3.8 (intra-project
+edges) annotated as **superseded for the canvas interior** — preserved, not
+deleted, with pointers to §3.9–3.12 and canvas-019 / ADR-017 (the vocabulary
+may resurface in a future cross-project relationship view).
+
+Mirrored every new colour + dimensional + motion value across
+`src/lib/design/tokens.ts` (PixiJS-ready numerics, so a future Pixi consumer
+can read them and the dual-file contract holds) **and**
+`src/lib/design/tokens.css` (the DOM-overlay layer's actual consumer —
+canvas-019 / ADR-017). Both themes covered: every new colour token has a
+`colorDark` + `colorLight` value in `tokens.ts` (the `Palette` type enforces
+parity) and a `[data-theme="light"]` entry in `tokens.css`. The §2.2 status
+palette + §2.6 `durationPulse`/`glow` are **reused** by the interior (card
+glyphs, roll-up pills, running-pulse) rather than duplicated.
+
+New `references/kanban-accordion-sketch.md` ASCII layout reference for the
+deferred sign-off (the design-system-002 pattern; `kanban.png` is the pixel
+anchor). Recorded the open-question defaults in **STYLEGUIDE §5 Q11** (panel
+motion gets its own `easePanel` curve at the shared 320ms budget; accordion
+240ms; column width 200–280px fluid; card 2-line clamp; warm-orange callout;
+DOM-overlay substrate per ADR-017) — no new design-system ADR (consistent
+with Q4–Q10; substrate decision lives in ADR-017 from canvas-019).
+
+`pnpm check` = 0/0/0. No Rust touched (`cargo test --lib` unchanged). Key
+files: `STYLEGUIDE.md` §2.1/§2.3/§2.5/§2.6 + §3.7/§3.8 annotations +
+§3.9–3.12 + §5 Q11; `src/lib/design/tokens.ts`; `src/lib/design/tokens.css`;
+`references/kanban-accordion-sketch.md`; BC `README.md` (ubiquitous language
++ styleguide section). Consumers `canvas-020/021/022` + `agent-awareness-002`
+now build against §3.9–3.12.
