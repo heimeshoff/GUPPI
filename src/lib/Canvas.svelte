@@ -39,6 +39,7 @@
 	import {
 		addScanRoot,
 		getBcAgentRollup,
+		getTaskAgentState,
 		getProject,
 		importScannedProjects,
 		listProjects,
@@ -63,6 +64,8 @@
 		ProjectSnapshot,
 		ScanCandidate,
 		ScanRootRow,
+		Task,
+		TaskAgentState,
 		TaskColumn
 	} from './types';
 	import { applyDomainEvent } from './snapshot-patch';
@@ -70,6 +73,7 @@
 	import {
 		COLUMN_ORDER,
 		bucketTasksByColumn,
+		formatElapsed,
 		frameSize,
 		frameScreenAabb,
 		shouldMountInterior,
@@ -100,6 +104,21 @@
 		setTheme,
 		onThemeChange
 	} from './theme.svelte';
+
+	// --- Task selection signal (canvas-021) ---------------------------
+	// Clicking a task card SELECTS it and signals "open the detail panel for
+	// this task" (the panel itself is canvas-022). This component owns the
+	// selection state (so the selected card can render its §3.11 `selected`
+	// border); the optional `onTaskSelected` callback prop is the outbound
+	// signal a parent (canvas-022's panel host) subscribes to. v1 has no panel
+	// consumer wired yet — the selection state + signal are the contract
+	// canvas-022 plugs into.
+	interface TaskRef {
+		projectId: number;
+		bc: string;
+		taskId: string;
+	}
+	let { onTaskSelected }: { onTaskSelected?: (task: TaskRef) => void } = $props();
 
 	// --- Right-click context menu (canvas-005a) -----------------------
 	// An items-array shape so canvas-005b can append "Scan folder for
@@ -531,6 +550,129 @@
 	// events. Absent ⇒ the accordion row shows the static count only until the
 	// fetch lands.
 	let bcRollups = $state<Map<string, BcRollup>>(new Map());
+
+	// --- canvas-021: per-task live agent state (agent-awareness-002) --------
+	// The per-card live-agent indicator's data, keyed `${projectId}:${bc}:${taskId}`.
+	// Distinct from `bcRollups` (the accordion-header aggregate) — this is the
+	// per-task read model `get_task_agent_state` returns. Fetched lazily for a
+	// BC's in-flight (DOING) tasks on prime, and patched in place from the
+	// `task_agent_state_changed` bus event (no resync). Absent / `idle` ⇒ no
+	// indicator line (the §3.11 line shows only for running / blocked).
+	let taskAgentStates = $state<Map<string, TaskAgentState>>(new Map());
+	function taskKey(projectId: number, bc: string, taskId: string): string {
+		return `${projectId}:${bc}:${taskId}`;
+	}
+
+	// A local once-per-second clock the live-agent indicator times "waiting
+	// 2m 14s" against (`formatElapsed(since, nowMs)`). agent-awareness-002
+	// supplies the `since` transition timestamp ONCE; the visible elapsed value
+	// advances from this local tick, NOT a per-second event (ADR-018). The
+	// interval is owned for the whole canvas session — one timer, not one per
+	// card — and torn down on unmount.
+	let nowMs = $state(Date.now());
+	let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+
+	// True when at least one task carries a running / blocked live state — i.e.
+	// at least one indicator line is timing. The clock only ticks while this is
+	// true, so an idle canvas does no per-second work (the styleguide's one
+	// sanctioned ambient loop — §5 Q3 — earns its keep only when live).
+	const hasLiveAgent = $derived.by<boolean>(() => {
+		for (const s of taskAgentStates.values()) {
+			if (s.activity !== 'idle') return true;
+		}
+		return false;
+	});
+
+	$effect(() => {
+		if (hasLiveAgent && elapsedTimer === null) {
+			nowMs = Date.now();
+			elapsedTimer = setInterval(() => {
+				nowMs = Date.now();
+			}, 1000);
+		} else if (!hasLiveAgent && elapsedTimer !== null) {
+			clearInterval(elapsedTimer);
+			elapsedTimer = null;
+		}
+		return () => {
+			if (elapsedTimer !== null) {
+				clearInterval(elapsedTimer);
+				elapsedTimer = null;
+			}
+		};
+	});
+
+	// The currently-selected task — the card whose detail panel is open
+	// (canvas-022). Drives the §3.11 `selected` blue border. Cleared when its
+	// project/BC/task leaves the model.
+	let selectedTask = $state<TaskRef | null>(null);
+
+	/** Select a task card: set the selected state AND emit the outbound
+	 *  "open detail panel for this task" signal (canvas-022 consumes the
+	 *  callback). Idempotent — re-clicking the open card keeps it open. */
+	function selectTask(projectId: number, bc: string, taskId: string) {
+		selectedTask = { projectId, bc, taskId };
+		onTaskSelected?.({ projectId, bc, taskId });
+	}
+
+	/** Is this the currently-selected card? */
+	function isSelected(projectId: number, bc: string, taskId: string): boolean {
+		const s = selectedTask;
+		return (
+			s !== null && s.projectId === projectId && s.bc === bc && s.taskId === taskId
+		);
+	}
+
+	/** The live agent state for a task, or `null` if none / idle. The §3.11
+	 *  indicator line renders only for `running` / `blocked_on_question`. */
+	function liveAgentState(
+		projectId: number,
+		bc: string,
+		taskId: string
+	): TaskAgentState | null {
+		const s = taskAgentStates.get(taskKey(projectId, bc, taskId));
+		if (!s || s.activity === 'idle') return null;
+		return s;
+	}
+
+	/** The rendered live-agent indicator line for a card, or `null` to omit it.
+	 *  "orchestrator · waiting 2m 14s" — the agent label + the locally-timed
+	 *  elapsed string from the supplied `since` timestamp (§3.11). */
+	function agentLine(
+		projectId: number,
+		bc: string,
+		taskId: string
+	): { text: string; blocked: boolean } | null {
+		const s = liveAgentState(projectId, bc, taskId);
+		if (!s) return null;
+		const blocked = s.activity === 'blocked_on_question';
+		const label = s.agent_label ?? 'agent';
+		const verb = blocked ? 'waiting' : 'working';
+		const elapsed = s.since != null ? ` ${formatElapsed(s.since, nowMs)}` : '';
+		return { text: `${label} · ${verb}${elapsed}`, blocked };
+	}
+
+	/** Re-fetch the per-task agent state for every in-flight (DOING) task in a
+	 *  BC (`agent-awareness-002`, ADR-018). Best-effort: a failed IPC leaves the
+	 *  card without an indicator. Only DOING tasks can carry a live indicator
+	 *  (§3.11), so we skip the other three columns. */
+	async function refreshTaskAgentStates(entry: ProjectEntry, bcName: string) {
+		const bc = entry.snapshot.bcs.find((b) => b.name === bcName);
+		if (!bc) return;
+		for (const t of bc.tasks) {
+			if (t.column !== 'doing') continue;
+			try {
+				const st = await getTaskAgentState(entry.id, bcName, t.id);
+				const next = new Map(taskAgentStates);
+				next.set(taskKey(entry.id, bcName, t.id), st);
+				taskAgentStates = next;
+			} catch (e) {
+				void logToCore(
+					'warn',
+					`get_task_agent_state failed for ${entry.id}/${bcName}/${t.id}: ${e}`
+				);
+			}
+		}
+	}
 
 	/** Find a project entry by id; null if not currently rendered. */
 	function findProject(id: number): ProjectEntry | null {
@@ -1355,6 +1497,12 @@
 						if (hoveredKey?.startsWith(`project:${event.project_id}`)) {
 							hoveredKey = null;
 						}
+						// Clear a selection / live-agent state belonging to the
+						// removed project so a stale card reference does not linger
+						// (canvas-021).
+						if (selectedTask?.projectId === event.project_id) {
+							selectedTask = null;
+						}
 						status = `${projects.length} project${projects.length === 1 ? '' : 's'} · press F to fit`;
 						renderScene();
 						return;
@@ -1406,17 +1554,25 @@
 					}
 					case 'task_agent_state_changed': {
 						// `agent-awareness-002` (ADR-018) — a task's live agent
-						// state changed. canvas-020 consumes this ONLY to
-						// refresh the affected BC's accordion-header roll-up
-						// slot (`active / blocked / idling`); the per-card live
-						// indicator CONTENT is canvas-021. The agent state is a
-						// separate read model (not on the snapshot), so we
-						// re-fetch the roll-up via IPC rather than patching the
-						// snapshot. No `renderScene()` — the roll-up renders in
-						// the DOM interior, driven by the reactive `bcRollups`
-						// store this update mutates.
+						// state changed. Two reactive surfaces consume it, both
+						// off the separate live-agent read model (NOT the
+						// snapshot), so we patch in place rather than resync:
+						//   (1) the accordion-header roll-up (`active / blocked /
+						//       idling`) — re-fetched via `get_bc_agent_rollup`;
+						//   (2) the per-card live-agent indicator (canvas-021) —
+						//       the event payload IS the new per-task state, so we
+						//       patch `taskAgentStates` straight from it (no IPC).
+						// No `renderScene()` — both surfaces are reactive DOM.
 						const entry = findProject(event.project_id);
 						if (!entry) return;
+						const next = new Map(taskAgentStates);
+						next.set(taskKey(event.project_id, event.bc, event.task_id), {
+							activity: event.state,
+							agent_label: event.agent_label,
+							since: event.since,
+							question: event.question
+						});
+						taskAgentStates = next;
 						void refreshBcRollup(entry, event.bc);
 						return;
 					}
@@ -1449,6 +1605,11 @@
 							event.kind === 'bc_appeared'
 						) {
 							void refreshBcRollup(entry, event.bc);
+							// A card entering / moving within DOING may now carry a
+							// live agent; re-prime the BC's per-task indicators
+							// (canvas-021). The agent state is a separate read model,
+							// so the snapshot patch above does not carry it.
+							void refreshTaskAgentStates(entry, event.bc);
 						}
 						renderScene();
 						return;
@@ -1632,7 +1793,10 @@
 				// (agent-awareness-002). Lazy + best-effort; the interior shows
 				// the static count until each fetch lands.
 				for (const entry of entries) {
-					for (const bc of entry.snapshot.bcs) void refreshBcRollup(entry, bc.name);
+					for (const bc of entry.snapshot.bcs) {
+						void refreshBcRollup(entry, bc.name);
+						void refreshTaskAgentStates(entry, bc.name);
+					}
 				}
 			} catch (e) {
 				status = `error: ${e}`;
@@ -1659,7 +1823,10 @@
 					size: frameSize(fresh.bcs.length)
 				};
 				renderScene();
-				for (const bc of fresh.bcs) void refreshBcRollup(projects[idx], bc.name);
+				for (const bc of fresh.bcs) {
+					void refreshBcRollup(projects[idx], bc.name);
+					void refreshTaskAgentStates(projects[idx], bc.name);
+				}
 			} catch (e) {
 				logToCore('error', `get_project failed for ${id}: ${e}`);
 			}
@@ -2017,9 +2184,28 @@
 														<div class="kanban-empty">—</div>
 													{:else}
 														{#each buckets[col] as t (t.id)}
-															<!-- Card STRUCTURE only; the live-agent indicator
-															     CONTENT + selection/detail panel are canvas-021/022. -->
-															<article class="task-card">
+															{@const line = agentLine(view.id, bc.name, t.id)}
+															{@const selected = isSelected(view.id, bc.name, t.id)}
+															<!-- Task card (canvas-021): id + 2-line title + tag
+															     chips + the live-agent indicator line; click
+															     selects it and signals the detail panel
+															     (canvas-022). States: default / hover (CSS) /
+															     selected / blocked (§3.11). -->
+															<div
+																class="task-card"
+																class:selected
+																class:blocked={line?.blocked}
+																aria-pressed={selected}
+																onclick={() => selectTask(view.id, bc.name, t.id)}
+																onkeydown={(e) => {
+																	if (e.key === 'Enter' || e.key === ' ') {
+																		e.preventDefault();
+																		selectTask(view.id, bc.name, t.id);
+																	}
+																}}
+																role="button"
+																tabindex="0"
+															>
 																<div class="task-card-id">{t.id}</div>
 																<div class="task-card-title">{t.title}</div>
 																{#if t.tags.length > 0}
@@ -2029,7 +2215,19 @@
 																		{/each}
 																	</div>
 																{/if}
-															</article>
+																{#if line}
+																	<div
+																		class="task-card-agent"
+																		class:running={!line.blocked}
+																		class:blocked={line.blocked}
+																	>
+																		<span class="task-card-agent-glyph" aria-hidden="true"
+																			>{line.blocked ? '◆' : '▶'}</span
+																		>
+																		<span class="task-card-agent-text">{line.text}</span>
+																	</div>
+																{/if}
+															</div>
 														{/each}
 													{/if}
 												</div>
@@ -2632,6 +2830,70 @@
 		color: var(--guppi-card-tag-text);
 		font-family: var(--guppi-font-family);
 		font-size: var(--guppi-size-caption);
+	}
+	/*
+	 * §3.11 card states. `blocked` and `selected` can co-occur; the selected
+	 * blue border wins (selector order below), while the red ◆ glyph + agent
+	 * line keep blocked legible by glyph, not colour alone. The accent border
+	 * (2px) is laid in via `border-width` + colour so the 1px default never
+	 * shifts the card's box on selection (border-box sizing absorbs the extra px).
+	 */
+	.task-card.blocked {
+		border-width: var(--guppi-card-border-width-accent);
+		border-color: var(--guppi-card-border-blocked);
+	}
+	.task-card.selected {
+		border-width: var(--guppi-card-border-width-accent);
+		border-color: var(--guppi-card-border-selected);
+	}
+	.task-card:focus-visible {
+		outline: none;
+		border-width: var(--guppi-card-border-width-accent);
+		border-color: var(--guppi-card-border-selected);
+	}
+	/* §3.11 live-agent indicator line — a single mono caption with a leading
+	 * status glyph; running reads brand-blue, blocked reads status-red. */
+	.task-card-agent {
+		display: flex;
+		align-items: center;
+		gap: var(--guppi-space-xs);
+		font-family: var(--guppi-font-family-mono);
+		font-size: var(--guppi-size-caption);
+		line-height: 1.2;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.task-card-agent.running {
+		color: var(--guppi-card-agent-line-running);
+	}
+	.task-card-agent.blocked {
+		color: var(--guppi-card-agent-line-blocked);
+	}
+	/* The one sanctioned ambient loop (§2.6 / §5 Q3): a running agent line
+	 * breathes at `durationPulse`. Blocked is static (a blocked agent is not
+	 * working). Honoured only when the user has not asked for reduced motion. */
+	.task-card-agent.running .task-card-agent-glyph {
+		animation: card-agent-pulse var(--guppi-duration-pulse) var(--guppi-ease-pulse)
+			infinite;
+	}
+	@keyframes card-agent-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.45;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.task-card-agent.running .task-card-agent-glyph {
+			animation: none;
+		}
+	}
+	.task-card-agent-text {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	/*

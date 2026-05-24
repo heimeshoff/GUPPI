@@ -17,6 +17,7 @@ import {
 	CULL_MARGIN_PX,
 	LOD_ZOOM_FLOOR,
 	bucketTasksByColumn,
+	formatElapsed,
 	frameSize,
 	frameScreenAabb,
 	shouldMountInterior
@@ -97,6 +98,38 @@ describe('frameScreenAabb', () => {
 		expect(aabb.top).toBe(50 * 2 + 20);
 		expect(aabb.right).toBe((100 + 400) * 2 + 10);
 		expect(aabb.bottom).toBe((50 + 300) * 2 + 20);
+	});
+});
+
+describe('formatElapsed — live-agent indicator duration (canvas-021)', () => {
+	const since = 1_000_000_000_000;
+
+	it('formats the reference "2m 14s" from a since timestamp', () => {
+		const now = since + (2 * 60 + 14) * 1000;
+		expect(formatElapsed(since, now)).toBe('2m 14s');
+	});
+
+	it('shows seconds only under a minute', () => {
+		expect(formatElapsed(since, since + 5 * 1000)).toBe('5s');
+		expect(formatElapsed(since, since + 59 * 1000)).toBe('59s');
+	});
+
+	it('rolls into minutes at 60s', () => {
+		expect(formatElapsed(since, since + 60 * 1000)).toBe('1m 0s');
+	});
+
+	it('rolls into hours past 60 minutes (drops seconds at the hour scale)', () => {
+		const now = since + (1 * 3600 + 5 * 60 + 30) * 1000;
+		expect(formatElapsed(since, now)).toBe('1h 5m');
+	});
+
+	it('clamps a future/equal/negative since to 0s (clock skew safety)', () => {
+		expect(formatElapsed(since, since)).toBe('0s');
+		expect(formatElapsed(since, since - 5000)).toBe('0s');
+	});
+
+	it('floors sub-second remainders (no fractional seconds shown)', () => {
+		expect(formatElapsed(since, since + 1750)).toBe('1s');
 	});
 });
 

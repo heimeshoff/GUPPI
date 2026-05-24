@@ -46,6 +46,35 @@ export function bucketTasksByColumn(tasks: Task[]): ColumnBuckets {
 	return buckets;
 }
 
+/**
+ * Format the live-agent indicator's elapsed duration (canvas-021) from
+ * agent-awareness-002's `since` Unix-ms transition timestamp. The card derives
+ * "waiting 2m 14s" locally and a local timer re-invokes this so the visible
+ * value advances without a per-second event (`agent-awareness-002`, ADR-018).
+ *
+ * Scale-adaptive, compact:
+ *   - under a minute → `"Ns"` (e.g. `"5s"`, `"59s"`)
+ *   - under an hour  → `"Mm Ss"` (e.g. `"2m 14s"`, `"1m 0s"`)
+ *   - an hour or more → `"Hh Mm"` (seconds dropped — at the hour scale the
+ *     ticking second is visual noise)
+ *
+ * Sub-second remainders floor (no fractional seconds). A future / equal / skewed
+ * `since` clamps to `"0s"` (the runner's clock and GUPPI's may differ by a few
+ * ms; never render a negative duration).
+ */
+export function formatElapsed(sinceMs: number, nowMs: number): string {
+	const totalSeconds = Math.max(0, Math.floor((nowMs - sinceMs) / 1000));
+	if (totalSeconds < 60) return `${totalSeconds}s`;
+	const totalMinutes = Math.floor(totalSeconds / 60);
+	if (totalMinutes < 60) {
+		const seconds = totalSeconds % 60;
+		return `${totalMinutes}m ${seconds}s`;
+	}
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	return `${hours}h ${minutes}m`;
+}
+
 /** A world-space size (zoom-1 px). The DOM interior is laid out once at this
  *  size and zoom is a compositor `transform: scale(z)` (ADR-017), never a
  *  reflow. */
