@@ -14,7 +14,6 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 
 <!-- backlog-list:start -->
 - [canvas-024-retire-spike-019a-harness](backlog/canvas-024-retire-spike-019a-harness.md) — `type: chore`, depends on `canvas-019`. Delete the throwaway `src/routes/spike-019a/` harness + `window.__guppiSpike` seam once `canvas-019` has consumed the findings note and production interior tasks (canvas-020+) are landing; `pnpm check` + `pnpm build` stay clean, no dangling `__guppiSpike` references. The findings note + `console-snapshot.md` stay as knowledge artifacts. Created by canvas-019a (2026-05-24).
-- [canvas-020-accordion-kanban-frame-interior](backlog/canvas-020-accordion-kanban-frame-interior.md) — `type: feature`, depends on `canvas-019` + `design-system-006` + `project-registry-005`. **Pivot spine.** Frame interior becomes a vertical accordion of collapsible BCs, each holding a BACKLOG→DONE kanban board; retires the Pixi BC bubbles, intra-project edges, and `bc-layout.ts`. Extends `snapshot-patch.ts` to per-task events. Created 2026-05-24.
 - [canvas-021-task-card-rendering](backlog/canvas-021-task-card-rendering.md) — `type: feature`, depends on `canvas-019` + `canvas-020` + `design-system-006` + `project-registry-005` + `agent-awareness-002`. Renders individual task cards (id, title, tags, status glyph, live-agent indicator "orchestrator · waiting 2m 14s"); click selects a card and signals the detail panel to open. Created 2026-05-24.
 - [canvas-022-docked-detail-panel](backlog/canvas-022-docked-detail-panel.md) — `type: feature`, depends on `canvas-019` + `canvas-021` + `design-system-006` + `project-registry-005` + `agent-awareness-002`. Right-edge viewport-docked task detail panel that animates in/out on card click; hosts the "AGENT NEEDS AN ANSWER" blocked callout (re-homes the deleted `agent-awareness-001` concern). Created 2026-05-24.
 - [canvas-023-accordion-collapse-and-bc-reorder-persistence](backlog/canvas-023-accordion-collapse-and-bc-reorder-persistence.md) — `type: feature`, depends on `canvas-020`. Persists per-BC accordion collapse state + drag-to-reorder `sort_order` in GUPPI's SQLite (ADR-004 migration); repurposes/retires the now-dead `bc_positions` table. Created 2026-05-24.
@@ -27,7 +26,7 @@ Per-BC catalog. See `README.md` for purpose, classification, ubiquitous language
 ## Todo
 
 <!-- todo-list:start -->
-*(None.)*
+- [canvas-020-accordion-kanban-frame-interior](todo/canvas-020-accordion-kanban-frame-interior.md) — `type: feature`, depends on `canvas-019` + `design-system-006` + `project-registry-005` (all done). **Pivot spine.** Frame interior becomes a vertical accordion of collapsible BCs, each holding a BACKLOG→DONE kanban board; retires the Pixi BC bubbles, intra-project edges, and `bc-layout.ts`. Extends `snapshot-patch.ts` to per-task events. Promoted 2026-05-24.
 <!-- todo-list:end -->
 
 ## Doing

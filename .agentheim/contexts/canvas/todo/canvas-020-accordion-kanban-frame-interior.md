@@ -1,7 +1,7 @@
 ---
 id: canvas-020
 title: "Frame interior: BC accordion + kanban board layout (retire bubbles + edges)"
-status: backlog
+status: todo
 type: feature
 context: canvas
 created: 2026-05-24

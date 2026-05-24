@@ -1,7 +1,7 @@
 ---
 id: agent-awareness-002
 title: Per-task live agent state + blocked-question content
-status: backlog
+status: todo
 type: feature
 context: agent-awareness
 created: 2026-05-24

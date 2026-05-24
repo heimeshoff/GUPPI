@@ -5,6 +5,15 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 15:50 -- Model / Promoted: canvas-020 + agent-awareness-002 (dependency-satisfied pivot tasks)
+
+**Type:** Model / Promote
+**BC:** canvas + agent-awareness
+**From → To:** backlog → todo (both)
+**Summary:** With both pivot roots done (project-registry-005 + design-system-006), promoted the two tasks whose `depends_on` is now FULLY satisfied: canvas-020 (deps canvas-019 + design-system-006 + project-registry-005 — all done; the styleguide gate is met) and agent-awareness-002 (deps project-registry-005 + design-system-006 — both done). **NOT promoted** — still blocked: canvas-021 (needs canvas-020 + agent-awareness-002, neither done yet), canvas-022 (needs canvas-021 + agent-awareness-002), canvas-023 (needs canvas-020), canvas-024 (chore, deps canvas-019 done but scoped to run once canvas-020+ land the real interior). The requested canvas-021/022 were held back because promoting them would seat unready tasks in todo — they chain on canvas-020 and agent-awareness-002, which are now in todo but not done. They become promotable after the next `work` run lands canvas-020 + agent-awareness-002. Created agent-awareness/todo/ (first task in that BC to reach todo).
+
+---
+
 ## 2026-05-24 15:42 -- Work session ended
 
 **Type:** Work / Session end
