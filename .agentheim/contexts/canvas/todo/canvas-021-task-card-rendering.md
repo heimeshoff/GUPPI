@@ -1,7 +1,7 @@
 ---
 id: canvas-021
 title: Task-card rendering (id, title, tags, status glyph, live-agent indicator)
-status: backlog
+status: todo
 type: feature
 context: canvas
 created: 2026-05-24

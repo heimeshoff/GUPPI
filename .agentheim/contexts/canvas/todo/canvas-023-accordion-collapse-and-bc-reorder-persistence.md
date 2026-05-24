@@ -1,7 +1,7 @@
 ---
 id: canvas-023
 title: Persist BC accordion collapse state + drag-to-reorder BC rows
-status: backlog
+status: todo
 type: feature
 context: canvas
 created: 2026-05-24

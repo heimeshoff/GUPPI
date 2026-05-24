@@ -5,6 +5,15 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 16:40 -- Model / Promoted: canvas-021 + canvas-023 + canvas-024 (dependency-satisfied after canvas-020)
+
+**Type:** Model / Promote
+**BC:** canvas
+**From → To:** backlog → todo (all three)
+**Summary:** With canvas-020 landed (7046e1f), promoted the three tasks whose `depends_on` is now fully satisfied. **canvas-021** (task-card rendering — id/title/tags/status-glyph + agent-awareness-002 live indicator + card states + click→selection signal; all 5 deps done, styleguide gate design-system-006 met). **canvas-023** (persist accordion collapse + BC drag-reorder in SQLite, ADR-004 migration, repurpose/retire dead `bc_positions`; dep canvas-020 done; persistence-only so no styleguide gate). **canvas-024** (chore — delete the throwaway spike-019a harness; actionable now the real interior is landing). **Still blocked:** canvas-022 (docked detail panel — needs canvas-021, not yet done). All three carry concrete acceptance criteria + clear scope; readiness checked before the move.
+
+---
+
 ## 2026-05-24 16:32 -- Work session ended
 
 **Type:** Work / Session end

@@ -1,7 +1,7 @@
 ---
 id: canvas-024
 title: Retire the throwaway spike-019a perf harness
-status: backlog
+status: todo
 type: chore
 context: canvas
 created: 2026-05-24
