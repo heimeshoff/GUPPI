@@ -47,10 +47,15 @@ checks — is settled here.
   transform) and never re-creates DOM nodes — pan only restyles the
   `left/top/transform` of the ≤9 mounted interiors, which the compositor
   handles off the main thread.
-- **PASS/FAIL verdict is operator-pending.** Run the protocol; record
-  numbers in `console-snapshot.md` next to this note. Decision rule and
-  the fallback trigger are spelled out below so `canvas-019` can be
-  written the moment the numbers land.
+- **VERDICT: PASS** (2026-05-24, release build). Worst-case sustained
+  pan-circle (N=10, all interiors mounted, default zoom, 120 cards/frame)
+  holds `p95 = 8.5 ms` — under the 16 ms bar and at the 8 ms headroom
+  target. Knob sweep to 3 cards/col gives the **same** 8.5 ms → per-pan
+  cost is independent of card density (scales with frame count, not card
+  count), confirming the analytical prediction. The earlier `pnpm tauri
+  dev` reading of 33.3 ms was ~4× dev-mode overhead, not a hybrid cost.
+  `canvas-019` is cleared to ratify hybrid; Option B is not needed. See
+  `console-snapshot.md`.
 
 ## Harness design (what was built)
 
@@ -125,6 +130,24 @@ ms/frame, and derived FPS.
 
 ## Operator protocol (Marco-runnable — fills the PASS/FAIL numbers)
 
+> **No-devtools path (use this for RELEASE builds — F12 is disabled there).**
+> The harness now drives the whole protocol from an on-screen HUD, so a
+> release build needs no console:
+> - **Build mode** (`DEV build` / `RELEASE build`) and **renderer**
+>   (`WebGL ✓` / `canvas fallback ✗`) are shown in the HUD — record both.
+> - **Autopan 5s** button runs the scripted pan-circle and resets the
+>   sampler; **live p95 / avg / max / fps** update in the HUD (the `p95`
+>   readout turns green ≤16 ms, red above). Read the numbers straight off
+>   the screen after the pan settles.
+> - **Reset** button clears the sampler (use before the zoom run).
+> - **cards/col** and **LOD floor** sliders do the recovery-knob sweep
+>   live — no rebuild. Drop cards/col to a realistic count and re-Autopan.
+> - For the cross-LOD zoom run: Reset, then wheel-zoom in/out across the
+>   floor for ~5s and read the HUD.
+>
+> The Chrome-trace step below still needs devtools, so run it in a **dev**
+> build. The console seam (`window.__guppiSpike`) also still works in dev.
+
 This reuses the `canvas-perf-2026-05-17` reproducer protocol (Chrome
 trace + JS console snapshot), adapted to the harness route. Paste outputs
 into `console-snapshot.md` next to this README.
@@ -178,9 +201,17 @@ into `console-snapshot.md` next to this README.
   directed to cost **Option B (full-DOM)** as the fallback. (Do NOT build
   Option B here — it is out of this spike's scope.)
 
-**Current verdict: OPERATOR-PENDING.** No fabricated frame-times. The
-analytical case (below) predicts PASS; the on-machine run confirms or
-refutes it.
+**Current verdict: PASS (release build, 2026-05-24).** The worst-case
+sustained pan-circle (N=10 frames, all interiors mounted at default zoom,
+120 cards/frame) holds `p95 = 8.5 ms` in a release build — under the 16 ms
+bar and at the 8 ms headroom target. The recovery-knob sweep to 3 cards/col
+returned the **same** 8.5 ms, confirming per-pan cost is independent of card
+density: hybrid scales with frame count, not card count, exactly as the
+analytical case below predicted. The earlier `pnpm tauri dev` reading of
+33.3 ms / 42 FPS was ~4× dev-mode overhead (Svelte + Pixi dev builds + Vite
+HMR), not a hybrid cost — the provisional FAIL is retracted. `canvas-019` is
+cleared to ratify hybrid citing these numbers; Option B (full-DOM) is not
+needed. No fabricated frame-times anywhere — see `console-snapshot.md`.
 
 ## Why hybrid should PASS, analytically
 

@@ -39,7 +39,9 @@
 	const N_FRAMES = 10; // N≈10 project frames (AC #1)
 	const BCS_PER_FRAME = 5; // vertical accordion of BCs
 	const COLUMNS = ['BACKLOG', 'DOING', 'DONE'];
-	const CARDS_PER_COLUMN = 8; // dozens of cards per BC (5 BCs × 3 × 8 = 120/frame)
+	// Live-adjustable for the recovery-knob sweep (no rebuild needed): the
+	// DOM interiors derive from this; the Pixi shells do not depend on it.
+	let cardsPerColumn = $state(8); // dozens of cards per BC (5 BCs × 3 × 8 = 120/frame)
 
 	// World-space frame geometry (CSS-px at zoom 1).
 	const FRAME_W = 880;
@@ -52,7 +54,8 @@
 	// LOD: below this zoom the DOM interior is suppressed (Pixi shell only).
 	// Chosen so that the interior text is still legible-ish above it; below
 	// it the cards would be sub-pixel anyway, so culling is free visually.
-	const LOD_ZOOM_FLOOR = 0.45;
+	// Live-adjustable for the knob sweep.
+	let lodFloor = $state(0.45);
 
 	// Viewport-cull margin: mount interiors for frames within this many
 	// screen px of the viewport edge so a fast pan doesn't show empty shells
@@ -80,7 +83,7 @@
 		bcs: DummyBc[];
 	}
 
-	function buildFrames(): DummyFrame[] {
+	function buildFrames(cardsPerCol: number): DummyFrame[] {
 		const frames: DummyFrame[] = [];
 		for (let i = 0; i < N_FRAMES; i++) {
 			const col = i % GRID_COLS;
@@ -89,7 +92,7 @@
 			for (let b = 0; b < BCS_PER_FRAME; b++) {
 				const columns: DummyColumn[] = COLUMNS.map((cn) => ({
 					name: cn,
-					cards: Array.from({ length: CARDS_PER_COLUMN }, (_, c) => ({
+					cards: Array.from({ length: cardsPerCol }, (_, c) => ({
 						id: `${i}-${b}-${cn}-${c}`,
 						title: `task-${b}${String.fromCharCode(97 + (c % 26))}: dummy work item ${c}`
 					}))
@@ -107,7 +110,14 @@
 		return frames;
 	}
 
-	const frames = buildFrames();
+	// Rebuilt only when the card-count knob changes (memoised; not per frame).
+	// Pixi shells key off frame.id (stable) so they survive a rebuild.
+	const frames = $derived(buildFrames(cardsPerColumn));
+
+	// Build mode is decided at compile time by Vite; surfaced on-screen so the
+	// snapshot records dev-vs-release unambiguously (devtools are off in
+	// release builds, so this can't be checked from a console there).
+	const isDevBuild = import.meta.env.DEV;
 
 	// ---- Reactive overlay state -----------------------------------------
 	// One overlay descriptor per frame that is currently both (a) within the
@@ -176,11 +186,33 @@
 		};
 	}
 
+	// Autopan drive-state (component scope so the on-screen button can trigger
+	// it; the rAF tick reads these imperatively each frame).
+	let autopanUntil = 0;
+	let autopanT0 = 0;
+
+	// On-screen readouts so the FULL protocol runs without devtools (release
+	// builds disable F12). Stats are refreshed on a 250ms timer, NOT every
+	// rAF, to keep the measured render loop clean.
+	let rendererType = $state(0); // 2 = WebGL, 1 = canvas fallback
+	let displayStats = $state({ count: 0, avgMs: 0, p95Ms: 0, maxMs: 0, fps: 0 });
+	let autopanning = $state(false);
+
+	function resetSamples() {
+		samples = [];
+		lastT = 0;
+		displayStats = { count: 0, avgMs: 0, p95Ms: 0, maxMs: 0, fps: 0 };
+	}
+	function triggerAutopan(seconds = 5) {
+		autopanT0 = performance.now();
+		autopanUntil = autopanT0 + seconds * 1000;
+		resetSamples();
+	}
+
 	onMount(() => {
 		let disposed = false;
 		let raf = 0;
-		let autopanUntil = 0;
-		let autopanT0 = 0;
+		let statsTimer = 0;
 
 		const world = new Container();
 
@@ -236,6 +268,7 @@
 			}
 			host.appendChild(app.canvas);
 			app.stage.addChild(world);
+			rendererType = app.renderer.type; // 2 = WebGL (expected), 1 = canvas fallback
 
 			// Start camera so the grid is roughly centred at a default zoom.
 			camera.zoom = 0.6;
@@ -293,10 +326,13 @@
 
 				if (autopanUntil > t) {
 					// scripted pan-circle for the operator (AC #4 stance)
+					if (!autopanning) autopanning = true;
 					const elapsed = (t - autopanT0) / 1000;
 					const r = 220;
 					camera.pan_x = 80 + Math.cos(elapsed * 2) * r;
 					camera.pan_y = 80 + Math.sin(elapsed * 2) * r;
+				} else if (autopanning) {
+					autopanning = false;
 				}
 
 				const z = camera.zoom;
@@ -313,7 +349,7 @@
 				// ---- viewport culling + LOD ------------------------------
 				const vw = app.renderer.width / app.renderer.resolution;
 				const vh = app.renderer.height / app.renderer.resolution;
-				const below = z < LOD_ZOOM_FLOOR;
+				const below = z < lodFloor;
 				const next: OverlayPlacement[] = [];
 				if (!below) {
 					for (const f of frames) {
@@ -338,6 +374,12 @@
 			};
 			raf = requestAnimationFrame(tick);
 
+			// Refresh the on-screen stats readout off the hot path (250ms timer,
+			// not per rAF) so reading the numbers never perturbs the measurement.
+			statsTimer = window.setInterval(() => {
+				displayStats = computeStats();
+			}, 250);
+
 			// ---- dev diagnostic seam (canvas-018 idea) -------------------
 			const seam: SpikeSeam = {
 				app,
@@ -346,38 +388,32 @@
 				mountedInteriorCount: () => mountedInteriorCount,
 				lodActive: () => lodActive,
 				stats: computeStats,
-				reset: () => {
-					samples = [];
-					lastT = 0;
-				},
-				autopan: (seconds = 5) => {
-					autopanT0 = performance.now();
-					autopanUntil = autopanT0 + seconds * 1000;
-					samples = [];
-					lastT = 0;
-				},
+				reset: resetSamples,
+				autopan: triggerAutopan,
 				config: {
 					N_FRAMES,
 					BCS_PER_FRAME,
-					CARDS_PER_COLUMN,
-					cardsPerFrame: BCS_PER_FRAME * COLUMNS.length * CARDS_PER_COLUMN,
-					LOD_ZOOM_FLOOR,
+					cardsPerColumn,
+					cardsPerFrame: BCS_PER_FRAME * COLUMNS.length * cardsPerColumn,
+					lodFloor,
 					CULL_MARGIN_PX
 				}
 			};
 			(window as unknown as { __guppiSpike: SpikeSeam }).__guppiSpike = seam;
 			// eslint-disable-next-line no-console
 			console.log(
-				'[spike-019a] harness ready. window.__guppiSpike available.',
-				'\n  __guppiSpike.autopan(5)  → scripted 5s pan-circle, resets sampler',
-				'\n  __guppiSpike.stats()     → { count, avgMs, p95Ms, maxMs, fps }',
-				'\n  __guppiSpike.config      → harness knobs'
+				'[spike-019a] harness ready.',
+				'\n  On-screen HUD drives the full protocol (no devtools needed):',
+				'\n    Autopan 5s / Reset buttons · cards-per-col + LOD-floor sliders',
+				'\n    live p95/avg/max/fps · DEV-vs-RELEASE + WebGL indicators.',
+				'\n  Console seam also available: window.__guppiSpike.autopan(5) / .stats()'
 			);
 		})();
 
 		return () => {
 			disposed = true;
 			cancelAnimationFrame(raf);
+			if (statsTimer) clearInterval(statsTimer);
 			if (app) {
 				app.destroy(true);
 				app = null;
@@ -435,13 +471,58 @@
 		</div>
 	{/if}
 
-	<!-- HUD: live readout so the operator sees culling/LOD working without
-	     opening the console. Not part of the measured render cost analysis. -->
+	<!-- HUD + controls: the FULL reproducer protocol runs on-screen so no
+	     devtools are needed (release builds disable F12). Not part of the
+	     measured render-cost analysis. -->
 	<div class="hud">
-		<strong>SPIKE 019a · hybrid (throwaway)</strong><br />
-		zoom {camera.zoom.toFixed(2)} · interiors mounted {mountedInteriorCount}/{N_FRAMES}
-		{#if lodActive}· <span class="lod">LOD: interiors suppressed</span>{/if}<br />
-		<span class="hint">drag = pan · wheel = zoom · console: __guppiSpike.autopan(5)</span>
+		<div class="row title">
+			<strong>SPIKE 019a · hybrid (throwaway)</strong>
+			<span class="build" class:release={!isDevBuild}>
+				{isDevBuild ? 'DEV build' : 'RELEASE build'}
+			</span>
+		</div>
+		<div class="row">
+			renderer <span class:ok={rendererType === 2} class:bad={rendererType !== 2}>
+				{rendererType === 2 ? 'WebGL ✓' : rendererType === 1 ? 'canvas fallback ✗' : '…'}
+			</span>
+			· zoom {camera.zoom.toFixed(2)}
+			· interiors {mountedInteriorCount}/{N_FRAMES}
+			{#if lodActive}· <span class="lod">LOD suppressed</span>{/if}
+		</div>
+
+		<!-- Live frame-time stats (refreshed 250ms, off the hot path). The
+		     PASS bar is p95 ≤ 16ms; avg ≤ 8ms is the headroom target. -->
+		<div class="row stats">
+			<span class:pass={displayStats.p95Ms > 0 && displayStats.p95Ms <= 16} class:fail={displayStats.p95Ms > 16}>
+				p95 {displayStats.p95Ms.toFixed(1)}ms
+			</span>
+			· avg {displayStats.avgMs.toFixed(1)}ms
+			· max {displayStats.maxMs.toFixed(1)}ms
+			· {displayStats.fps.toFixed(0)} fps
+			· n={displayStats.count}
+			{#if autopanning}<span class="lod">· PANNING…</span>{/if}
+		</div>
+
+		<div class="row controls">
+			<button onclick={() => triggerAutopan(5)}>Autopan 5s</button>
+			<button onclick={resetSamples}>Reset</button>
+		</div>
+
+		<div class="row knob">
+			<label>
+				cards/col {cardsPerColumn}
+				<span class="dim">({BCS_PER_FRAME * 3 * cardsPerColumn}/frame)</span>
+				<input type="range" min="1" max="8" step="1" bind:value={cardsPerColumn} />
+			</label>
+		</div>
+		<div class="row knob">
+			<label>
+				LOD floor {lodFloor.toFixed(2)}
+				<input type="range" min="0.1" max="1.0" step="0.05" bind:value={lodFloor} />
+			</label>
+		</div>
+
+		<div class="row hint">drag = pan · wheel = zoom</div>
 	</div>
 </div>
 
@@ -515,18 +596,89 @@
 		position: absolute;
 		left: 12px;
 		bottom: 12px;
-		padding: 8px 12px;
-		background: rgba(0, 0, 0, 0.7);
+		padding: 10px 12px;
+		background: rgba(0, 0, 0, 0.82);
 		border: 1px solid #ff8b00;
 		border-radius: 6px;
 		color: #e6e6ec;
 		font-family: monospace;
 		font-size: 12px;
 		line-height: 1.5;
-		pointer-events: none;
+		min-width: 280px;
+		/* interactive: the on-screen controls replace the console seam so the
+		   protocol runs in a release build with no devtools. */
+		pointer-events: auto;
+		user-select: none;
+	}
+	.hud .row {
+		margin-top: 4px;
+	}
+	.hud .row.title {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 10px;
+		margin-top: 0;
+	}
+	.hud .build {
+		font-size: 10px;
+		padding: 1px 6px;
+		border-radius: 4px;
+		background: #6b3a00;
+		color: #ffce99;
+	}
+	.hud .build.release {
+		background: #0d4d2b;
+		color: #8ff0bd;
+	}
+	.hud .stats {
+		font-size: 13px;
+	}
+	.hud .pass {
+		color: #8ff0bd;
+		font-weight: 700;
+	}
+	.hud .fail {
+		color: #ff6b6b;
+		font-weight: 700;
+	}
+	.hud .ok {
+		color: #8ff0bd;
+	}
+	.hud .bad {
+		color: #ff6b6b;
 	}
 	.hud .lod {
 		color: #ff8b00;
+	}
+	.hud .dim {
+		color: #9a9aa6;
+	}
+	.hud .controls {
+		display: flex;
+		gap: 8px;
+	}
+	.hud button {
+		font-family: monospace;
+		font-size: 12px;
+		padding: 4px 10px;
+		background: #2a2a36;
+		color: #e6e6ec;
+		border: 1px solid #ff8b00;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	.hud button:hover {
+		background: #3a3a48;
+	}
+	.hud .knob label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.hud .knob input[type='range'] {
+		flex: 1;
+		accent-color: #ff8b00;
 	}
 	.hud .hint {
 		color: #9a9aa6;
