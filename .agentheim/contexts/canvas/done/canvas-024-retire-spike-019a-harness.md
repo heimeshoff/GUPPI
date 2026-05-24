@@ -6,7 +6,7 @@ type: chore
 context: canvas
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: cef866b
 depends_on: [canvas-019]
 blocks: []
 tags: [cleanup, spike, throwaway, kanban, pivot]

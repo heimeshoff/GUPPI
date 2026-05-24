@@ -6,7 +6,7 @@ type: feature
 context: canvas
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: 9a7b55f
 depends_on: [canvas-020]
 blocks: []
 tags: [persistence, accordion, reorder, sqlite, view-state]

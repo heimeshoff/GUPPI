@@ -6,7 +6,7 @@ type: feature
 context: canvas
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: 721f5a3
 depends_on: [canvas-019, canvas-020, design-system-006, project-registry-005, agent-awareness-002]
 blocks: [canvas-022]
 tags: [rendering, task-card, kanban, agent-indicator, pivot]

@@ -5,6 +5,74 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 17:30 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 3 (first-try PASS: 3, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 3 work (721f5a3 canvas-021, cef866b canvas-024, 9a7b55f canvas-023) + 1 chore (SHA frontmatter + INDEX doing→done + ADR-list + protocol)
+**Note:** Cleared the entire canvas todo backlog (all 3 dependency-satisfied post-canvas-020 tasks). Wave 1 ran canvas-021 (task-card content) ‖ canvas-024 (delete spike-019a harness) in TRUE PARALLEL — disjoint file sets, no conflict. canvas-023 (accordion-persistence) was DEMOTED to wave 2 because it shares the frame-interior path + canvas/README with canvas-021; running it after the canvas-021 commit avoided the race. All three PASS first verifier try. Two BC-scoped ADRs authored: ADR-020 (task-card selection seam + gated 1 Hz elapsed clock), ADR-021 (retire `bc_positions` → `bc_view_state`, schema v5→v6). **Cross-BC flag for project-registry's owner:** canvas-023 DROPped the `bc_positions` table that project-registry-004 introduced (it was dead surface after the canvas-020 bubble retirement) — project-registry's README still documents `save/load_bc_position`; a future project-registry sweep should reconcile. **Newly unblocked but still in backlog (promote via `model` before next `work`):** canvas-022 (docked detail panel — needs canvas-021 ✓ + canvas-019 ✓ + design-system-006 ✓ + project-registry-005 ✓ + agent-awareness-002 ✓ — ALL deps now done; the canvas-021 selection signal `onTaskSelected` is the seam it plugs into). No ready tasks remain in any context's todo/.
+
+---
+
+## 2026-05-24 17:29 -- Task verified and completed: canvas-023 - Persist BC accordion collapse state + drag-to-reorder BC rows
+
+**Type:** Work / Task completion
+**Task:** canvas-023 - Persist BC accordion collapse state + drag-to-reorder BC rows
+**Summary:** Per-`(project_id, bc_name)` accordion collapse + drag-reorder `sort_order` persist in GUPPI's own SQLite and survive restart. Schema v5→v6 DROPs the orphaned `bc_positions` table and creates `bc_view_state`; `save_/load_bc_view_state` + batch loader follow the project-registry-004 IPC pattern; unset order defaults stably to BC-name order.
+**Verification:** PASS (iteration 1) — `pnpm check` 0/0/0; `cargo test --lib` 149 green (11 new: v5→v6 data-preservation migration, fresh-DB-at-v6, round-trip, NULL-sort-order-unset, batch-by-project, concurrent-save race-freedom).
+**Commit:** 9a7b55f
+**Files changed:** 6 (db.rs, lib.rs, ipc.ts, Canvas.svelte, canvas/README.md, ADR-021 NEW) + task move + INDEX (orchestrator)
+**Tests added:** 11 (db::tests — migration data-preservation, fresh-DB schema version, CRUD round-trip + batch, unset-order default, race-freedom).
+**ADRs written:** ADR-021 (scope: bc, canvas) — retire `bc_positions`, add `bc_view_state`; registered in the canvas INDEX adr-list, backlinked to canvas-023.
+**Cross-BC note:** the `bc_positions` DROP retires a table project-registry-004 owns; project-registry's README still references `save/load_bc_position`. Flagged for project-registry's owner — not edited here (worker scope is canvas's README only).
+
+---
+
+## 2026-05-24 17:14 -- Batch started: [canvas-023]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-023 - Persist BC accordion collapse state + drag-to-reorder BC rows
+**Parallel:** no (1 worker) — sole remaining ready task. Sequenced AFTER canvas-021 (now committed 721f5a3) on purpose: both touch the canvas frame-interior path + canvas/README, so running them together would have raced. Spans canvas (interaction + IPC wiring) + project-registry's SQLite DB layer (new migration + CRUD, repurpose/retire dead `bc_positions`).
+
+---
+
+## 2026-05-24 17:12 -- Task verified and completed: canvas-024 - Retire the throwaway spike-019a perf harness
+
+**Type:** Work / Task completion
+**Task:** canvas-024 - Retire the throwaway spike-019a perf harness
+**Summary:** Deleted the self-contained `/spike-019a` route (686 lines) + the `window.__guppiSpike` instrumentation seam now that canvas-020 landed the real kanban-accordion interior and canvas-019 ratified hybrid (ADR-017). No dangling refs remain in production `src/`; the findings note + `console-snapshot.md` stay as knowledge artifacts.
+**Verification:** PASS (iteration 1) — `src/routes/spike-019a/` gone (Glob empty); grep `spike-019a`/`__guppiSpike` clean in `src/` (matches confined to knowledge artifacts); `pnpm check` 0/0/0, `pnpm build` succeeds.
+**Commit:** cef866b
+**Files changed:** 1 deletion (`src/routes/spike-019a/+page.svelte`) + task move
+**Tests added:** 0 (pure deletion chore)
+**ADRs written:** none
+
+---
+
+## 2026-05-24 17:11 -- Task verified and completed: canvas-021 - Task-card rendering (id, title, tags, status glyph, live-agent indicator)
+
+**Type:** Work / Task completion
+**Task:** canvas-021 - Task-card rendering (id, title, tags, status glyph, live-agent indicator)
+**Summary:** Task-card CONTENT in the kanban-accordion DOM interior: id + 2-line title + tag chips + the live-agent indicator line ("orchestrator · waiting 2m 14s", agent label + locally-timed elapsed from agent-awareness-002's `since`; running ▶ brand-blue pulse, blocked ◆ static red), the four §3.11 card states (default/hover/selected/blocked), and a card-click selection signal (`onTaskSelected` prop + `selectedTask` rune) that opens the canvas-022 detail panel.
+**Verification:** PASS (iteration 1) — all §3.11 `--guppi-card-*` / `--guppi-duration-pulse` / `--guppi-ease-pulse` tokens confirmed present (no raw hex/sizing); `task_agent_state_changed` patches the per-task read model in place (no resync); single gated 1 Hz clock (no per-tick event). `pnpm check` 0/0/0, `pnpm test` 40/40 (6 new `formatElapsed` tests).
+**Commit:** 721f5a3
+**Files changed:** 5 (frame-interior.ts, frame-interior.test.ts, Canvas.svelte, canvas/README.md, ADR-020 NEW) + task move
+**Tests added:** 6 (`formatElapsed`: reference "2m 14s", sub-minute seconds, minute roll-over, hour-scale drop-seconds, clock-skew clamp, sub-second floor)
+**ADRs written:** ADR-020 (scope: bc, canvas) — task-card selection seam + the gated live-agent elapsed clock; registered in the canvas INDEX adr-list, backlinked to canvas-021.
+
+---
+
+## 2026-05-24 17:00 -- Batch started: [canvas-021, canvas-024]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-021 - Task-card rendering (id/title/tags/status glyph/live-agent indicator); canvas-024 - Retire the throwaway spike-019a perf harness
+**Parallel:** yes (2 workers) — disjoint file sets: canvas-021 writes the task-card render path in the canvas frontend interior + updates canvas/README; canvas-024 deletes the self-contained `src/routes/spike-019a/` throwaway (no README write). canvas-023 (accordion-persistence) demoted to the next wave — it conflicts with canvas-021 on the frame-interior path + canvas/README.
+
+---
+
 ## 2026-05-24 16:40 -- Model / Promoted: canvas-021 + canvas-023 + canvas-024 (dependency-satisfied after canvas-020)
 
 **Type:** Model / Promote
