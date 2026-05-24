@@ -5,6 +5,18 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 16:32 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 2 (first-try PASS: 2, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 4 (2 work: cecbc96 agent-awareness-002, 7046e1f canvas-020; 2 chore: 01bd691, f3b0dcd — SHA frontmatter + INDEX + protocol)
+**Note:** Ran the two pivot-interior tasks SEQUENTIALLY (not parallel) because both touch the shared event-bus contract (events.rs/types.ts) and canvas-020 consumes agent-awareness-002's per-task roll-up. agent-awareness-002 first (ADR-018: per-task agent-state read model + `TaskAgentStateChanged`/`SessionBlockedOnQuestion` bus + `get_*` IPC, runner-primary read-only v1; carved backlog agent-awareness-003 filesystem-producer + 004 write-roundtrip), then canvas-020 (ADR-019: kanban-accordion DOM-interior overlay, retired Pixi bubbles/edges + deleted bc-layout.ts, wired the REAL roll-up). Both PASS first try. The canvas pivot's interior SPINE is now in place. **Newly dependency-satisfied but still in backlog (promote via `model` before next `work`):** canvas-021 (task-card rendering — all 5 deps now done), canvas-023 (accordion/reorder persistence — dep canvas-020 done), canvas-024 (retire spike-019a harness — now actionable). Still blocked: canvas-022 (needs canvas-021).
+
+---
+
 ## 2026-05-24 16:30 -- Task verified and completed: canvas-020 - Frame interior: BC accordion + kanban board layout (retire bubbles + edges)
 
 **Type:** Work / Task completion
