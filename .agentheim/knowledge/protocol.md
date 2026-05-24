@@ -5,6 +5,18 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 -- Work session ended
+
+**Type:** Work / Session end
+**Completed:** 1 (first-try PASS: 1, re-dispatched: 0, skipped: 0)
+**Bounced:** 0
+**Failed:** 0
+**Escalated after verification:** 0
+**Commits:** 2 (18edf69 canvas-019 artifact + INDEX; d8a593d SHA-fixup + protocol)
+**Note:** Sole ready task was canvas-019 (kanban-accordion pivot gate / ADR-003 revisit). Now resolved — ADR-017 ratifies hybrid. canvas-020/021/022/023 are dependency-unblocked but remain in `backlog/`; promote them via `model` before the next `work` run. canvas-024 (retire the spike-019a harness) also stays in backlog, now actionable since canvas-019 has consumed the findings note.
+
+---
+
 ## 2026-05-24 -- Task verified and completed: canvas-019 - Rendering substrate for the kanban-accordion frame interior (ADR-003 revisit)
 
 **Type:** Work / Task completion
