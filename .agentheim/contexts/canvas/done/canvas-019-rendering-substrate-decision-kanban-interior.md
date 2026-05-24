@@ -6,7 +6,7 @@ type: decision
 context: canvas
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: 18edf69
 depends_on: [canvas-019a]
 blocks: [canvas-020, canvas-021, canvas-022]
 tags: [architecture, rendering, decision, pivot, kanban, pixi, dom]

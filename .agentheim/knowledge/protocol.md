@@ -5,6 +5,28 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 -- Task verified and completed: canvas-019 - Rendering substrate for the kanban-accordion frame interior (ADR-003 revisit)
+
+**Type:** Work / Task completion
+**Task:** canvas-019 - Rendering substrate for the kanban-accordion frame interior (ADR-003 revisit)
+**Summary:** Ratified the hybrid Pixi-shell + DOM-interior rendering substrate as ADR-017 (`scope: bc, canvas`), citing canvas-019a's release-build PASS (N=10 frames, all interiors mounted, p95 8.5 ms, card-density-independent). Recorded the viewport-culling (CULL_MARGIN_PX=120) + zoom-threshold LOD (LOD_ZOOM_FLOOR=0.45) policy; enumerated survivors (camera.svelte.ts, drag-controller.ts, tile-layout.ts) vs retired (bc-layout.ts + Pixi BC-bubble + intra-project-edge draw paths). Marked ADR-015 Superseded-in-part (canvas-layout consequence only; ADR-014 relationship data model survives) + added two canvas README vocabulary forward-pointers.
+**Verification:** PASS (iteration 1)
+**Commit:** 18edf69
+**Files changed:** 3 (ADR-017 NEW; ADR-015 edited; canvas/README.md edited) + task move + INDEX (orchestrator)
+**Tests added:** 0 — `type: decision`, artifact is an ADR.
+**ADRs written:** ADR-017 (supersedes-in-part ADR-015)
+**Index note:** ADR-017 registered in canvas INDEX adr-list only — kept consistent with ADR-015/016 (also `scope: bc`, not listed in the global index); the task AC's "global knowledge index" clause was satisfied at the BC-index level rather than polluting the global adr-global list with a bc-scoped ADR. Unblocks canvas-020/021/022.
+
+---
+
+## 2026-05-24 -- Batch started: [canvas-019]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-019 - Rendering substrate for the kanban-accordion frame interior (ADR-003 revisit)
+**Parallel:** no (1 worker — sole ready task; dependency canvas-019a done with PASS verdict; gate task for the pivot, blocks canvas-020/021/022)
+
+---
+
 ## 2026-05-24 -- Model / Promoted: canvas-019 - Rendering substrate for the kanban-accordion frame interior (ADR-003 revisit)
 
 **Type:** Model / Promote
