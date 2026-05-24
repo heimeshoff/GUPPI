@@ -6,11 +6,11 @@ type: feature
 context: canvas
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: 7046e1f
 depends_on: [canvas-019, design-system-006, project-registry-005]
 blocks: [canvas-021, canvas-022, canvas-023]
 tags: [rendering, kanban, accordion, pivot, interior, retire-bubbles]
-related_adrs: [ADR-003, ADR-015, ADR-016]
+related_adrs: [ADR-003, ADR-015, ADR-016, ADR-019]
 related_research: []
 prior_art: [canvas-007, canvas-015]
 ---

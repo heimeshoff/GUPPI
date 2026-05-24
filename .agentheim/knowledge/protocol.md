@@ -5,6 +5,28 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 16:30 -- Task verified and completed: canvas-020 - Frame interior: BC accordion + kanban board layout (retire bubbles + edges)
+
+**Type:** Work / Task completion
+**Task:** canvas-020 - Frame interior: BC accordion + kanban board layout (retire bubbles + edges)
+**Summary:** The kanban-accordion pivot SPINE. Each project frame keeps its PixiJS shell; the interior now renders as a DOM overlay (`camera.worldToScreen` + `transform: scale(z)`) — a vertical accordion of collapsible BC rows, each a four-column BACKLOG/TODO/DOING/DONE kanban board of task cards (project-registry-005 records by `task.column`). Accordion all-expanded in-memory default; header active/blocked/idling roll-up wired to agent-awareness-002's `get_bc_agent_rollup`, patched on `task_agent_state_changed`. Retired the Pixi BC-bubble + intra-project-edge draw paths, deleted `bc-layout.ts`.
+**Verification:** PASS (iteration 1) — `pnpm check` 0/0/0 (992 files), `pnpm test` 34/34 (new `frame-interior.test.ts` 11 tests; no dangling bc-layout test), `cargo test --lib` 144 unchanged (no Rust touched).
+**Commit:** 7046e1f
+**Files changed:** 6 (frame-interior.ts NEW, frame-interior.test.ts NEW, Canvas.svelte, ipc.ts, canvas/README.md, ADR-019 NEW) + 2 deletions (bc-layout.ts, bc-layout.test.ts) + task move + INDEX (orchestrator)
+**Tests added:** 11 (frame-interior: column bucketing, accordion expand default, culling/LOD `shouldMountInterior`/`frameScreenAabb`).
+**ADRs written:** ADR-019 (scope: bc, canvas) — implements ADR-017's hybrid substrate; registered in the canvas INDEX adr-list.
+**Note:** Targeted per-task updates ride the EXISTING `applyDomainEvent` patch path (snapshot-patch.ts, project-registry-005) — the task's "extend snapshot-patch.ts" was already satisfied by a prior task; the DOM interior derives reactively from the `$state` snapshot, no hot-path `get_project`. Verifier flagged one non-blocking README wording imprecision (roll-up `statusGlyph` is sourced from a local token table, not the `BcRollup` payload) — left for a future README sweep, behaviour is correct.
+
+---
+
+## 2026-05-24 16:12 -- Batch started: [canvas-020]
+
+**Type:** Work / Batch start
+**Tasks:** canvas-020 - Frame interior: BC accordion + kanban board layout (retire bubbles + edges)
+**Parallel:** no (1 worker) — sole remaining ready task; sequenced after agent-awareness-002 so the accordion-header active/blocked/idling roll-up wires the real `get_bc_agent_rollup` contract (just landed, cecbc96) rather than a stub. The interior-rendering SPINE; canvas-021/022/023 build on it.
+
+---
+
 ## 2026-05-24 16:10 -- Task verified and completed: agent-awareness-002 - Per-task live agent state + blocked-question content
 
 **Type:** Work / Task completion
