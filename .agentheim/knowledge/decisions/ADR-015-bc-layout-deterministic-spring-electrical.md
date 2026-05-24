@@ -1,19 +1,31 @@
 ---
 id: ADR-015
 title: BC layout inside a project frame — deterministic one-shot spring-electrical with sticky pins
-status: Accepted
+status: Superseded-in-part
 scope: bc
 bc: canvas
 date: 2026-05-16
 related_tasks:
   - canvas-007-project-as-frame
-related_adrs: [ADR-003, ADR-014]
+related_adrs: [ADR-003, ADR-014, ADR-017]
+superseded_in_part_by: ADR-017
 ---
 
 # ADR-015: BC layout inside a project frame — deterministic one-shot spring-electrical with sticky pins
 
-**Status:** Accepted
+**Status:** Superseded-in-part by ADR-017 (canvas-layout consequence only)
 **Scope:** bc (canvas)
+
+> **Superseded-in-part by [ADR-017](ADR-017-rendering-substrate-kanban-accordion-interior.md) (2026-05-24).**
+> The kanban-accordion pivot replaces the force-directed BC-bubble interior
+> with a vertical accordion of collapsible BCs, each holding a kanban board.
+> ADR-015's **canvas-layout consequence** — that BCs are laid out as
+> spring-electrical bubbles inside the frame via `src/lib/bc-layout.ts` — is
+> therefore SUPERSEDED; `bc-layout.ts` and the Pixi BC-bubble draw path retire.
+> ADR-015's **README-frontmatter relationship data model** (the per-BC
+> `relationships:` block from ADR-014, owned by `project-registry-004`) is NOT
+> superseded and stays Accepted — the data survives; only its force-directed
+> layout consumer retires. See ADR-017 for the substrate decision.
 
 ## Context
 

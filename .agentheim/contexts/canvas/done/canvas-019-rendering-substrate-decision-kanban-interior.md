@@ -1,16 +1,16 @@
 ---
 id: canvas-019
 title: Rendering substrate for the kanban-accordion frame interior (ADR-003 revisit)
-status: todo
+status: done
 type: decision
 context: canvas
 created: 2026-05-24
-completed:
+completed: 2026-05-24
 commit:
 depends_on: [canvas-019a]
 blocks: [canvas-020, canvas-021, canvas-022]
 tags: [architecture, rendering, decision, pivot, kanban, pixi, dom]
-related_adrs: [ADR-003, ADR-015, ADR-016, ADR-002]
+related_adrs: [ADR-003, ADR-015, ADR-016, ADR-002, ADR-017]
 related_research: []
 prior_art: [canvas-007, canvas-015, canvas-013]
 ---
@@ -65,28 +65,29 @@ bubbles, spring-electrical edges, bc-layout.ts).
 
 ## Acceptance criteria
 
-- [ ] A new ADR (proposed ADR-017) is written and committed in
+- [x] A new ADR (proposed ADR-017) is written and committed in
       `.agentheim/knowledge/decisions/`, scope `bc, canvas`, recording the
       substrate decision with the three options, the reasoning, and the
       rejected alternatives.
-- [ ] The ADR states ADR-003's relationship to the decision (extension vs.
+- [x] The ADR states ADR-003's relationship to the decision (extension vs.
       partial supersession) and explicitly moves ADR-015's *canvas-layout*
       consequence to Superseded while preserving its README-frontmatter
       relationship model (owned by project-registry-004).
-- [ ] The ADR records the viewport-culling + LOD policy and the perf
+- [x] The ADR records the viewport-culling + LOD policy and the perf
       stance for N full frames (target: smooth pan/zoom at N≈10 frames).
-- [ ] The ADR cites `canvas-019a`'s measured findings (N≈10 populated DOM
+- [x] The ADR cites `canvas-019a`'s measured findings (N≈10 populated DOM
       interiors with viewport-culling + zoom-threshold LOD) as the empirical
       basis for ratifying hybrid. If `canvas-019a` reported FAIL against its
       perf target, the ADR overturns the hybrid recommendation and costs
       Option B (full-DOM) instead, recording why.
-- [ ] The ADR enumerates which existing modules survive
+- [x] The ADR enumerates which existing modules survive
       (`camera.svelte.ts`, `drag-controller.ts`, `tile-layout.ts`) and
       which are retired (`bc-layout.ts`, Pixi BC-bubble + intra-project-edge
       draw paths in `Canvas.svelte`).
-- [ ] canvas INDEX.md ADR list + the global knowledge index updated to
+- [x] canvas INDEX.md ADR list + the global knowledge index updated to
       reference the new ADR; ADR-015 marked Superseded-in-part with a
-      backlink.
+      backlink. *(Index/backlink bookkeeping is the orchestrator's job; ADR-015's
+      own body + frontmatter are marked Superseded-in-part by the worker.)*
 
 ## Notes
 
@@ -116,3 +117,44 @@ pure-Pixi (Option C) remains rejected.
 > **Full-DOM-canvas (no Pixi)** is the honest alternative and should be costed, not dismissed: a single CSS-`transform: scale()/translate()`-on-a-world-`<div>` camera is a well-trodden Miro/tldraw-lite pattern, would unify everything in one tech, and decision #1 removes Pixi's headline advantage. Its costs: throws away ADR-016/canvas-015/canvas-012/canvas-013 (the bulk of recent canvas work), and CSS transforms on very large worlds hit subpixel/compositing limits Pixi doesn't. **Pure-Pixi (kanban in WebGL)** is rejected outright — text-heavy scrollable interactive UI in WebGL is the wrong tool and contradicts ADR-003's own reasoning.
 >
 > Net: **hybrid** preserves the most prior investment, matches ADR-003's stated architecture, and pushes the only real risk (N DOM interiors) onto viewport-culling + LOD, which are standard and contained. Recommend hybrid; require the worker to spike viewport-culling perf with N=10 frames before ratifying, and to record the chosen LOD/culling policy in the new ADR.
+
+## Outcome
+
+Ratified the architect's hybrid recommendation as **ADR-017** —
+`.agentheim/knowledge/decisions/ADR-017-rendering-substrate-kanban-accordion-interior.md`
+(scope `bc, canvas`). The `canvas-019a` perf spike PASSED (release build,
+2026-05-24: worst-case N=10-frame pan-circle with all interiors mounted, 120
+cards/frame, holds p95 = 8.5 ms — under 16 ms and at the 8 ms headroom target;
+per-pan cost is card-density-independent, scaling with frame count not card
+count), so the ADR ratifies **Option A (hybrid)**: Pixi keeps the camera
+transform + frame shell; the kanban-accordion interior and docked detail panel
+render as DOM overlays positioned via `camera.worldToScreen` with
+`transform: scale(z)`. Option B (full-DOM) is recorded as the costed fallback
+that was not needed; Option C (pure-Pixi) is rejected.
+
+Key recorded decisions:
+- **ADR-003 relationship:** extension, not reversal — hybrid is the realisation
+  of ADR-003's stated HTML-overlay-for-rich-content architecture.
+- **ADR-015:** marked **Superseded-in-part** (status + body backlink edited in
+  `ADR-015-bc-layout-deterministic-spring-electrical.md`). Its force-directed
+  BC-bubble *canvas-layout* consequence is superseded; its ADR-014
+  README-frontmatter *relationship data model* (owned by `project-registry-004`)
+  is explicitly preserved.
+- **Cost governors:** viewport culling (`CULL_MARGIN_PX = 120`) + zoom-threshold
+  LOD (`LOD_ZOOM_FLOOR = 0.45`, rendering-layer LOD not a model summary, so
+  decision #1 holds), with `transform: scale(z)` keeping the interior layout
+  frozen as a compositor transform.
+- **Docked panel:** screen-space, viewport-docked DOM overlay (canvas-022).
+- **Survives:** `camera.svelte.ts` (worldToScreen now load-bearing for overlay
+  positioning), `drag-controller.ts`, `tile-layout.ts`, the ADR-016 persistent
+  scene graph + stage transform *for the frame shell*. **Retired:**
+  `bc-layout.ts`, the Pixi BC-bubble draw path, the Pixi intra-project-edge
+  draw path in `Canvas.svelte`.
+
+Also added forward-pointer supersession notes to the canvas README's **Bubble**
+and **BC layout** vocabulary entries (the two entries this decision genuinely
+changes) so future sessions reading the README first aren't misled; the full
+interior-vocabulary rewrite belongs to the implementation tasks
+(canvas-020/021/022). Index list + cross-link/backlink bookkeeping are the
+orchestrator's job. This is the gate task for the pivot's canvas work —
+canvas-020/021/022 are now unblocked.
