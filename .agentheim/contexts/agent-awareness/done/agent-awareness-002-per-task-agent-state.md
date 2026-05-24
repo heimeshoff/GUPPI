@@ -6,11 +6,11 @@ type: feature
 context: agent-awareness
 created: 2026-05-24
 completed: 2026-05-24
-commit:
+commit: cecbc96
 depends_on: [project-registry-005, design-system-006]
 blocks: [canvas-021, canvas-022]
 tags: [agent-state, per-task, blocked-question, events]
-related_adrs: [ADR-009, ADR-008, ADR-006]
+related_adrs: [ADR-009, ADR-008, ADR-006, ADR-018]
 related_research: []
 prior_art: []
 ---

@@ -5,6 +5,28 @@ Newest entries on top.
 
 ---
 
+## 2026-05-24 16:10 -- Task verified and completed: agent-awareness-002 - Per-task live agent state + blocked-question content
+
+**Type:** Work / Task completion
+**Task:** agent-awareness-002 - Per-task live agent state + blocked-question content
+**Summary:** Unified per-task agent-state projection keyed `(project_id, bc, task_id)` (running/idle/blocked-on-question + acting-agent label + `since` transition timestamp + live question text), with a derived per-BC active/blocked/idling roll-up for the accordion header. Canvas contract: `TaskAgentStateChanged` (output) + `SessionBlockedOnQuestion` (runner input) bus variants + `get_task_agent_state`/`get_bc_agent_rollup` IPC reads. Runner-primary, read-only v1.
+**Verification:** PASS (iteration 1) — 12 new `agent_state` unit tests green, `pnpm check` 0/0/0.
+**Commit:** cecbc96
+**Files changed:** 7 (agent_state.rs NEW, events.rs, lib.rs, types.ts, ADR-018 NEW, ADR-009 reconciliation note, agent-awareness/README.md) + task move + 2 backlog items + INDEX (orchestrator)
+**Tests added:** 12 (agent_state projection: state folds, roll-up, wire-shape serialisation, since-stability, filesystem-fold coexistence).
+**ADRs written:** ADR-018 (scope: bc, agent-awareness) — registered in the BC INDEX adr-list, consistent with canvas's bc-scoped ADRs.
+**New backlog items:** agent-awareness-003 (deferred filesystem-observed blocked producer), agent-awareness-004 (post-v1 answer/defer/edit write round-trip).
+
+---
+
+## 2026-05-24 16:00 -- Batch started: [agent-awareness-002]
+
+**Type:** Work / Batch start
+**Tasks:** agent-awareness-002 - Per-task live agent state + blocked-question content
+**Parallel:** no (1 worker) — run sequentially ahead of canvas-020: both touch the shared event-bus contract (events.rs + types.ts) and canvas-020's accordion roll-up + snapshot-patch consume agent-awareness-002's per-task state / TaskAgentStateChanged. Landing it first lets canvas-020 wire the real roll-up instead of stubbing.
+
+---
+
 ## 2026-05-24 15:50 -- Model / Promoted: canvas-020 + agent-awareness-002 (dependency-satisfied pivot tasks)
 
 **Type:** Model / Promote
