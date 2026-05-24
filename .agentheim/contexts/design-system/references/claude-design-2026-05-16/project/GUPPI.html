@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GUPPI — mission control for AI coding agents</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" />
+<link rel="stylesheet" href="guppi-tokens.css" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; transition: background 200ms ease; }
+  html[data-theme="light"] body { background: #eef0f4; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; }
+
+  /* Theme toggle — fixed top-right of viewport. */
+  .g-theme-toggle {
+    position: fixed; top: 16px; right: 20px; z-index: 100;
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #ffffff; border: 1px solid #d8d4c9; border-radius: 999px;
+    padding: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  html[data-theme="light"] .g-theme-toggle { background: #ffffff; border-color: #c8cad3; }
+  .g-theme-toggle button {
+    border: 0; background: transparent; cursor: pointer;
+    padding: 6px 12px; font-size: 12px; color: #6b5d44;
+    border-radius: 999px; line-height: 1;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .g-theme-toggle button.active {
+    background: #16161c; color: #ffd9a8;
+  }
+  html[data-theme="light"] .g-theme-toggle button.active {
+    background: #ff8b00; color: #ffffff;
+  }
+  .g-theme-toggle button:not(.active):hover { color: #2a251f; }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<!-- Theme toggle (persisted in localStorage). -->
+<div class="g-theme-toggle" id="g-theme-toggle" role="tablist" aria-label="Theme">
+  <button data-theme-set="dark"  class="active" role="tab" aria-selected="true">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M10.5 7A4.5 4.5 0 1 1 5 1.5a3.5 3.5 0 0 0 5.5 5.5z" fill="currentColor" stroke="none"/></svg>
+    Dark
+  </button>
+  <button data-theme-set="light" role="tab" aria-selected="false">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="6" cy="6" r="2.4" fill="currentColor" stroke="none"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M2.5 9.5l1-1M8.5 3.5l1-1"/></svg>
+    Light
+  </button>
+</div>
+<script>
+  (function () {
+    const root = document.documentElement;
+    const saved = (() => { try { return localStorage.getItem('guppi-theme'); } catch (e) { return null; } })();
+    const applied = saved === 'light' ? 'light' : 'dark';
+    if (applied === 'light') root.setAttribute('data-theme', 'light');
+    const toggle = document.getElementById('g-theme-toggle');
+    function paint(theme) {
+      toggle.querySelectorAll('button').forEach(b => {
+        const on = b.dataset.themeSet === theme;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+    paint(applied);
+    toggle.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-theme-set]');
+      if (!btn) return;
+      const next = btn.dataset.themeSet;
+      if (next === 'light') root.setAttribute('data-theme', 'light');
+      else root.removeAttribute('data-theme');
+      try { localStorage.setItem('guppi-theme', next); } catch (e) {}
+      paint(next);
+    });
+  })();
+</script>
+
+<div id="root"></div>
+
+<!-- Order matters: shared atoms first, then views built on top -->
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="guppi-parts.jsx"></script>
+<script type="text/babel" src="guppi-foundations.jsx"></script>
+<script type="text/babel" src="guppi-canvas-views.jsx"></script>
+<script type="text/babel" src="guppi-frame-detail.jsx"></script>
+<script type="text/babel" src="guppi-voice-views.jsx"></script>
+<script type="text/babel" src="guppi-panels.jsx"></script>
+<script type="text/babel" src="guppi-palette.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+// A reusable "rationale" artboard — paper-colored, sits next to the dark
+// design artboard. Carries the why + the pixel-level decisions.
+function Rationale({ why, decisions }) {
+  return (
+    <div style={{
+      padding: '28px 32px',
+      background: '#fbfaf6',
+      color: '#3a342a',
+      borderRadius: 6,
+      border: '1px solid #e6e2d8',
+      fontFamily: '-apple-system, "Segoe UI", system-ui, sans-serif',
+      height: '100%',
+      overflow: 'auto',
+      display: 'flex', flexDirection: 'column', gap: 22,
+    }}>
+      <div>
+        <div style={{ fontFamily: 'ui-monospace, "Cascadia Code", monospace', fontSize: 10, color: '#9b8a6b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+          why this · for one dev managing many agents
+        </div>
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: '#3a342a', textWrap: 'pretty' }}>{why}</div>
+      </div>
+      <div>
+        <div style={{ fontFamily: 'ui-monospace, "Cascadia Code", monospace', fontSize: 10, color: '#9b8a6b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+          pixel decisions
+        </div>
+        <div style={{
+          fontFamily: 'ui-monospace, "Cascadia Code", monospace', fontSize: 11.5,
+          lineHeight: 1.7, color: '#3a342a',
+          whiteSpace: 'pre-wrap',
+        }}>{decisions}</div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <DesignCanvas>
+
+      {/* ────────── 0 · Foundations ────────── */}
+      <DCSection id="foundations" title="Foundations" subtitle="Two accent hues, four status colors, one font, three sizes, 4px scale, one ambient animation.">
+        <DCArtboard id="foundations-card" label="System at a glance" width={1240} height={720}>
+          <ViewFoundations />
+        </DCArtboard>
+      </DCSection>
+
+      {/* ────────── 1 · The empty canvas at startup, scaling density ────────── */}
+      <DCSection id="canvas-density" title="1 · The canvas at startup" subtitle="What the workspace looks like with one, three, and ten projects. Density scales without the canvas getting louder.">
+        <DCArtboard id="rationale-density" label="Rationale" width={520} height={540}>
+          <Rationale
+            why={`The canvas IS the app. There's no dashboard, no home screen — opening GUPPI drops you straight into a Miro-like world where every project is a frame and every BC is a bubble.
+At low density it feels almost empty on purpose: one frame, a hint of keyboard + voice, a single voice indicator. At ten projects the canvas remains scannable because nothing competes for attention — no shadows, no fills, no decoration. The eye only catches motion (the running pulse) and color (status badges).`}
+            decisions={`• grid backdrop · radial dots var(--g-dot-grid), 24px pitch
+• project frame · 1px brand orange #ff8b00 (warm anchor)
+• BC bubble · 1px brand blue #25abfe muted (cool secondary)
+• frame radius 10px · BC radius 6px
+• 4px padding around BCs inside the frame
+• no canvas chrome at edges — toolbars hide
+• density anchor: 10 projects = ~31 BCs, still readable at zoom 100%
+• off-canvas frame at right edge hints the world extends
+• voice indicator pinned screen-space at right:16, bottom:16`}
+          />
+        </DCArtboard>
+
+        <DCArtboard id="density-1"  label="A · one project"   width={820} height={540}>
+          <View1Project />
+        </DCArtboard>
+        <DCArtboard id="density-3"  label="B · three projects"   width={820} height={540}>
+          <View3Projects />
+        </DCArtboard>
+        <DCArtboard id="density-10" label="C · ten projects · the calm-under-load test" width={820} height={540}>
+          <View10Projects />
+        </DCArtboard>
+      </DCSection>
+
+      {/* ────────── 2 · The atomic unit: one project frame ────────── */}
+      <DCSection id="project-frame" title="2 · The atomic unit · one project frame" subtitle="Header bar, body with 6–8 BC bubbles, typed DDD edges, status badges, counts pills. Everything else in GUPPI is built on this.">
+        <DCArtboard id="rationale-frame" label="Rationale" width={520} height={620}>
+          <Rationale
+            why={`A project frame compresses an entire codebase's bounded contexts into one glance. The header bar carries identity + summary (project name + per-state counts + a task-count row). The body carries structure (BCs + typed edges).
+The two brand accents do hierarchy: orange (#ff8b00) says "this is the project," blue (#25abfe) says "this is a piece of it." Inside the frame, geometry of the edges — not color — tells you the relationship type, so a dev who knows DDD can read the architecture at a glance, and a dev who doesn't can ignore them.`}
+            decisions={`• frame header · 36px tall, hairline below
+• frame name · 16px Inter 500, −0.01em
+• per-state mini badges · 10px mono, glyph + count
+• task line · right-aligned, 10px mono, var(--g-fg-3)
+• drag handle · 4px-pitch dot grid, opacity 0.6
+• BC bubble · 188×60 default, 8/10/10/10 padding
+• BC status badge · 14px circle, top-right corner
+• count pill · bottom-right, 10px mono, status-colored
+• edge color · single neutral #3a3b46
+• edge geometry · arrowhead / no-head / midpoint notch / dashed
+• edges drawn BEHIND bubbles to let bubbles read first`}
+          />
+        </DCArtboard>
+        <DCArtboard id="project-frame-detail" label="A · image-gallery, 8 BCs, mixed statuses" width={820} height={560}>
+          <ViewProjectFrameDetail />
+        </DCArtboard>
+      </DCSection>
+
+      {/* ────────── 3 · Blocked-on-question moment ────────── */}
+      <DCSection id="blocked-moment" title="3 · A BC stuck waiting for you" subtitle="The agent's actual question, tethered to the BC's location on the canvas, competing for attention against running and idle neighbors.">
+        <DCArtboard id="rationale-blocked" label="Rationale" width={520} height={560}>
+          <Rationale
+            why={`When an agent is blocked, the dev shouldn't have to dig for it. The canvas should tell him from across the room: a red badge against a calm backdrop, the question itself rendered IN PLACE so he can read the prompt without opening a session.
+The callout is tethered with a dashed line back to its BC so the spatial answer to "where is this happening?" is preimmediate. The same red border runs on the BC and the callout — they read as one unit. Secondary blocked BCs elsewhere on the canvas appear as smaller, dimmer notices; you can see at a glance how many things are waiting on you.`}
+            decisions={`• callout · 240px wide, 1px red #e85454 border, surface-1 fill
+• callout question · 12px Inter, line-height 1.5
+• callout pulses on the SAME 1600ms cycle as the BC
+• tether · 1px dashed red, opacity 0.85
+• anchor dot · 2.5px solid red on the BC edge
+• answer chips · 11px Inter, hairline-strong border
+• "type ↵" hint right-aligned, fg-3
+• secondary blocked notice · 200px, fg-2, opacity 0.78
+• timer · 10px mono, fg-4 — "2m 14s"
+• focused BC gets focus-ring (var(--g-focus-ring))`}
+          />
+        </DCArtboard>
+        <DCArtboard id="blocked-canvas" label="A · payment-rails, ledger awaiting an answer" width={820} height={560}>
+          <ViewBlockedMoment />
+        </DCArtboard>
+      </DCSection>
+
+      {/* ────────── 4 · Voice modality ────────── */}
+      <DCSection id="voice" title="4 · Voice as a first-class modality" subtitle={`Wake word "Bob". One ambient indicator, three states + a fourth for when the app is speaking. Screen-space, doesn't pan.`}>
+        <DCArtboard id="rationale-voice" label="Rationale" width={520} height={420}>
+          <Rationale
+            why={`Voice is for context-free, ambient control — "Bob, refine task 104" — while the dev's hands are on the keyboard. The indicator must be findable without searching, but it must NEVER pull attention away from the canvas. One small pill, bottom-right of the viewport, doesn't move when you pan the canvas.
+The transcript overlay fades after recognition because confirmation is the only thing it owes you. When the app speaks back (TTS narration), the dot shifts hue from blue to brand orange and a 3-bar visualizer animates — restrained, slow, no chrome.`}
+            decisions={`• indicator pinned to viewport bottom-right (16,16)
+• pill: 7×12 padding, hairline border, surface-1
+• dot · 10×10, status-running blue when listening
+• muted slash · 1.4px diagonal, fg-2
+• speaking ring · 1px dashed brand orange, opacity 0.55
+• transcript · 12px Inter, hairline-strong border
+• "confidence" · 10px mono, fg-4
+• TTS bars · 3 × 2px wide, period 1.4–1.8s`}
+          />
+        </DCArtboard>
+        <DCArtboard id="voice-idle"      label="A · idle"      width={420} height={320}><ViewVoiceIdle /></DCArtboard>
+        <DCArtboard id="voice-listening" label="B · listening" width={420} height={320}><ViewVoiceListening /></DCArtboard>
+        <DCArtboard id="voice-speaking"  label="C · speaking · TTS narration" width={420} height={320}><ViewVoiceSpeaking /></DCArtboard>
+        <DCArtboard id="voice-muted"     label="D · muted"     width={420} height={320}><ViewVoiceMuted /></DCArtboard>
+      </DCSection>
+
+      {/* ────────── 5 · Project detail panel ────────── */}
+      <DCSection id="detail-panel" title="5 · Project detail panel" subtitle="Slides in from the right when a project is focused. Long-form reading on a dark surface, optimized for an hour without fatigue.">
+        <DCArtboard id="rationale-detail" label="Rationale" width={520} height={680}>
+          <Rationale
+            why={`Code agents produce a lot of writing — vision documents, ADRs, research notes, BC READMEs. The dev needs to read them carefully. Dark mode is non-negotiable but most dark-mode reading is awful: too much contrast, too much chrome, fonts not tuned for length.
+We tune: body text drops slightly off pure white to var(--g-fg-1) #e6e6ec, line-height 1.65, max-width 620 so lines never exceed ~75ch. A single thin tabset at top lets you jump between docs in the same project without leaving the canvas. The panel sits ON the canvas, not over it — you can still see the project frame behind, faded, so you don't lose your spatial location.`}
+            decisions={`• panel · 520px wide, slides in from right
+• panel surface · var(--g-surface-3) — surface-3
+• panel radius · 12px, hairline-strong border
+• body text · 14px Inter, line-height 1.65
+• body color · var(--g-fg-1), generously not pure white
+• max-width · 620px (≈ 75 characters)
+• h1 · 22px Inter 600, −0.015em
+• h2 · 15px Inter 600
+• blockquote · 2px orange-soft left rule
+• code blocks · 12px mono, code-surface, hairline border
+• tabs · 11px Inter, brand-orange underline on active`}
+          />
+        </DCArtboard>
+        <DCArtboard id="detail-panel-view" label="A · payment-rails / vision.md" width={1000} height={680}>
+          <ViewDetailPanel />
+        </DCArtboard>
+      </DCSection>
+
+      {/* ────────── 6 · Terminal panel ────────── */}
+      <DCSection id="terminal" title="6 · Emulated terminal · orchestrator + sub-agents" subtitle="A live Claude session, terminal-shaped but readable. Colored agent labels, collapsible sub-agent threads, a clear 'agent is asking you something' affordance.">
+        <DCArtboard id="rationale-terminal" label="Rationale" width={520} height={680}>
+          <Rationale
+            why={`A raw terminal is hostile to a manager watching multiple sessions. This panel keeps the terminal's grammar (mono, time-stamped lines, agent labels) but lifts the noise: orchestrator vs sub-agents are color-coded, sub-agents are collapsible threads with a left rule, and the "I need an answer" moment becomes a real card with quick-answer chips — not a buried prompt.
+The header tells you which session this is and how many agents are running/blocked, mirroring the project frame's counts vocabulary. The input bar at the bottom accepts either an answer to the blocked sub-agent or a free-form instruction to the orchestrator. Same vocabulary as voice and the command palette.`}
+            decisions={`• panel · surface-3, 12px radius, hairline-strong
+• mono body · 12px Cascadia Code, line-height 1.55
+• timestamps · 10.5px, fg-4, 50px gutter
+• agent column · 88px wide, status-color label
+• sub-agent thread · 2px left rule, 10px indent
+• blocked sub-agent · 2px red left rule + 3px accent
+• question card · 12px Inter (sans!), red-glow fill
+• answer chips · 11px Inter, hairline-strong border
+• input bar · 44px tall, brand-orange prompt "›"
+• "⌘↩" hint right-aligned, fg-4`}
+          />
+        </DCArtboard>
+        <DCArtboard id="terminal-view" label="A · image-gallery / media · thumb-gen blocked" width={1000} height={680}>
+          <ViewTerminalPanel />
+        </DCArtboard>
+      </DCSection>
+
+      {/* ────────── 7 · Camera transition ────────── */}
+      <DCSection id="zoom" title="7 · The camera transition · overview ↔ focused" subtitle="The most-used gesture in GUPPI. 320ms ease-out cubic. Camera moves, content doesn't — the focused frame keeps its identity through the zoom.">
+        <DCArtboard id="rationale-zoom" label="Rationale" width={520} height={520}>
+          <Rationale
+            why={`The dev is constantly doing the same motion: I see something interesting at 38% zoom, I press a key (or click) and the camera glides to fit one frame. From there, every detail is legible. Then I zoom back out and survey.
+The visual identity of the focused frame is the same in both states (same shape, same name, same BC positions) — only scale and crop change. This makes the transition feel like a camera move, not a screen change. Periwinkle border + focus ring marks the target in the overview; the focused state can render edges and labels that were too small to read before.`}
+            decisions={`• zoom level · overview 38%, focused 110%
+• camera · transform-origin = center of target frame
+• easing · cubic-bezier(.16,.84,.36,1)
+• duration · 320ms (matches --g-camera)
+• only the camera transition uses easing; content
+  inside the frame doesn't morph
+• focused frame · focus-ring 1.5px brand orange
+• overview · dimming pass at 0.6 on non-focused
+  frames (warm-faint border)
+• same gesture: ⌘1 / double-click / "focus X"`}
+          />
+        </DCArtboard>
+        <DCArtboard id="zoom-overview" label="A · overview · 38%" width={780} height={520}>
+          <ViewZoomOverview />
+        </DCArtboard>
+        <DCArtboard id="zoom-focused"  label="B · focused · 110%"  width={780} height={520}>
+          <ViewZoomFocused />
+        </DCArtboard>
+      </DCSection>
+
+      {/* ────────── 8 · Command palette ────────── */}
+      <DCSection id="palette" title="8 · Command palette · ⌘K" subtitle="Fuzzy match, keyboard-driven. Every command is the same string the dev would speak to Bob.">
+        <DCArtboard id="rationale-palette" label="Rationale" width={520} height={680}>
+          <Rationale
+            why={`Voice and keyboard share a vocabulary. The same string — "refine task 104 in image-gallery" — works as a spoken command or a typed one. This is the contract that lets the dev fluently switch modalities without re-learning.
+The palette is dense, not chatty: each row shows the action verb, its argument, and (right-aligned) what you'd say to Bob. The keyboard shortcut, if any, sits at the far right. The current selection is marked by a 2px periwinkle rail, not by an aggressive background. Background context (the canvas) stays visible behind a scrim so you remember where you are.`}
+            decisions={`• palette · 640×~480, surface-1, 12px radius
+• modal scrim · rgba(10,10,14,0.62) over canvas
+• input · 14px Inter, blinking 1px caret
+• row · 8/12 padding, 6px radius
+• row icon · 22×22 square, surface-2 fill
+• active row · surface-4 bg + 2px brand-orange rail
+• row gloss · 12px fg-3
+• voice equivalent · 10px mono, right-aligned, fg-4
+• kbd shortcut · hairline-strong pill, 10px mono
+• footer · 10px mono, fg-3 — keys + verbal hint`}
+          />
+        </DCArtboard>
+        <DCArtboard id="palette-view" label="A · ⌘K · query 'refine task'" width={1000} height={680}>
+          <ViewCommandPalette />
+        </DCArtboard>
+      </DCSection>
+
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

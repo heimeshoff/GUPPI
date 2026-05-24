@@ -5,6 +5,7 @@ status: backlog
 scope: bc
 depends_on:
   - design-system-001-styleguide
+  - canvas-007-project-as-frame
 related_adrs:
   - ADR-003
 related_research: []
@@ -46,14 +47,65 @@ Surfaced from the v1 "finish v1 first" capture pass (2026-05-14).
 
 Frontend gate: built against `contexts/design-system/STYLEGUIDE.md`.
 
-Soft ordering: most meaningful *after* `canvas-002` (focus-zoom across many
-tiles), but not hard-blocked by it — focus logic works against a single tile
-too. No `depends_on` link to `canvas-002`; refinement can add one if the team
-prefers strict sequencing.
+### Decided during refinement (2026-05-15)
 
-Open questions for refinement:
+- **Frame target:** focusing a project frames the **project's bounded region
+  including its BCs** (option "B"). This is stable across the visual redesign
+  in `canvas-007` — once `canvas-007` lands, "the project's bounded region"
+  is literally the project frame; until then, it means the union of the
+  project tile and its orbiting BCs (same as today's `f` scoped to one
+  project).
+- **Sequencing:** hard-blocked on `canvas-007-project-as-frame`. The redesign
+  ships first; this task is refined against the new model so the keyboard
+  scheme and BC-focus question can be answered in terms of frames-and-bubbles
+  rather than tiles-and-orbits.
+
+### Open questions for refinement (still)
+
 - Keyboard scheme — arrows to move focus + Enter to zoom? Tab cycling? A
-  command-palette-style jump?
-- Does focus also frame a project's BC nodes, or only project tiles?
-- Camera state on focus — does it persist (reopen app focused where you left
-  off) or always reset to a default viewport?
+  command-palette-style jump? (The styleguide flags command-palette-style as
+  a `canvas` BC item.)
+- Are BCs themselves first-class focus targets, or only projects? (Re-ask in
+  the canvas-007 model — bubbles-inside-frame make BC focus more obvious.)
+- Camera state on focus — persist (reopen app focused where you left off) or
+  always reset to a default viewport?
+- ESC / re-press behaviour — does focusing a focused tile zoom back to fit?
+  Does ESC restore the previous viewport?
+
+### Design pins (2026-05-16 — `references/claude-design-2026-05-16/`)
+
+Marco's 2026-05-16 design (§7 of the artboard set +
+`guppi-canvas-views.jsx`'s `ViewZoomOverview` / `ViewZoomFocused`) pins
+the camera behaviour:
+
+- **Zoom levels:** overview 38%, focused 110% (numbers exact).
+- **Easing:** `cubic-bezier(.16, .84, .36, 1)` — matches `motion.easeStandard`.
+- **Duration:** 320ms — matches `motion.durationCamera`.
+- **Transform origin:** centre of the target frame.
+- **Visual identity through the transition:** the focused frame keeps its
+  shape, name, and BC positions — only scale and crop change. The transition
+  reads as a *camera move*, not a screen change.
+- **Focused state affordance:** the focused frame gets a `--g-focus-ring`
+  (1.5px brand orange) — same affordance the project frame already has on
+  hover after `design-system-003`.
+- **Overview state affordance:** non-focused frames render at 0.6 opacity
+  with the warm-faint border (`--g-periwinkle-faint`).
+- **Trigger parity:** the same gesture from three input modalities — `⌘1`
+  / double-click / "focus X" voice command — all run this transition.
+
+This **unblocks the task structurally** (canvas-007 shipped 2026-05-16,
+commit e2296c2) and **resolves several open questions**:
+
+- "Camera state on focus" — design implies it doesn't persist; entering
+  focus is always a transition from current viewport.
+- "ESC behaviour" — design implies ESC restores the overview camera
+  (the inverse 320ms transition).
+- "BC focus targets" — the design only shows project-level focus; BC-level
+  focus stays open for refinement.
+
+Pending refinement (now actionable):
+
+- Keyboard scheme final answer — does `canvas-011-command-palette-spec`
+  (backlog, v2) cover the third-modality jump, or does this task need an
+  in-canvas-only key set first?
+- BC focus targets — re-ask in a Suggestor-mode refinement pass.

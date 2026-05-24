@@ -3,6 +3,7 @@ id: project-registry-004-bc-relationships-and-positions
 type: feature
 status: done
 completed: 2026-05-16
+commit: b3727f5
 scope: bc
 depends_on: []
 related_adrs:

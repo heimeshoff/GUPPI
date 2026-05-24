@@ -1,0 +1,152 @@
+/* GUPPI design tokens — dark by default, light via [data-theme="light"].
+   Every visual aspect of GUPPI references these. */
+
+:root {
+  /* ─── Surface ladder (deep cool charcoal) ─── */
+  --g-bg:           #16161c;
+  --g-surface-1:    #1c1c24;  /* project frame */
+  --g-surface-2:    #20212a;  /* BC bubble */
+  --g-surface-3:    #1a1a22;  /* panels & modals */
+  --g-surface-4:    #232430;  /* hovered/pressed row */
+  --g-overlay:      rgba(10,10,14,.62);
+
+  /* Canvas dot-grid pigment (also themable) */
+  --g-dot-grid:     #232430;
+  --g-canvas-border:#0d0d12;
+
+  /* ─── Hairlines (no shadows in GUPPI — borders carry structure) ─── */
+  --g-hairline:        #2a2b35;
+  --g-hairline-soft:   #22232c;
+  --g-hairline-strong: #3a3b46;
+
+  /* ─── Brand accents (two hues for hierarchy) ─── */
+  /* WARM anchor: project frame border (brand orange #ff8b00) */
+  --g-periwinkle:        #ff8b00;
+  --g-periwinkle-soft:   #d57400;
+  --g-periwinkle-faint:  #5e3a17;
+  --g-focus-ring:        #ffb05a;
+
+  /* COOL secondary: BC bubble border (brand blue #25abfe, muted) */
+  --g-teal:        #25abfe;
+  --g-teal-soft:   #1f7fb8;
+  --g-teal-faint:  #1f3b50;
+
+  /* ─── Status palette (color + glyph; colorblind-safe by geometry) ─── */
+  --g-status-idle:     #7b7c8a;   /* grey,   ○  nothing happening */
+  --g-status-running:  #25abfe;   /* brand blue, ▶ */
+  --g-status-blocked:  #e85454;   /* red,    ◆  needs you */
+  --g-status-missing:  #ff8b00;   /* orange, ✕  artifact absent */
+
+  --g-status-idle-glow:    rgba(123,124,138,.18);
+  --g-status-running-glow: rgba(37,171,254,.22);
+  --g-status-blocked-glow: rgba(232,84,84,.22);
+  --g-status-missing-glow: rgba(255,139,0,.22);
+
+  /* ─── Foreground text ─── */
+  --g-fg-1: #e6e6ec;
+  --g-fg-2: #a5a6b4;
+  --g-fg-3: #6b6c7a;
+  --g-fg-4: #4a4b58;
+
+  /* ─── Code-block surface (uses surface-1 dark; surface-2 light) ─── */
+  --g-code-surface: var(--g-surface-1);
+
+  /* ─── Type ─── */
+  --g-font-sans: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --g-font-mono: "Cascadia Code", "Consolas", "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --g-text-title:   16px;
+  --g-text-body:    12px;
+  --g-text-caption: 10px;
+
+  /* ─── Spacing scale (4px base) ─── */
+  --g-s1: 4px;  --g-s2: 8px;  --g-s3: 12px;
+  --g-s4: 16px; --g-s5: 20px; --g-s6: 24px;
+  --g-s7: 32px; --g-s8: 48px; --g-s9: 64px;
+
+  /* ─── Radii ─── */
+  --g-r-bc:    6px;
+  --g-r-frame: 10px;
+  --g-r-panel: 12px;
+  --g-r-pill:  999px;
+
+  /* ─── Motion budget ─── */
+  --g-ease:     cubic-bezier(.16,.84,.36,1);
+  --g-camera:   320ms;
+  --g-pulse:    1600ms;
+}
+
+/* ─────────── LIGHT THEME ─────────── */
+[data-theme="light"] {
+  --g-bg:           #f4f5f8;          /* cool, slightly off-white */
+  --g-surface-1:    #ffffff;          /* project frame */
+  --g-surface-2:    #f6f7fa;          /* BC bubble */
+  --g-surface-3:    #ffffff;          /* panels & modals */
+  --g-surface-4:    #ebedf2;          /* hovered/pressed row */
+  --g-overlay:      rgba(20,22,30,.32);
+
+  --g-dot-grid:     #dfe1e8;
+  --g-canvas-border:#c7cad3;
+
+  --g-hairline:        #e2e4eb;
+  --g-hairline-soft:   #ecedf2;
+  --g-hairline-strong: #c8cad3;
+
+  /* Slightly deeper accents for contrast on white */
+  --g-periwinkle:        #ff8b00;
+  --g-periwinkle-soft:   #d97500;
+  --g-periwinkle-faint:  #ffd9a8;
+  --g-focus-ring:        #ff8b00;
+
+  --g-teal:        #1d8cd4;
+  --g-teal-soft:   #4ea7e0;
+  --g-teal-faint:  #cce6f7;
+
+  /* Status — same hues, slightly darker for AA on white */
+  --g-status-idle:     #8a8d99;
+  --g-status-running:  #1d8cd4;
+  --g-status-blocked:  #d04545;
+  --g-status-missing:  #d97500;
+
+  --g-status-idle-glow:    rgba(138,141,153,.16);
+  --g-status-running-glow: rgba(29,140,212,.20);
+  --g-status-blocked-glow: rgba(208,69,69,.20);
+  --g-status-missing-glow: rgba(217,117,0,.22);
+
+  --g-fg-1: #15161c;
+  --g-fg-2: #4a4b58;
+  --g-fg-3: #6b6c7a;
+  --g-fg-4: #a5a6b4;
+
+  --g-code-surface: var(--g-surface-2);
+}
+
+/* ─── Base scope: anything inside .guppi gets the active surface + type. ─── */
+.guppi {
+  background: var(--g-bg);
+  color: var(--g-fg-1);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-text-body);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+.guppi *, .guppi *::before, .guppi *::after { box-sizing: border-box; }
+.guppi { box-sizing: border-box; }
+.guppi .mono { font-family: var(--g-font-mono); font-feature-settings: "tnum","zero"; font-variant-ligatures: none; }
+
+/* ─── The single ambient animation — slow pulse on running BCs. ─── */
+@keyframes g-pulse-running {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50%      { box-shadow: 0 0 0 3px var(--g-status-running-glow); }
+}
+
+/* ─── Subtle dot grid for the canvas backdrop. ─── */
+.g-canvas-grid {
+  background-color: var(--g-bg);
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--g-dot-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ─── Focus ring (the only ornament in GUPPI). ─── */
+.g-focus { box-shadow: 0 0 0 1.5px var(--g-focus-ring); }

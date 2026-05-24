@@ -6,7 +6,7 @@ type: feature
 context: canvas
 created: 2026-05-16
 completed: 2026-05-16
-commit:
+commit: bbe3704
 depends_on: [design-system-003, design-system-004]
 blocks: []
 tags: [styleguide, visual, token-application]
