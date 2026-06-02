@@ -34,3 +34,5 @@ $RECYCLE.BIN/
 
 # Built Visual Studio Code Extensions
 *.vsix
+.claude/utterheim-voice
+.claude/utterheim-voice-de
